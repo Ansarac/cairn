@@ -251,6 +251,21 @@ to "report nothing":
 Lookup is by working directory, with the pid used for the liveness check and for pane
 resolution — not the other way round.
 
+A third failure mode turned up only once this ran against a real machine, and it does not
+collapse to "report nothing": **one directory can hold several live sessions.** Twelve
+records on a working machine, two of them for the same checkout — one `busy`, one
+publishing no status at all. Lookup was returning whichever the glob sorted first, so a
+filename decided which pane a nudge would be typed into, and it could pick a silent record
+over one sitting idle and ready. The adapter now ranks candidates — alive with a
+recognised status, then alive, then the rest — and the nudger prints the full list at
+startup, because a defensible guess is still a guess and should be audible. The records
+carry their own `name`, so saying which one was chosen costs nothing.
+
+The same machine gives the scale of the optional-ness: **four of twelve live sessions
+published a status at all.** The other eight report nothing and can never be woken. That
+is the honest ceiling on this component, not a bug in it — but it is the reason the whole
+mechanism is optional and the turn-boundary hook is not.
+
 **2. A reliable pid → terminal mapping.** Walking the process-ancestor chain of the
 record's `pid` against `tmux list-panes -a -F '#{pane_id} #{pane_pid}'` resolved the pane
 on the first try in testing. Note the `/proc/<pid>/stat` parsing hazard: field 2 is
@@ -272,6 +287,19 @@ sessions simply wait for their human. With it, scenario B works unattended.
 Sessions not in tmux cannot be nudged. That is acceptable and should be stated plainly
 rather than worked around. Hosting the session in a scriptable pty is the escape hatch
 if it ever matters.
+
+**This has now run end to end against a real session, which it had not when the above was
+written.** A daemon watching an idle agent in a tmux pane: mail arrived, the state read
+`idle`, the pane resolved on the first try, one line was typed and submitted. The woken
+session read the line, ran `cairn inbox` itself, and then declined to act on what it found
+— citing that the work did not belong to it, that provenance was `UNVERIFIED`, and that a
+peer claim is not an instruction. Every join in the chain, including the one the design
+cares about most: the bell moved attention, and the *tool* moved the content.
+
+One thing that only a live run could show. While that session sat on its own permission
+prompt, its state read `waiting` — so a second nudge would have been refused, correctly,
+because the text would have become the answer to "do you want to proceed?". Until then
+that rule was a unit test and a paragraph.
 
 ### The bell stream, and why it is allowed to be unreliable
 

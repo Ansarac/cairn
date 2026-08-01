@@ -270,9 +270,18 @@ def _watches(args: argparse.Namespace) -> list[nudge.Watch]:
         watches = [nudge.Watch(agent=me, cwd=Path.cwd())] if me else []
     # The pid is only ever used to find a terminal, so a session the product does
     # not report simply cannot be woken — the counter still gets maintained.
+    adapter = default()
     resolved = []
     for watch in watches:
-        record = default().session_for_cwd(watch.cwd)
+        candidates = adapter.sessions_for_cwd(watch.cwd)
+        record = adapter.session_for_cwd(watch.cwd)
+        if len(candidates) > 1:
+            # Observed on a working machine, so this is a real branch rather than
+            # defensive noise. The adapter picks the most usable one; which pane
+            # gets typed into is still a guess, and a guess should be audible.
+            named = ", ".join(f"{c.get('name') or '?'}(pid {c.get('pid')})" for c in candidates)
+            chosen = record.get("name") if isinstance(record, dict) else "?"
+            print(f"warning: {len(candidates)} sessions in {watch.cwd}: {named} — waking {chosen}", flush=True)
         pid = record.get("pid") if isinstance(record, dict) else None
         resolved.append(nudge.Watch(agent=watch.agent, cwd=watch.cwd, pid=int(pid) if pid else None))
     return resolved

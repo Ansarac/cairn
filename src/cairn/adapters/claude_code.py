@@ -140,13 +140,46 @@ def session_states() -> list[dict[str, object]]:
     return states
 
 
-def session_for_cwd(cwd: Path) -> dict[str, object] | None:
-    """Return the live session rooted at `cwd`, if this product reports one."""
+def sessions_for_cwd(cwd: Path) -> list[dict[str, object]]:
+    """Return every live session record rooted at `cwd`.
+
+    Plural because one directory really can hold several. Observed on a working
+    machine: two records for the same checkout, one `busy` and one publishing no
+    status at all. Each record carries its own `name`, so they are separable —
+    the caller just has to be told there is a choice to make.
+    """
     target = str(cwd.resolve())
-    for record in session_states():
-        if str(record.get("cwd") or "") == target:
-            return record
-    return None
+    return [r for r in session_states() if str(r.get("cwd") or "") == target]
+
+
+def session_for_cwd(cwd: Path) -> dict[str, object] | None:
+    """Return the most usable live session rooted at `cwd`, if there is one.
+
+    "Most usable" rather than "first", because the first is whatever the glob
+    happened to sort earliest — which is a filename, not a fact about the
+    session. When a directory holds several, that ordering decided which pane a
+    nudge would be typed into, and it could pick a record that publishes no
+    status over one sitting idle and ready.
+
+    Preference order: a live process publishing a status we recognise, then any
+    live process, then whatever is left. Still a guess when several qualify —
+    `cli._watches` says so out loud rather than pretending otherwise.
+    """
+    records = sessions_for_cwd(cwd)
+    if not records:
+        return None
+    return max(records, key=_usability)
+
+
+def _usability(record: dict[str, object]) -> tuple[int, int]:
+    """Rank a record: recognised status beats live-but-silent beats stale."""
+    try:
+        pid = int(record.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    alive = 1 if pid > 0 and _alive(pid) else 0
+    known = 1 if str(record.get("status") or "") in KNOWN_STATES else 0
+    return (alive, known)
 
 
 KNOWN_STATES = frozenset({"idle", "busy", "waiting"})

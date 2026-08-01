@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -163,6 +164,42 @@ def test_an_unusable_pid_reports_nothing(tmp_path, monkeypatch, pid):
     monkeypatch.setattr(claude_code, "sessions_dir", lambda: tmp_path)
     (tmp_path / "s.json").write_text(json.dumps({"pid": pid, "cwd": str(work), "status": "idle"}), encoding="utf-8")
     assert claude_code.session_state(work) is None
+
+
+def test_one_directory_can_hold_several_sessions(tmp_path, monkeypatch):
+    """Observed live: two records for one checkout, one busy and one silent."""
+    monkeypatch.setattr(claude_code, "sessions_dir", lambda: tmp_path)
+    for name, status in (("a", "idle"), ("b", None)):
+        record = {"pid": os.getpid(), "cwd": "/w/shared", "name": name}
+        if status:
+            record["status"] = status
+        (tmp_path / f"{name}.json").write_text(json.dumps(record), encoding="utf-8")
+    assert len(claude_code.sessions_for_cwd(Path("/w/shared"))) == 2
+
+
+def test_the_usable_session_wins_over_the_alphabetically_first(tmp_path, monkeypatch):
+    """Which pane a nudge is typed into must not be decided by a filename."""
+    monkeypatch.setattr(claude_code, "sessions_dir", lambda: tmp_path)
+    (tmp_path / "aaa.json").write_text(
+        json.dumps({"pid": os.getpid(), "cwd": "/w/shared", "name": "silent"}), encoding="utf-8"
+    )
+    (tmp_path / "zzz.json").write_text(
+        json.dumps({"pid": os.getpid(), "cwd": "/w/shared", "name": "ready", "status": "idle"}), encoding="utf-8"
+    )
+    assert claude_code.session_for_cwd(Path("/w/shared"))["name"] == "ready"
+    assert claude_code.session_state(Path("/w/shared")) == "idle"
+
+
+def test_a_live_session_wins_over_a_dead_one_with_a_status(tmp_path, monkeypatch):
+    """A stale record still says `idle`; liveness has to outrank it."""
+    monkeypatch.setattr(claude_code, "sessions_dir", lambda: tmp_path)
+    (tmp_path / "dead.json").write_text(
+        json.dumps({"pid": 2**31 - 1, "cwd": "/w/shared", "name": "ghost", "status": "idle"}), encoding="utf-8"
+    )
+    (tmp_path / "live.json").write_text(
+        json.dumps({"pid": os.getpid(), "cwd": "/w/shared", "name": "real", "status": "idle"}), encoding="utf-8"
+    )
+    assert claude_code.session_for_cwd(Path("/w/shared"))["name"] == "real"
 
 
 def test_an_unknown_directory_reports_nothing(tmp_path, monkeypatch):
