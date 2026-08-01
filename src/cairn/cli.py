@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import socket
 import sys
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from cairn import __version__, config, nudge, provenance, render, skill
 from cairn.client import HubClient
@@ -124,9 +125,8 @@ def cmd_tell(args: argparse.Namespace) -> int:
 def cmd_ask(args: argparse.Namespace) -> int:
     """Send a message that expects an answer.
 
-    This assigns a correlation id and delivers. It does not wait, time out, or
-    track state — that lifecycle is not built yet, and pretending otherwise
-    would be worse than the gap.
+    This assigns a correlation id and delivers. The answer arrives in your inbox
+    like any other message; `cairn inbox --wait` is how to stand still for it.
     """
     me = config.require_identity()
     correlation = args.correlation or f"q-{uuid.uuid4().hex[:8]}"
@@ -140,25 +140,65 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_reply(args: argparse.Namespace) -> int:
-    """Answer an `ask`."""
+    """Answer an `ask`, with references to anything too big to say.
+
+    `-a` was missing here until a peer session tried to use it and got
+    `unrecognized arguments`. It had read the skill's rule — big things go behind
+    a path — as the universal rule it is written as, and folded the path into its
+    prose instead. Of the three sends this is the one that most needs it: an
+    answer is what you produce *after* doing the work somebody asked for, and the
+    work is usually a file.
+    """
     me = config.require_identity()
     client = _client(args)
     _check_recipient(client, args.recipient)
-    message = client.send("reply", me, args.recipient, args.body, correlation_id=args.correlation)
+    message = client.send(
+        "reply", me, args.recipient, args.body, correlation_id=args.correlation, artifacts=_artifacts(args.artifact)
+    )
     print(f"replied seq {message.seq} to {message.recipient} for {args.correlation}")
     return 0
 
 
 def cmd_inbox(args: argparse.Namespace) -> int:
-    """Read unread messages, and by default mark them read."""
+    """Read unread messages, and by default mark them read.
+
+    `--wait` does not change what reading means. The ordinary read happens
+    first, and only an empty one blocks — so a question already answered by the
+    time this runs is answered immediately, which is the first of the
+    constraints docs/design.md §12 item 3 records. What arrives is printed and
+    acked exactly as it would have been without the flag: there is no partial
+    ack, because there is no second code path for one to live in.
+    """
+    # Finite, not merely positive. `float("infinity")` and `nan` both survive a
+    # `> 0` test, and `inf` reaches `socket.settimeout`, which raises
+    # `OverflowError` — not an `OSError`, so `client.stream` does not convert it
+    # and `run()` deliberately does not catch it. That is a traceback plus exit
+    # 1, the code for "nothing to report": the same shape as the poisoned inbox
+    # this cut fixed in `store.append`, arriving by a different door.
+    if args.wait is not None and not (0 < args.wait < math.inf):
+        msg = f"--wait needs a positive, finite number of seconds, got {args.wait:g}"
+        raise UsageError(msg)
     me = config.require_identity()
     client = _client(args)
-    messages = client.inbox(me, limit=args.limit)
+    if args.wait is None:
+        messages = client.inbox(me, limit=args.limit)
+    else:
+        from cairn import waiting
+
+        messages = waiting.wait_for_mail(client, me, timeout=args.wait, limit=args.limit)
     entries = [InboxEntry(message=m, provenance=provenance.assess(m)) for m in messages]
-    print(render.inbox_json(entries) if args.json else render.inbox_text(entries), end="")
-    if messages and not args.no_ack:
+    # flush before the ack, not after. stdout is block-buffered off a tty and
+    # nothing here handles SIGTERM, so a host killing the command in the window
+    # between these two lines would move the cursor past mail that never reached
+    # the terminal — the one way this command can lose a message outright.
+    print(render.inbox_json(entries) if args.json else render.inbox_text(entries), end="", flush=True)
+    if not messages:
+        if args.wait is not None:
+            print(f"cairn: waited {args.wait:g}s, still nothing.", file=sys.stderr)
+        return EXIT_NOTHING
+    if not args.no_ack:
         client.ack(me, max(m.seq for m in messages))
-    return 0 if messages else EXIT_NOTHING
+    return 0
 
 
 def cmd_ack(args: argparse.Namespace) -> int:
@@ -350,9 +390,30 @@ def cmd_config(args: argparse.Namespace) -> int:
 # -- parser -------------------------------------------------------------------
 
 
+class _Parser(argparse.ArgumentParser):
+    """An `ArgumentParser` whose usage errors land on cairn's exit code, not argparse's.
+
+    argparse exits **2** on a bad command line, and 2 is cairn's "the hub could
+    not be reached". So a typo reported itself as a network outage: measured on a
+    peer session that ran `cairn reply … -a HOST:PATH` before `reply` accepted
+    `-a`, got `unrecognized arguments`, and spent a moment wondering whether the
+    hub had gone. A script doing `cairn reply … || echo "hub down"` would have
+    said so out loud and been wrong.
+
+    "You asked for something that cannot be carried out" is exit 3, and that is
+    what a malformed command line is. Only `error()` is remapped — `--help` and
+    `--version` go through `exit()`, which is untouched and still leaves 0.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        """Raise instead of exiting, so `run()` assigns the code."""
+        detail = f"{message} (try `{self.prog} --help`)"
+        raise UsageError(detail)
+
+
 def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat statement per flag; splitting it hides the surface
     """Build the argument parser."""
-    parser = argparse.ArgumentParser(prog="cairn", description="Cross-machine messaging for coding agent sessions.")
+    parser = _Parser(prog="cairn", description="Cross-machine messaging for coding agent sessions.")
     parser.add_argument("--version", action="version", version=f"cairn {__version__}")
     parser.add_argument("--hub", help="hub URL; overrides $CAIRN_HUB and the config file")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -381,10 +442,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
         help="send a message that expects an answer",
         description=(
             "Send a message that expects an answer. This assigns a correlation id and "
-            "delivers; it does not wait, time out or track state. The answer arrives in "
-            "your inbox like any other message. Said here rather than on every send: it "
-            "is true once, and printing it each time costs the reader more than it tells "
-            "them."
+            "delivers; the answer arrives in your inbox like any other message, and "
+            "`cairn inbox --wait` is how to stand still for it. Said here rather than on "
+            "every send: it is true once, and printing it each time costs the reader more "
+            "than it tells them."
         ),
     )
     p.add_argument("recipient")
@@ -397,12 +458,22 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("recipient")
     p.add_argument("correlation")
     p.add_argument("body")
+    p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
     p.set_defaults(func=cmd_reply)
 
     p = sub.add_parser("inbox", help="read unread messages")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--no-ack", action="store_true", help="read without marking as read")
     p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--wait",
+        nargs="?",
+        type=float,
+        const=60.0,
+        default=None,
+        metavar="SECONDS",
+        help="if the inbox is empty, block this long for something to arrive (default 60)",
+    )
     p.set_defaults(func=cmd_inbox)
 
     p = sub.add_parser("forget", help="drop this directory's pin for a name that has legitimately moved")
@@ -459,9 +530,14 @@ def run(argv: Sequence[str] | None = None) -> int:
     Anything that is not a `CairnError` keeps its traceback. Do not widen this
     catch: a stack trace from a real bug is worth more than a tidy message that
     hides where it came from.
+
+    Parsing is **inside** the try, and that placement is the whole of the fix in
+    `_Parser`: with it outside, a malformed command line left by argparse's own
+    `error()` exited 2, cairn's "the hub could not be reached". Moving it in
+    without `_Parser` would only turn that into a traceback.
     """
-    args = build_parser().parse_args(argv)
     try:
+        args = build_parser().parse_args(argv)
         return int(args.func(args))
     except CairnError as exc:
         print(f"cairn: {exc}", file=sys.stderr)

@@ -95,11 +95,22 @@ cairn tell compute/analysis "soak run 441 failed 3 of 40 iterations"
 cairn ask  compute/analysis "do the failures correlate with temperature?"
 cairn reply bench/firmware q-3f2a91bc "yes — every one is above 40 degrees"
 cairn inbox                                        # read, and mark read
+cairn inbox --wait 90                              # ...or stand still for a reply
 ```
 
-`ask` assigns a correlation id and delivers. It does **not** wait: there is no
-timeout and no status to poll yet. The answer arrives in the inbox like any
-other message.
+`ask` assigns a correlation id and returns the moment the question is durable.
+The answer arrives in the inbox like any other message;
+`cairn inbox --wait [SECONDS]` is how to stand still for it. Two commands rather
+than a flag on `ask`, because a combined one that failed at the waiting end
+could not say whether the question had been sent — and re-sending asks your peer
+the same thing twice under two correlation ids.
+
+The wait blocks only if the ordinary read finds nothing, so an answer already
+sitting there comes back at once. It watches neither the kind nor the
+correlation id: in a live exchange a peer answered an earlier `tell` with a
+`tell`, seconds *before* the `ask` landed — that answer settled the question
+too, and carried a **lower** sequence number than it. Every plausible filter —
+kind, correlation id, "anything newer than my ask" — would have walked past it.
 
 Big things never go in a message. Send a reference:
 
@@ -109,8 +120,9 @@ cairn tell compute/analysis "capture is on the bench" -a bench:/srv/hil/441/capt
 
 ### Exit codes
 
-`0` fine · `1` asked, nothing to report · `2` hub unreachable · `3` cannot be
-carried out as asked · `130` interrupted.
+`0` fine · `1` asked, nothing to report — an empty inbox, or a wait that ran
+out · `2` hub unreachable · `3` cannot be carried out as asked · `130`
+interrupted.
 
 `1` and `2` differ on purpose. An empty inbox is an answer. An unreachable hub
 means your messages are not being delivered and nobody is being told. A script
@@ -226,9 +238,16 @@ server, the relationship to Happy and to Claude Code, and the prior art survey.
 
 ```bash
 just setup
-just check      # ruff + the vendor guard + pytest
-just hub        # a hub on :7777 against /tmp/cairn-dev.db
+just check      # lint + format check + the vendor guard + pytest — the whole CI gate
+just hub        # :7777, reachable from other machines, on ~/.local/state/cairn/hub.db
+just hub-dev    # :7778 on loopback against /tmp/cairn-dev.db — throwaway
 ```
+
+`just hub` is the one you leave running: a hub only this machine can reach is a
+hub the other machine cannot use. It has no authentication and does not sign
+messages, so anyone who can route to it can register any name — see
+`docs/design.md` §11 item 3, and bind an interface (`just hub 7777 10.0.0.5`)
+rather than everything if the network is not yours.
 
 Every test is offline. The end-to-end test binds an ephemeral loopback port and
 nothing reaches the network.

@@ -63,6 +63,7 @@ src/cairn/
   events.py      SSE codec + in-process fan-out. Allowed to drop; read its docstring.
   hub.py         stdlib HTTP + the SSE route. Parse, call one store method, serialize.
   client.py      the only module that knows the hub is reachable over HTTP
+  waiting.py     when `cairn inbox --wait` may stop. Imports client; never events.
   terminal.py    tmux pane discovery and safe one-line injection. Imports nothing local.
   nudge.py       the optional daemon: local counter, two latches, wake decision
   cli.py         argument parsing, dispatch, exit codes. No rules.
@@ -78,7 +79,10 @@ docs/design.md           why everything is the way it is
 ```
 
 Dependency direction, which the module docstrings also state: `cli → client →
-wire` and `hub → store → wire`. `nudge` depends on `client`, `events`, `terminal`
+wire`, `cli → waiting → client`, and `hub → store → wire`. `waiting` may not
+import `events` — that absence is what keeps a bell frame undecoded and so keeps
+`kind` and `correlation_id` out of the waiter's reach, and there is a test for
+it. `nudge` depends on `client`, `events`, `terminal`
 and an **injected** state reader — never on `adapters`, which is exactly what
 keeps it vendor-free. Nothing imports `adapters` except `cli`, and only through
 `adapters.default()`.
@@ -105,6 +109,14 @@ carried out as asked · `130` interrupted.
 an answer; an unreachable hub means messages are not being delivered and nobody
 is being told.
 
+A malformed command line is `3`, and that costs one non-obvious line of code:
+argparse's own `error()` exits **2**, so `cli._Parser` overrides it to raise
+`UsageError` and `run()` parses inside its `try`. Subparsers inherit the class
+from the root parser, which is the only reason every subcommand gets this — pass
+`parser_class=` to `add_subparsers` and the guarantee is gone with no test to
+notice. A session found the old behaviour by mistyping a flag and wondering
+whether the hub had died.
+
 ## Hazards specific to this repo
 
 **A change to `wire.py` without a `PROTOCOL_VERSION` bump is a silent break.**
@@ -118,6 +130,15 @@ prints `{}` and exits 0. If you touch it, verify with the hub down.
 **The bell must not ring twice for the same mail.** It latches on the highest
 seq it has rung for. Without that, a reader who chose not to open the inbox gets
 a loop instead of a reminder.
+
+**And it currently goes deaf past `--limit`, which is open.** That highest seq is
+read off the same capped window the inbox returns, so once the unread count
+exceeds the limit the head stops moving, the latch pins to it, and the
+turn-boundary bell is **permanently silent** until the reader drains by hand.
+`nudge`'s counter is built the same way. Known, not fixed, and the fix is the hub
+returning the true `MAX(seq)` on the inbox response — which is a `wire.py` change
+and so a `PROTOCOL_VERSION` question. Do not "simplify" the latch without reading
+`docs/design.md`'s appendix row on it first.
 
 **Registration has three cases, and the last two look identical on the wire.** A
 new name parks the cursor at the current head, so a fresh session is not buried
@@ -214,9 +235,15 @@ Every test is offline. The hub binds an ephemeral loopback port, and no test
 spawns a process, drives real tmux, or reads real `/proc`.
 
 ```bash
-just check      # ruff + the vendor guard + pytest
-just hub        # a hub on :7777 against /tmp/cairn-dev.db
+just check      # lint + format check + the vendor guard + pytest — the whole CI gate
+just hub        # :7777, every interface, ~/.local/state/cairn/hub.db — the real one
+just hub-dev    # :7778 on loopback against /tmp/cairn-dev.db — throwaway
 ```
+
+`just hub` binds `0.0.0.0` because a two-machine tool nobody else can reach is
+not testable, and cairn does not authenticate. Use `just hub-dev` for scratch
+work, and read `docs/design.md` §11 item 3 before putting the real one on a
+network you do not trust.
 
 ## Ending a session
 

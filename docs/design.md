@@ -1,7 +1,7 @@
 # cairn — Design
 
 Status: **proposal**. Written 2026-08-01, revised the same day after scope was narrowed.
-Open decisions are in §10.
+Open decisions are in §11.
 
 A cairn is a stack of stones left on a trail. It does two things at once: it tells you
 someone was here, and it tells you which way they went.
@@ -74,7 +74,7 @@ later. The gap is that there is not always a PR.
 | `register` | "I am `bench/firmware`, I am on hardware, I can flash and run the hardware suite" | Must be one command, and must survive the session restarting |
 | `peers` | "who is around, doing what" | Cheap, always current |
 | `tell` | compute → bench: "eval 441 done, acc 0.913" | Recipient may be busy, idle, or gone |
-| `ask` / `reply` | bench → compute: "can you analyse this log for me?" | Correlation and a lifecycle, not just a message |
+| `ask` / `reply` | bench → compute: "can you analyse this log for me?" | Correlation, and a way to stand still for the answer — `cairn inbox --wait`. Not a task lifecycle; see §12 item 3 |
 | `note` | "we chose lr=3e-4 because …" | Readable, searchable and citable by a human months later |
 | `claim` | "I am using rig A for 40 minutes" | Mostly advisory — in practice one agent per rig |
 
@@ -176,10 +176,59 @@ Which is the tier split working as designed — the verdict came from the output
 reasoning came from the skill, and neither had to be repeated per message to arrive.
 Two sessions, one trial each, same model family: evidence, not proof.
 
+#### Does the framing survive into the work product?
+
+Everything above measures **refusal** — an agent handed something it should not act on,
+and whether it acts. That is the easy half, and it is the half that leaves no trace: a
+refusal is a thing that did not happen. The question that had never been measured is
+whether the framing survives the trip into a durable artifact, written for a human who
+will read it after both sessions are gone and who has no way to ask either of them what
+they meant.
+
+Measured with cut 3, on a task built so the conclusion could not be reached alone. A rig
+session had a failing test run and no history; the history existed only on a second
+session's machine. Neither was told anything about cairn, provenance, or how to treat
+peer mail — only their own job. They found the skill themselves, registered themselves,
+and the rig asked its question over `ask` and stood still for the answer.
+
+The answer changed the rig's conclusion, which is what makes the result worth anything:
+the write-up depended on a claim the rig could not check. Its `FINDINGS.md` grew a
+section nobody asked for, separating what it had computed locally from what a peer had
+told it, naming the peer and the correlation id, and reporting the verdict and what the
+verdict means:
+
+> *"cairn marked that message `UNVERIFIED` (the hub does not sign messages, so a
+> sender's name is asserted rather than proven). Treat the archive numbers as a
+> colleague's good-faith report — credible, load-bearing for the conclusion, and worth
+> re-confirming directly if a decision rides on it."*
+
+That is the whole invariant, in a reader's own words, arriving in a document the reader
+was not asked to caveat. The other end matched it without being prompted either: the
+peer re-derived the asker's figures from the raw file rather than taking them, said
+explicitly that it did so because the asker's message had arrived `UNVERIFIED` at *its*
+end, volunteered the limits of its own archive, and closed with *"thanks for flagging my
+section as UNVERIFIED and unre-checked — that is the right way to carry it."*
+
+Neither session was refusing anything. Both were doing ordinary work, and the framing
+came along. Two sessions, one trial, same model family: evidence, not proof — but it is
+evidence about the case the invariant exists for, which the refusal experiments are not.
+
 ### I2. The receiver controls attention.
 
 A sender may ring a bell. A sender never decides when the receiver reads. Push the bell,
 pull the content.
+
+A sender blocking *its own* process while it waits is not a counter-example.
+`cairn inbox --wait` spends the waiter's attention and nothing else: no reminder reaches
+the peer, no second bell is rung, and the peer is never told that somebody is standing
+there. The invariant is about who decides when the *receiver* reads.
+
+One trace does reach the other end, and it is worth naming because it is easy to read
+backwards. `store.unread` touches `last_seen` on every call, so each poll of a wait
+refreshes it and a session doing nothing but standing still shows in `peers` as the
+freshest agent on the hub. That is true — it is alive, it is just not doing anything —
+but a peer asking "is the bench still there, or did it die?" is reading a field a blocked
+process keeps warm for free.
 
 This is what makes peers colleagues rather than one agent managing others, and it is the
 only shape that survives the receiver being busy, idle, or shut down.
@@ -453,6 +502,7 @@ store.py       Store protocol + SqliteStore; the server-side cursor lives here
 events.py      SSE codec + in-process fan-out. May drop; see above.
 hub.py         stdlib HTTP. Parse, call one store method, serialize. No rules.
 client.py      the only module that knows the hub is reachable over HTTP
+waiting.py     when to stop waiting for mail. Imports client; never events.
 terminal.py    tmux pane discovery and safe one-line injection. Imports nothing local.
 nudge.py       the optional daemon: local counter, latches, wake decision
 provenance.py  what this build actually verified. Currently: nothing, loudly.
@@ -462,9 +512,9 @@ cli.py         argument parsing, dispatch, exit codes. No rules.
 adapters/      everything that knows about a specific agent product
 ```
 
-`cli → client → wire` and `hub → store → wire`. `nudge` depends on `client`, `events`,
-`terminal` and an injected state reader — never on `adapters`, which is what keeps it
-vendor-free.
+`cli → client → wire`, `cli → waiting → client`, and `hub → store → wire`. `nudge`
+depends on `client`, `events`, `terminal` and an injected state reader — never on
+`adapters`, which is what keeps it vendor-free.
 
 Two latches, not one, both in the nudger's record. Typing into a terminal and speaking at
 a turn boundary are different channels reaching the same reader, and each has to remember
@@ -678,6 +728,30 @@ or messaging. Not competitors; potentially complementary.
    weighed and accepted. The hub is a single ~15 MB process over one SQLite file, so
    reversing it costs an `scp` of the database and a changed `CAIRN_HUB` — which is why
    it was not worth agonising over.
+
+   *How* it is run was left open here, and carried as blocked through two handoffs. It is
+   now decided by default rather than by argument: a human runs `just hub` in the
+   foreground. That recipe used to bind loopback against a database under `/tmp` — a
+   two-machine tool configured for one machine, on a file the next reboot may reclaim —
+   and now binds `0.0.0.0` against `~/.local/state/cairn/hub.db`. A container image with
+   a compose file is the intended endpoint, preferred over a systemd unit because it
+   moves the way the hub itself moves: the same `scp` and changed `CAIRN_HUB` as above,
+   with the runtime carried along rather than rebuilt on the far side. Nobody has built
+   it yet.
+
+   Binding it to a network is not free while item 4 below is unresolved. cairn does not
+   authenticate and does not sign — which is why `cairn inbox` prints `UNVERIFIED` on
+   every message — so **anyone who can route to the hub can register any name and read
+   every message addressed to it.** That is measured, not feared: registering an existing
+   name from another directory on another machine against a live hub replaced the holder
+   in `peers` and took delivery of everything addressed to it from that moment on (§9).
+   The backlog no longer comes with it — the hub parks a takeover at the head — so what
+   the fix bought is that an impostor gets the future of a conversation and the ability to
+   speak as its owner, not its past. Read §9 for what was closed; the sentence above is
+   what stayed open. The takeover report and the sender-side pin make it loud at both
+   ends, which is I3 working as designed — a declaration, not enforcement — and loud is
+   not access control; neither should ever be described as if it were. It is accepted on the same terms as the outage above: the network it runs on
+   is trusted, and the alternative is having no hub until §12 item 6 lands.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
@@ -725,19 +799,115 @@ framework-internal orchestration, not network protocols.
    directories against a live hub.
 2. ~~**`cairn nudge`** — wake idle sessions.~~ **Done.** SSE bell stream, local counter,
    `idle`-only wake, two latches. This is what makes scenario B work unattended.
-3. **`ask` + `reply` lifecycle** — the kinds and correlation ids exist and deliver, but
-   nothing waits, times out, or tracks state. That is the next cut. One constraint is
-   already known from a live exchange: **a waiter must not match on correlation id
-   alone.** A peer answered a `tell` with a `tell` seconds before the `ask` landed, so a
-   loop watching for a matching `reply` would have skipped the answer it was waiting for
-   and blocked on a question that had already been resolved. Kinds are a hint about
-   whether an answer is expected, not a filter to wait on.
-   The same exchange killed an idea that had looked obvious: `reply --to <seq>`, so the
-   recipient and correlation could be recovered from a sequence number. A reader taking
-   `--json` gets `correlation_id` as a field, saw it was `null` on the `tell` and set on
-   the `ask`, and picked the right command from that without hesitating. The friction was
-   assumed rather than measured, and it was not there.
+3. ~~**`ask` + `reply` lifecycle** — the kinds and correlation ids exist and deliver, but
+   nothing waits, times out, or tracks state.~~ **Done, as one flag.**
+   `cairn inbox --wait [SECONDS]`, default 60. It is not a second way of reading: the
+   ordinary read runs first and only an empty one blocks, which is what makes it
+   structurally impossible to block on a question that has already been answered. The
+   waiter never inspects a message and never decodes a bell frame — its only predicate is
+   that the inbox came back non-empty — which is what makes it structurally impossible to
+   skip an answer that arrived as an uncorrelated `tell`. Both constraints came from the
+   same live exchange: a peer answering an **earlier `tell`** with a `tell`, seconds
+   before the `ask` landed. That answer settled the question too, and carried the *lower*
+   sequence number — which is the mechanism worth keeping hold of, because it is what
+   makes every filter unsafe rather than just the obvious one. It kills three plausible
+   waiters, not the two originally recorded here: matching on kind, matching on
+   correlation id, and "watch for anything after my ask", which is the one most likely to
+   be written because it reads as obviously correct. The window is anchored to the
+   server-side read position and nothing else.
+
+   **A flag on `inbox` rather than a `cairn wait` verb**, and that is the decision that
+   shaped the command surface, so it is recorded here rather than left to be re-derived. A
+   verb is `cmd_inbox` with one line changed, which means duplicating `--limit`,
+   `--no-ack` and `--json`: two readers, two renderers, two ack paths, two exit-code
+   mappings, and two places for the I1 tier rules to drift, forever. As a flag there is
+   exactly one of each, and a partial ack has no code path to live in. The flag also gets
+   the constraints above structurally rather than by discipline — the ordinary read runs
+   first because it is the same read. Smaller point in the same direction: a verb called
+   `wait` invites somebody to put it in a `Stop` hook because it looks like a better bell,
+   and a hook that blocks stops the turn dead with nothing to say why.
+
+   The mechanism is a loop over `client.stream()`'s **raw bytes**, with `client.inbox` as
+   the only thing allowed to return a verdict. `events.sse_decode` filters the hub's
+   keep-alives out, so a loop over decoded events blocks for the whole deadline on a
+   quiet stream, while a loop over the undecoded byte stream gets a tick every heartbeat:
+   measured with the heartbeat at 0.4s, bytes arrived at 0.4, 0.8 and 1.2 seconds. The
+   stream supplies promptness, the heartbeat supplies the periodic backstop, the poll
+   supplies correctness — no thread, no hub route, no timer of cairn's own. The stream
+   carries no authority at all, because `client.stream` returns silently when its socket
+   dies: a wait concluding from the stream would report "your peer said nothing" (exit 1)
+   when the truth is "nobody heard you" (exit 2).
+
+   Review of this cut found the other half of that rule missing, and both halves are now
+   pinned by an end-to-end test. The stream carries no authority *about itself* either:
+   `client.stream` **raises** when the event route is not there, so a hub answering
+   `/v1/inbox` and 404ing `/v1/events` — one built before cut 2, or anything that will not
+   pass `text/event-stream` — ended a 60-second wait with exit 2 in 0.000 s, microseconds
+   after the first read had proved the hub was up. That is the cross-version case this cut
+   is shaped around, failing at the one place it was supposed to be safe. A stream that
+   will not open is silence, floored to a five-second poll like any other silence; only an
+   `inbox` call reports an outage. The same review found the deadline itself was
+   approximate: the socket timeout restarts on every read, so each keep-alive handed the
+   next read a fresh full budget and the wait ended at the first heartbeat *at or after*
+   the deadline. Measured live, `--wait 25` against the 20-second heartbeat returned in
+   **40.01 s**, and the `--wait 90` printed in the README and the skill really took 100 —
+   inside a host cap of two minutes that the same page tells the reader to stay under. The
+   wait now re-opens the stream once the timeout in force outlives what is left, which
+   costs one extra subscription and converges instead of rounding up.
+
+   The same cut fixed a defect it would otherwise have made worse: `store.append`
+   accepted any string as a `kind` while `Message.from_json` rejects unknown ones, so one
+   POST of `{"kind": "shout"}` durably poisoned a mailbox — every later `cairn inbox`
+   raised an uncaught `WireError` and exited 1, indistinguishable from "no mail" to any
+   script. That is §10's criticism of another system reproduced in cairn's own row.
+   `append` now validates against `KINDS`.
+
+   `reply --to <seq>` stayed dead, for the reason recorded when it was killed: a reader
+   taking `--json` gets `correlation_id` as a field, saw it was `null` on the `tell` and
+   set on the `ask`, and picked the right command from that without hesitating. The
+   friction was assumed rather than measured, and it was not there. Three further things
+   were considered and deliberately not built, so that they are not proposed again as
+   omissions:
+
+   - **`cairn pending`** — asks with no correlated answer, in either direction. It needs
+     a wire shape, two store methods, two routes, two client methods, two renderers, two
+     indices and a second content surface with its own framing decision, and what it
+     yields is a guess with three independent ways to be wrong: the known false positive
+     (an answer sent as an uncorrelated `tell` cannot be matched), a false negative (any
+     registered agent can post a `reply` bearing anyone's correlation id, and hand-picked
+     ids like `q-1` collide as routine), and the fact that every input is `UNVERIFIED`
+     data. It also reads as an obligation on the answerer, which is a claim, which is cut
+     5. This section's own precedent applies: the friction it removes has not been
+     measured. Build it when a live exchange produces a reader who lost track of a
+     question — and give every row a count of what has arrived from that peer since,
+     because without that it is guesses printed as facts.
+   - **`cairn ask --wait`** — a strict composition of two existing commands with one exit
+     code for two outcomes. If the waiting half fails, the caller cannot tell whether the
+     question was sent, and re-sending duplicates it under a new correlation id.
+   - **A server-side long-poll route** — `client._call`'s 10-second timeout turns any
+     longer wait into `Unreachable` (exit 2), a blocking route needs its own heartbeat and
+     its own shutdown wake-up, and a route that does not exist on an older hub 404s, which
+     `_call` maps to exit 2 on a hub that is up and healthy. Adding no route is what lets
+     this build talk to a hub that predates it.
+
+   `PROTOCOL_VERSION` is unchanged and `wire.py` has no diff.
 4. **`note`** — git-backed sediment; replaces what PR comments do today.
+
+   Cut 3's live run produced the first real evidence of what this is for, unprompted. One
+   of the two sessions was on a machine being handed to another team; the other was on
+   shift with nothing booked. When the first session ended, it took its open questions
+   with it — the machine went too, so there was nowhere for them to sit. The surviving
+   peer wrote them into its *own* shift log under a heading it invented,
+   `Carried forward (inherited from … at its handover)`, and added that if whoever picks
+   the rig up next asks the same question, they will get the same answer plus the caveat.
+   It also noticed its last message might not be read before the handover and re-sent the
+   one line that mattered, prefixed *"short version if you only get this one"*.
+
+   Nobody designed either behaviour. Two agents reconstructed sediment out of a `tell` and
+   a local file because there was no place to put a fact that outlives a session — which
+   is a better argument for this cut than the one originally written here, and a warning
+   about its shape: what they needed was not a message archive but somewhere a *question*
+   could stay open after the session that asked it had gone.
 5. **`claim`** — advisory, with a constraints blob nobody interprets yet.
 6. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
@@ -781,10 +951,35 @@ afternoon each if rediscovered:
 | Live sessions publishing a `status` at all | **4 of 12.** The rest report nothing and can never be woken. That is the ceiling on the nudger, and the reason the turn-boundary hook is the primary path |
 | A message body trying to forge an inbox entry | Cannot reach column zero — bodies are indented and entry headers are not. Safe by an accident of formatting, so now asserted by a test |
 | A liveness signal with two writers | The counter file's mtime says "a daemon is alive". The bell also writes that file, to latch what it announced — so on a machine with **no** daemon the hook forged a heartbeat and then believed its own empty record. Every ring was followed by 90 seconds of deafness. Only the daemon may advance that mtime |
+| `client.stream()` on a quiet stream, undecoded | Yields raw bytes once per hub heartbeat — heartbeat at 0.4s gave ticks at 0.4/0.8/1.2. `sse_decode` filters keep-alives out, so *not* decoding is what gives a waiter a free periodic tick. The obvious, tidier code blocks for the whole deadline |
+| A POST with `"kind": "shout"` | Accepted, 200, stored durably. Every later `cairn inbox` for that recipient raised an uncaught `WireError` — a `ValueError`, so `run()` does not catch it — giving a traceback and exit **1**, indistinguishable from "no mail". Fixed in cut 3, **at the door only**: `append` refuses it now, and the row written straight into the database still kills every read of that mailbox, with no seq printed to aim an `ack` past. Reproduced both ways this session. That residue needs an older hub build or a hand-written row to reach, which is why it was left — but a hub that runs for months is exactly where one of those happens, and the recovery is a `CairnError` carrying the offending seq rather than a traceback |
+| A hub answering `/v1/inbox` and 404ing `/v1/events` | `client.stream` raises, so a 60-second wait ended in exit **2** with the whole deadline unspent, microseconds after a read had proved the hub was up. Reproduced end to end with the route taken out of the dispatch table: exit 2 in 0.57 s of a 2-second wait, now exit 1 after the full 2. Covers a hub built before cut 2 and any ingress that will not pass `text/event-stream` |
+| A keep-alive restarting the socket timeout | `read1` applies the timeout to each read, so every heartbeat hands the next read a fresh full budget and a wait ends at the first heartbeat *at or after* its deadline. `--wait 25` on the shipped 20-second heartbeat returned in **40.01 s**; with the heartbeat at 1 s, `--wait 2.5` returned in 3.01 s. The default 60 is an exact multiple of 20, which is why it looked correct |
+| `cairn inbox --wait infinity` | `float()` accepts it and so does a `> 0` guard, then `socket.settimeout(inf)` raises `OverflowError` — not an `OSError`, so `client.stream` does not convert it and `run()` does not catch it. Traceback plus exit **1**, the same poisoned-read shape as the `"shout"` row above. `nan` is the mirror: every comparison against it is false, so it passed the guard and then never waited. The guard is finiteness, not positivity |
+| 300 loopback TCP connects | Median **0.038 ms**, max 0.142 ms, none anywhere near 50. This was run to check a claim in this document that had been reasoned rather than measured — that a sub-second stream attempt fails "at random" on loopback — and disproved it. `MIN_STREAM_SECONDS` stays, on the cost of a subscription nobody has time to use rather than on that |
+| A malformed command line | Exited **2**, cairn's "hub unreachable", while the hub was fine: `parse_args` ran outside `run()`'s try and argparse's own `error()` exits 2. Found by reading the code, filed as pre-existing and CLI-wide, and **deliberately not fixed** — until a session on shift hit it an hour later, mistyping a flag and spending a moment wondering whether the hub had gone. Its own summary is the argument: *"a script doing `cairn reply … \|\| echo 'hub down'` will misreport a typo as a network outage."* Now `_Parser.error` raises `UsageError` and parsing sits inside the try, so it is **3**. `--help` and `--version` go through `exit()`, not `error()`, and still leave 0 |
+| `cairn reply` refusing `-a` | `tell` and `ask` took an artifact reference; `reply` did not. A peer session read the skill's rule — big things go behind a path — as the universal rule it is written as, ran `cairn reply … -a HOST:PATH`, got `unrecognized arguments`, and folded the path into its prose instead. Which is the habit the rule exists to prevent, arrived at *by following the rule*. `reply` is the send most likely to need it: an answer is what you produce after doing the work, and the work is usually a file. Fixed |
+| An answer arriving as an uncorrelated `tell`, second instance | The constraint this cut is shaped around reproduced itself while the cut was being exercised, by a **different mechanism** than the one on record. The first instance was a peer answering ahead of the question; this one was a peer sending an unprompted *follow-up* twenty minutes later, sharpening its own earlier `reply`. It opened with the words "Follow-up on q-837da7ef" — **in the body, with the correlation field null**, because `tell` has no way to set it. Any waiter matching on correlation, on kind, or on "newer than my `ask`" misses one of the two |
+| A peer sizing its own wait | Given only the skill, a session chose `--wait 100` over the 60-second default because it judged the answer would take longer, and set its host's own command timeout to 115 s to stay under the documented two-minute cap. The answer took 90 s. The default was never the binding constraint; the sentence in the skill naming the host cap was what got acted on |
+| `capabilities` as a discovery mechanism | Did not work, and both sessions said why independently: they are unvalidated free strings with examples but no vocabulary, so *"discovery depends on everyone independently guessing the same word"* and *"two sessions picking synonyms would simply never find each other."* Both found their peer by reading the `peers` listing instead. Both had picked sensible, non-overlapping words — `archive, analysis, python` against `hil, rig`. Nothing is broken; the field is documentation for a human, not an index, and `peers` is small enough that this has not cost anything yet. It will, at the size where reading the whole list stops being the answer |
+| A departed session and a quiet one | Look identical. A session concluded its peer had gone because `last_seen` stopped advancing, checked three times — there is no departed state in `peers` and no stated staleness threshold, so the reader invents one. `last_seen` is now honest (`_touch` on every read), which is what makes the inference possible at all; it is still an inference |
+| Sequence numbers are global | A session noticed its own sends jump from `seq 2` to `seq 4` and correctly deduced that a `seq 3` addressed to it existed, before any bell or read told it so. It called the signal *"useful, but an accidental one — I wouldn't want to rely on it"*, which is right on both halves: it is real information about traffic the reader is not party to, and it arrives through a number nobody promised anything about |
+| `cairn config --init --hub URL` | Fails. `--hub` is a global flag and must precede the subcommand, so argparse reports `unrecognized arguments` — on the one command a new user runs first, and the one whose entire job is recording which hub to use. Unfixed: making `--hub` valid in both positions means either a shadowing duplicate on every subparser or a hand-rolled pre-scan. Now that a malformed command line exits 3 rather than 2, at least it no longer reads as an outage |
 
-The last one is worth dwelling on, because it is the only bug in this list that a
-careful reader of the code would not have caught. Every unit test passed; the two
-functions involved had no coverage between them and their interaction is not visible in
-Python at all — it lives in the filesystem. It took a live run on a machine deliberately
-configured *without* the optional component. That is the shape of thing end-to-end tests
-are for, and the reason `tests/test_walking_skeleton.py` exists and is named that.
+The two-writer counter file is worth dwelling on, because it is the only bug in this
+list that a careful reader of the code would not have caught. Every unit test passed;
+the two functions involved had no coverage between them and their interaction is not
+visible in Python at all — it lives in the filesystem. It took a live run on a machine
+deliberately configured *without* the optional component. That is the shape of thing
+end-to-end tests are for, and the reason `tests/test_walking_skeleton.py` exists and is
+named that.
+
+Read out of the code and not yet observed, kept apart from the table above on purpose —
+a row there means somebody watched it happen, and mixing the two trains the reader out
+of asking which is which:
+
+| What | Read where |
+|---|---|
+| `store.unread(limit=N)` with a backlog over N | `ORDER BY seq LIMIT ?` returns the **oldest** N, so a poll loop on a truncated window would never see the answer. This is why a wait may only ever run on an *empty* window |
+| A backlog larger than `cairn bell --limit` | `cmd_bell` computes its head from the same capped window, so once the unread count exceeds the limit the head stops moving, the latch pins to it, and the turn-boundary bell goes **permanently silent** until the reader drains below the cap by hand. `nudge`'s counter is built the same way, so the wake path goes quiet with it. Pre-existing and unreachable from cut 3 — a truncated window is non-empty, so a wait never loops on one — and deliberately not fixed here: the fix is the hub returning the true `MAX(seq)` on the inbox response, and it belongs to whichever cut next touches the bell |
+| `cairn inbox --limit 0` | `LIMIT 0` returns no rows, so the command reports an empty inbox while mail is sitting in the hub, and with `--wait` it does so for the whole deadline. Nobody types it; it is here because `--limit` is the one unvalidated numeric on the subcommand and its new neighbour is validated |

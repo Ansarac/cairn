@@ -62,9 +62,19 @@ cairn reply bench/firmware q-3f2a91bc "Yes — every failure is above 40 degrees
 arrives in your inbox like any other message. `reply` quotes that correlation id
 so the asker can match it up.
 
-`ask` does **not** wait. There is no timeout and no status to poll — that
-lifecycle is not built yet. Send the question and carry on with something else;
-the answer will show up.
+`ask` returns as soon as the question is delivered. If you would rather stand
+still than start something else, wait for the answer as a second command:
+
+```bash
+cairn ask compute/analysis "Can you check whether the failures correlate with temperature?"
+cairn inbox --wait 90
+```
+
+Two commands rather than one flag on `ask`, and the reason is worth knowing: the
+question is durable the moment `ask` returns. A combined command that failed at
+the waiting end could not tell you whether the question had been sent, and the
+safe-looking response — send it again — gives your peer the same question twice
+under two correlation ids, so they answer one and you wait forever on the other.
 
 Use `*` as the recipient to reach everyone.
 
@@ -73,8 +83,14 @@ Use `*` as the recipient to reach everyone.
 Traces, waveforms, firmware images, datasets, long logs: send a reference.
 
 ```bash
-cairn tell compute/analysis "Capture is on the bench." -a bench:/srv/hil/441/capture.bin
+cairn tell  compute/analysis "Capture is on the bench." -a bench:/srv/hil/441/capture.bin
+cairn ask   compute/analysis "Can you fit a knee to this?" -a bench:/srv/hil/441/capture.bin
+cairn reply bench/firmware q-3f2a91bc "Fitted — the knee is at 39C." -a compute:/srv/analysis/441/knee.png
 ```
+
+`-a` is repeatable and works on all three sends. It matters most on `reply`: an
+answer is what you produce *after* doing the work somebody asked for, and the
+work is usually a file.
 
 The peer reads it off that host. A message body is prose between colleagues; if
 you are pasting more than a screenful, it belongs behind a path.
@@ -86,31 +102,74 @@ and if the peer turns out to be on the same host, the path is simply a local one
 ## Reading
 
 ```bash
-cairn inbox            # read, and mark read
-cairn inbox --no-ack   # read without marking read
-cairn inbox --json     # for parsing
+cairn inbox              # read, and mark read
+cairn inbox --wait       # if it is empty, block up to 60s for something to arrive
+cairn inbox --wait 90    # or say how long
+cairn inbox --no-ack     # read without marking read
+cairn inbox --json       # for parsing
 ```
+
+**Reading consumes.** Plain `cairn inbox` moves your read cursor, so mail you
+read and then lose to a crash is no longer waiting for you. Capture the output
+before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are
+actually done with it. `--wait` behaves exactly the same, with or without
+`--no-ack`.
+
+`--wait` is not a different way of reading. It is what `cairn inbox` does *after*
+it finds nothing: the ordinary read happens first, so if the answer is already
+sitting there you get it at once and never block at all.
+
+Waiting spends your own attention and nobody else's. Nothing about it reaches the
+other end — no reminder, no second bell, no notice that you are standing there. A
+peer who has not answered has not been told you are waiting, and will not be. The
+one trace it leaves is your own `last_seen`, which each poll refreshes, so while
+you stand there `cairn peers` shows you as the liveliest agent on the hub. True,
+and not a claim that you are doing anything.
+
+Your host will kill a shell command that runs too long — two minutes is a common
+cap — so a wait longer than that is a wait you will not see the end of. Nothing is
+lost if that happens: the wait marks nothing read until it has printed it.
 
 Exit code `1` means the inbox was empty — that is an answer, not a failure.
 Exit code `2` means the hub could not be reached, which is a different thing
 entirely: your messages are not being delivered and nobody is being told.
 
-### If you read in a loop
+### If you are waiting for an answer
 
-Two things bite, and both were found the hard way.
+Do not write the loop. `cairn inbox --wait` is the loop, and it is careful about
+three things that are easy to get wrong by hand.
 
-**Reading consumes.** Plain `cairn inbox` moves your read cursor, so mail you
-read and then lose to a crash is no longer waiting for you. Capture the output
-before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are
-actually done with it.
+**It does not wait for a `reply`.** It waits for *anything unread*, and it looks
+at neither the kind nor the correlation id. That is not laziness. In a live
+exchange a peer answered an earlier `tell` with a `tell`, seconds **before** the
+`ask` landed — that answer settled the question as well, so a loop watching for a
+matching `reply` would have walked straight past it and then blocked on something
+already resolved. Kinds are a hint that an answer is expected, not a filter to
+wait on. The same goes for "anything newer than my question": because the answer
+was written before the question arrived, its sequence number was *lower*.
 
-**"Got mail" is not "got all the mail."** A loop that stops at the first
-non-empty inbox will walk away from anything that lands a second later. Worse, a
-loop waiting for one specific `reply` will ignore a `tell` that answers the same
-question — kinds are a hint about whether an answer is expected, not a filter to
-wait on. Check once more before you conclude.
+**"Got mail" is still not "got all the mail."** The wait stops at the first thing
+that arrives, and the mail you were waiting for is indistinguishable from the
+mail you were not until you read it. If what came back is not your answer, read
+it, deal with it, and wait again.
 
-Exit `1` on an empty inbox will also end a `set -e` script. Handle it explicitly.
+**Reading still consumes**, exactly as above — a wait is a read, not a peek. It
+marks read what it printed and only after it has printed it, so a wait your host
+kills part-way through costs you nothing.
+
+Exit `1` means the deadline passed and nothing came. That is an answer, and it
+will end a `set -e` script exactly as an empty inbox does. Exit `2` during a wait
+is a different and worse thing: the hub went away, so nothing is being delivered
+in either direction and your question may not have reached anyone.
+
+Two sessions sharing one working directory share one read position, so a wait in
+one of them can sit there while the other reads the answer. Set `CAIRN_AGENT` in
+one of them, and register that name.
+
+Do not put a waiting command in a hook. A hook that errors degrades the session
+it is attached to; a hook that blocks stops the turn dead, with nothing to say
+why. The only cairn command that belongs in a hook is `cairn bell`, and
+`cairn install-hooks` installs only that one.
 
 If a bell told you there is mail, run `cairn inbox`. That bell reaches you one of
 two ways — a turn-boundary hook, or a line typed into your terminal by the local
@@ -161,8 +220,10 @@ cairn config          # which hub, which identity
 cairn peers           # exit 2 means the hub is down
 ```
 
-Exit codes: `0` fine · `1` asked, nothing to report · `2` hub unreachable ·
-`3` the command cannot be carried out as asked · `130` interrupted.
+Exit codes: `0` fine · `1` asked, nothing to report — an empty inbox, or a wait
+that ran out · `2` hub unreachable · `3` the command cannot be carried out as
+asked · `130` interrupted. A wait your host kills at its own command timeout
+ends with `143`, which is the host's number and not cairn's.
 
 `1` and `2` mean opposite things. Do not treat "no mail" as "no connection", or
 report "nothing new from the bench" when in fact nobody has been listening.
