@@ -444,12 +444,15 @@ or messaging. Not competitors; potentially complementary.
    casually reimage.
 2. ~~Whether to speak a standard protocol on the wire~~ — **decided: bespoke JSON over
    HTTP + SSE.** Reasoning below.
-3. **Where the hub runs.** The shared-services machine is the obvious answer and may be
-   the wrong one: if the agents already depend on something it hosts, putting the hub
-   there means one failure takes out both the work and the way to talk about it. A more
-   failure-independent host costs one resident process somewhere less convenient. The
-   hub is a single 15 MB process over one SQLite file, so this is cheap to change later
-   — `scp` the database.
+3. ~~Where the hub runs~~ — **decided: the shared-services host**, on the grounds that
+   hosting shared services is what that machine is for.
+
+   The argument against is still worth knowing, because it is the failure this choice
+   accepts: if the agents already depend on something that host runs, putting the hub
+   there means one outage takes out both the work and the way to talk about it. That was
+   weighed and accepted. The hub is a single ~15 MB process over one SQLite file, so
+   reversing it costs an `scp` of the database and a changed `CAIRN_HUB` — which is why
+   it was not worth agonising over.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.

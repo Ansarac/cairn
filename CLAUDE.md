@@ -161,6 +161,20 @@ wire (§11), building on Happy (§8), bridging the built-in agent-teams mailbox
 you want to reopen one, read the section first, and add counter-evidence *there*
 rather than arguing it fresh in a handoff.
 
+## Writing the docs
+
+This is a public repository, and the prose is deliberately specific: nearly every
+claim is attached to a measurement or a failure. Keep it that way — an abstracted
+rationale ("shared resources can end up inconsistent") persuades nobody, while the
+concrete one it came from ("a crashed flash leaves a board half-written, so the
+next claimant has to be told where the last one stopped") does.
+
+The rule when adding to it: **keep the shape of the problem, drop its identity.**
+Role words — bench, compute, infra, rig, firmware, `hil`, `jtag` — are industry
+vocabulary and stay. What must not appear: a specific product domain, an internal
+hostname, a port, a service running on someone's network, or a path under a real
+home directory. Examples in prose, tests and `SKILL.md` all count.
+
 ## Testing
 
 `tests/test_walking_skeleton.py` is the one that matters: a real hub on a real
