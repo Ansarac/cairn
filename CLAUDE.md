@@ -1,0 +1,184 @@
+# CLAUDE.md
+
+Guidance for Claude Code when working in this repository.
+
+## What this is
+
+`cairn` lets coding agent sessions that a human **already started**, on different
+machines, register a name and message each other. That is the entire product.
+
+It does not start, resume, supervise or kill sessions. It does not wrap an agent
+CLI. It does not know which agent product is on either end.
+
+If a task appears to need any of those, it is out of scope **by design**, not by
+omission — say so rather than building it. `docs/design.md` §1 has the reasoning,
+including the two independent forces behind it: session lifecycle is the one
+thing that couples a tool to a vendor's process model, and the most popular
+project in this space deprecated itself precisely because of that coupling.
+
+## The three invariants
+
+Check every change against these. `docs/design.md` §3 carries the measurements
+behind each; do not restate them here.
+
+**I1. Peer content must arrive through a named, installed tool, and its
+provenance must be verified rather than asserted.** Content reaches a model
+because the agent ran `cairn inbox`, never because a hook pasted it in. And no
+message may carry a field claiming its own trustworthiness — that is why
+`Message` has no `verified`, and why `Provenance` is built only by the code that
+ran a check. There is a test asserting that absence. If you find yourself
+deleting it, stop.
+
+**I2. The receiver controls attention.** A sender may ring a bell. A sender
+never decides when the receiver reads. The bell carries a count and never
+carries content.
+
+**I3. cairn declares intent; it does not enforce it.** A claim says someone is
+using a resource. It is not a lock. Real exclusion over hardware belongs to the
+kernel on the machine that owns it.
+
+## The one structural rule
+
+**Nothing outside `src/cairn/adapters/` may name a vendor** — not in an import,
+not in a path, not in a string. `just guard` greps for it and CI fails on it.
+
+This is not tidiness. cairn's claim is that it works with any agent that can run
+a shell command, and that claim survives years only if there is exactly one
+place where it could go wrong. When the guard goes red, the fix is to move the
+knowledge into an adapter, never to widen the grep.
+
+## Layout
+
+```
+src/cairn/
+  wire.py        the contract: message schema + PROTOCOL_VERSION. Imports nothing local.
+  errors.py      exceptions carrying their exit code
+  store.py       Store protocol + SqliteStore. Server-side cursors live here.
+  events.py      SSE codec + in-process fan-out. Allowed to drop; read its docstring.
+  hub.py         stdlib HTTP + the SSE route. Parse, call one store method, serialize.
+  client.py      the only module that knows the hub is reachable over HTTP
+  terminal.py    tmux pane discovery and safe one-line injection. Imports nothing local.
+  nudge.py       the optional daemon: local counter, two latches, wake decision
+  cli.py         argument parsing, dispatch, exit codes. No rules.
+  render.py      output — including the inbox framing, which is behaviour
+  provenance.py  what this build actually verified. Currently: nothing, loudly.
+  config.py      hub URL (config) and per-directory identity (state)
+  skill.py       dual-branch skill lookup: source checkout and packaged wheel
+  adapters/
+    __init__.py      default() — the only way core reaches a product
+    claude_code.py   skills dir, turn-boundary hooks, session state
+skills/cairn/SKILL.md    force-included into the wheel
+docs/design.md           why everything is the way it is
+```
+
+Dependency direction, which the module docstrings also state: `cli → client →
+wire` and `hub → store → wire`. `nudge` depends on `client`, `events`, `terminal`
+and an **injected** state reader — never on `adapters`, which is exactly what
+keeps it vendor-free. Nothing imports `adapters` except `cli`, and only through
+`adapters.default()`.
+
+## Conventions
+
+- Python 3.13, src layout, hatchling, `uv tool install`.
+- ruff with `extend-select = ["ALL"]`, line length 120.
+- **No third-party dependencies.** stdlib only, deliberately: cairn runs on a
+  hardware bench where every package is one more thing that can break before a
+  test run. Adding one needs a reason in `docs/design.md`.
+- `run()` converts `CairnError` to an exit code and lets real bugs keep their
+  traceback. Do not widen that catch.
+- The skill ships inside the wheel via
+  `[tool.hatch.build.targets.wheel.force-include]`. `locate_skill` has a source
+  branch and a packaged branch — **both are hot paths**, test both.
+
+### Exit codes are an interface
+
+`0` fine · `1` asked, nothing to report · `2` hub unreachable · `3` cannot be
+carried out as asked · `130` interrupted.
+
+`1` and `2` mean opposite things and must never be collapsed. An empty inbox is
+an answer; an unreachable hub means messages are not being delivered and nobody
+is being told.
+
+## Hazards specific to this repo
+
+**A change to `wire.py` without a `PROTOCOL_VERSION` bump is a silent break.**
+Two builds will disagree and neither will say so. Run `git diff -- src/cairn/wire.py`
+before finishing any session that touched it.
+
+**`cairn bell` must never fail loudly.** It runs from another program's hook, so
+an exception there degrades the session it is attached to. Every failure path
+prints `{}` and exits 0. If you touch it, verify with the hub down.
+
+**The bell must not ring twice for the same mail.** It latches on the highest
+seq it has rung for. Without that, a reader who chose not to open the inbox gets
+a loop instead of a reminder.
+
+**A new agent starts at the head; a returning agent does not.** First
+registration parks the cursor at the current head so a fresh session is not
+buried under a month of other people's mail. Re-registration leaves the cursor
+alone so a restarted session still gets its backlog. Getting either direction
+wrong is immediately visible to users, and neither is obvious from the code.
+
+**The bell stream is allowed to drop; making it reliable breaks the hub.** If a
+subscriber's queue fills, `events.py` discards and counts rather than waiting —
+because `publish` runs on the thread part-way through storing somebody else's
+message, so a blocking queue lets one wedged reader stall delivery for everyone.
+This is safe only because every bell triggers a full authoritative `inbox` fetch
+and the payload is discarded. Do not "fix" the dropping.
+
+**Both ends of a stream need a periodic write, and the timeouts are paired.** The
+hub heartbeats so it notices a departed reader — with no write, the handler blocks
+forever and subscriptions accumulate. The client's socket timeout notices a
+departed hub. Set the client timeout below `hub.HEARTBEAT_SECONDS` and every quiet
+stream tears itself down on a timer.
+
+**Use `read1`, never `read`, on a streaming body.** `HTTPResponse.read(n)` blocks
+until it has all `n` bytes or the connection closes, so a sixty-byte bell sits
+unseen behind a 4 KiB buffer. This was measured, and the obvious code is wrong.
+
+**Only ever type into a session reported `idle`.** `busy` fights the input buffer;
+`waiting` means the session is on a prompt, so the nudge becomes the answer to it;
+an unrecognised status is not a safe status. A record whose pid is dead is not
+`idle` either — those files outlive the process that wrote them.
+
+**Two latches, not one.** Typing into a terminal and speaking at a turn boundary
+are separate channels reaching the same reader. Sharing a latch means a nudge
+silences the next turn-boundary bell, so the reader is woken and then told nothing.
+
+**Only the daemon may advance the counter file's mtime.** That mtime *is* the
+daemon-liveness signal `counter_is_fresh()` reads, and the counter file has two
+writers: the daemon, and `cairn bell` latching what it just announced. When the
+latch touched the mtime, a hook on a machine with no nudger forged a heartbeat
+for a daemon that did not exist and then believed the empty record it had just
+written — so the bell went deaf for 90 seconds after every single ring. Hence
+`_write_record(..., keep_mtime=True)` on both latch paths. Any new writer to that
+file has to decide the same question, and the answer is almost always "keep it".
+
+**Do not re-litigate the eliminated options.** `docs/design.md` records, with
+measurements, why these were rejected: a message bus (§7), A2A or MCP on the
+wire (§11), building on Happy (§8), bridging the built-in agent-teams mailbox
+(§4), and MCP as the agent-facing surface (§6). Each was a serious candidate. If
+you want to reopen one, read the section first, and add counter-evidence *there*
+rather than arguing it fresh in a handoff.
+
+## Testing
+
+`tests/test_walking_skeleton.py` is the one that matters: a real hub on a real
+socket, two agents, a message crossing between them, and a real SSE bell stream.
+The risks in this project live between modules, not inside them — that is why the
+end-to-end test was written first and should stay the first one read. If it goes
+red, nothing else in the suite matters. Both bugs found while wiring the bell
+stream (`read` vs `read1`, and the inherited timeout) were invisible to every
+unit test and only appeared here.
+
+Every test is offline. The hub binds an ephemeral loopback port, and no test
+spawns a process, drives real tmux, or reads real `/proc`.
+
+```bash
+just check      # ruff + the vendor guard + pytest
+just hub        # a hub on :7777 against /tmp/cairn-dev.db
+```
+
+## Ending a session
+
+Run `/handoff`. It is manual on purpose — never wire it to a hook.

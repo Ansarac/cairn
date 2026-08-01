@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local machine config and secrets
+.claude/settings.local.json
+.env
+
+# Runtime state
+*.db
+*.db-wal
+*.db-shm
+
+# The session handoff. Gitignored on purpose: anything left only here does not
+# survive a fresh clone, which is what forces promotion into CLAUDE.md and
+# docs/. See .claude/skills/handoff/SKILL.md.
+handoffs/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# The raw research note this project started from. The desensitised version,
+# with a correction notice for the claims that later failed testing, is tracked
+# at docs/research/transport-survey.md.
+cross-machine-agent-comms-research.md

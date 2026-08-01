@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      # cairn's claim is that it works with any agent that can run a shell
+      # command. That stays true only if exactly one directory knows about any
+      # particular product. See CLAUDE.md, "The one structural rule".
+      #
+      # "cursor" is matched separately and case-sensitively: it is also cairn's
+      # own word for the server-side read position, so a case-insensitive match
+      # would flag the `cursors` table and every sqlite3 cursor in store.py.
+      - name: Guard the core against vendor coupling
+        run: |
+          if grep -rniE 'claude|anthropic|codex|copilot' src/cairn \
+               --include='*.py' --exclude-dir=adapters; then
+            echo "::error::vendor name outside src/cairn/adapters/"
+            exit 1
+          fi
+          if grep -rnE 'Cursor|CURSOR|\.cursor|cursor[-_/](cli|agent|ide|rules)' src/cairn \
+               --include='*.py' --exclude-dir=adapters; then
+            echo "::error::vendor name outside src/cairn/adapters/"
+            exit 1
+          fi
+          echo "core is vendor-free"
+
+      # Every test is offline: the walking-skeleton test binds an ephemeral
+      # loopback port and nothing reaches the network.
+      - name: Test
+        run: uv run pytest

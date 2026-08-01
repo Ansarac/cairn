@@ -1,0 +1,109 @@
+[project]
+name = "cairn"
+dynamic = ["version"]
+description = "Cross-machine messaging for coding agents: let sessions that are already running find each other and talk."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+authors = [
+    { name = "Ansarac", email = "45335466+Ansarac@users.noreply.github.com" },
+]
+keywords = [
+    "agent",
+    "agent-communication",
+    "ai-agents",
+    "claude-code",
+    "cli",
+    "multi-agent",
+    "self-hosted",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Communications",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+# No third-party dependencies, on purpose. cairn has to run on a hardware bench
+# where every extra dependency is one more thing that can break, and `uv tool
+# install` should be the whole setup. stdlib only: http.server, sqlite3, urllib.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Ansarac/cairn"
+Repository = "https://github.com/Ansarac/cairn"
+Issues = "https://github.com/Ansarac/cairn/issues"
+
+[project.scripts]
+cairn = "cairn.cli:entrypoint"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Single source of truth for the version: src/cairn/__init__.py.
+[tool.hatch.version]
+path = "src/cairn/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cairn"]
+
+# Ship the skill inside the wheel so `uv tool install` alone is enough —
+# `cairn install-skill` then works with no checkout present.
+[tool.hatch.build.targets.wheel.force-include]
+"skills/cairn/SKILL.md" = "cairn/_skill/SKILL.md"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = ["ALL"]
+ignore = [
+    "COM812",  # conflicts with the formatter
+    "CPY001",  # no copyright headers in this repo
+    "D203",    # incompatible with D211
+    "D213",    # incompatible with D212
+    "ISC001",  # conflicts with the formatter
+    "PLC0415", # deliberate lazy imports keep CLI startup fast
+    "T201",    # a CLI prints
+    "TC003",   # runtime-visible annotations are fine here
+    "TRY003",  # diagnostics belong at the raise site here; that is the point
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test functions and fixtures are not an API; annotating them is noise.
+"tests/*" = [
+    "ANN001",
+    "ANN002",
+    "ANN003",
+    "ANN201",
+    "ANN202",
+    "ANN401",
+    "ARG001",
+    "ARG002",
+    "D1",
+    "INP001",
+    "PLR2004",
+    "S101",
+    "SLF001",
+    # `/tmp/...` here is a value in an Agent's `cwd` field, not a file anything opens.
+    "S108",
+]
+# The hub is a stdlib HTTP server; BaseHTTPRequestHandler's API is not ours.
+"src/cairn/hub.py" = ["N802"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
