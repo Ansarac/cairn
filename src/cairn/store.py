@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from cairn.errors import UsageError
-from cairn.wire import BROADCAST, Agent, Arrival, Artifact, Message, MessageKind, Registration, now
+from cairn.wire import BROADCAST, KINDS, Agent, Arrival, Artifact, Message, MessageKind, Registration, now
 
 _COUNT_ALL = 1_000_000
 """A limit high enough to mean "all of it" when counting a skipped backlog."""
@@ -201,9 +201,7 @@ class SqliteStore:
             )
         arrival: Arrival = "takeover" if moved else ("returning" if existing else "new")
         previous = f"{existing.machine}:{existing.cwd}" if moved and existing else ""
-        return Registration(
-            agent=stamped, arrival=arrival, skipped=skipped, previous=previous, resume_at=resume_at
-        )
+        return Registration(agent=stamped, arrival=arrival, skipped=skipped, previous=previous, resume_at=resume_at)
 
     def get_agent(self, name: str) -> Agent | None:
         """Look one agent up by its exact registered name."""
@@ -226,7 +224,23 @@ class SqliteStore:
         correlation_id: str | None = None,
         artifacts: Sequence[Artifact] = (),
     ) -> Message:
-        """Insert the message, refusing an unknown sender or a misaddressed recipient."""
+        """Insert the message, refusing an unknown kind, sender, or misaddressed recipient.
+
+        The kind check is the newest of the three and it is a bug fix, not
+        symmetry. `hub._send` passes `obj.get("kind", "tell")` straight in here,
+        and `Message.from_json` rejects what this used to accept — so one POST
+        of `{"kind": "shout"}` was stored durably and answered 200, and from
+        then on every `cairn inbox` for that recipient raised `WireError` out of
+        the list comprehension in `client.inbox`. That is a `ValueError`, not a
+        `CairnError`, so `run()` does not catch it: the reader got a traceback
+        and exit 1 — the code for "asked, nothing to report". A poisoned mailbox
+        therefore read as "no mail" to every script that follows the skill,
+        forever, with no seq printed to aim an `ack` past. Reproduced against a
+        live hub.
+        """
+        if kind not in KINDS:
+            msg = f"unknown message kind {kind!r}; this hub stores only: {', '.join(KINDS)}"
+            raise UsageError(msg)
         if self.get_agent(sender) is None:
             msg = f"unknown sender {sender!r}; register before sending"
             raise UsageError(msg)
@@ -253,7 +267,17 @@ class SqliteStore:
         )
 
     def unread(self, agent: str, limit: int = 50) -> list[Message]:
-        """Select what is addressed to `agent` past its cursor, never its own sends."""
+        """Select what is addressed to `agent` past its cursor, never its own sends.
+
+        The `_touch` is why a blocked reader looks busy. `cairn inbox --wait`
+        polls through here — about five times over a quiet 60-second wait — and
+        each poll refreshes `last_seen`, so a session doing nothing but standing
+        still shows in `peers` as the freshest agent on the hub. True, and
+        misleading in the one direction a peer asking "is the bench still there"
+        cares about. Documented rather than fixed: a `touch: bool` parameter was
+        measured at 0.093 ms/call against 0.014 ms read-only, and skipping the
+        write would cost the liveness signal for the ordinary read too.
+        """
         self._touch(agent)
         rows = self._db.execute(
             """SELECT * FROM messages

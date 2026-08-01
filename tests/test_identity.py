@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from cairn.config import check_pin, forget_pin, pin_of
-from cairn.errors import NameMoved
+from cairn.errors import NameMoved, UsageError
 from cairn.store import SqliteStore
 from cairn.wire import Agent
 
@@ -142,6 +142,27 @@ def test_last_seen_moves_when_an_agent_acks(store):
 def test_touching_an_unregistered_name_is_harmless(store):
     """`ack` must record a cursor even for a name with no agent row."""
     assert store.ack("never-registered", 3) == 3
+
+
+# -- what the store will let through the door ----------------------------------
+
+
+def test_a_kind_the_wire_would_reject_is_refused_at_the_door(store):
+    """A kind the reader cannot decode must never become durable.
+
+    `hub._send` hands `obj.get("kind", "tell")` straight to `append`, and
+    `Message.from_json` rejects unknown kinds — so a stored `"shout"` raised
+    `WireError` on every later read of that mailbox. That is a `ValueError`,
+    which `run()` does not catch, so the reader got a traceback and exit 1:
+    a poisoned inbox indistinguishable from an empty one, forever.
+    """
+    store.register(_agent("sender"))
+    store.register(_agent("recipient", cwd="/w/rx"))
+    with pytest.raises(UsageError) as caught:
+        store.append("shout", "sender", "recipient", "not a kind")
+    assert "shout" in str(caught.value)
+    for kind in ("tell", "ask", "reply"):
+        assert store.append(kind, "sender", "recipient", "fine").kind == kind
 
 
 # -- saying what the takeover did, and undoing it ------------------------------

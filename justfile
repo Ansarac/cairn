@@ -14,6 +14,17 @@ lint:
 fmt:
     uv run ruff format .
 
+# Formatting as a gate rather than a fixer, because CI runs it as one.
+#
+# Not a nicety: `check` was `lint guard test`, CI is lint + `format --check` +
+# guard + test, and the two drifted apart in the only direction that matters —
+# `just check` was green on a tree CI would have rejected. Found this session,
+# on `main`, two lines: hub.py's `_ack` and store.py's `Registration` return.
+# Neither had anything to do with what was being worked on, and nobody had run
+# `just fmt`, because nothing ever told them to.
+fmt-check:
+    uv run ruff format --check .
+
 # The vendor-coupling guard: nothing outside adapters/ may mention a vendor.
 #
 # Two greps, not one, because "cursor" is also cairn's own word for the
@@ -30,7 +41,8 @@ guard:
     || (echo "vendor name leaked outside src/cairn/adapters/ — see CLAUDE.md 'The one structural rule'" && exit 1)
     @echo "guard ok: core is vendor-free"
 
-check: lint guard test
+# The whole gate, in CI's order. If this is green, CI is green.
+check: lint fmt-check guard test
 
 # Install cairn globally from this checkout.
 #
@@ -41,6 +53,20 @@ check: lint guard test
 install:
     uv tool install --reinstall --force .
 
-# Run a hub in the foreground against a scratch database.
-hub port="7777":
+# Run the hub in the foreground, reachable from other machines, on a database
+# that survives a reboot.
+#
+# 0.0.0.0 and a state-directory database are both deliberate: this recipe is the
+# one people actually run, and a hub nobody else can reach — or one whose
+# database /tmp reclaims — is a hub that has to be re-explained every time. The
+# scratch equivalent is `just hub-dev`.
+#
+# cairn has no authentication and does not sign messages yet (docs/design.md §12
+# item 6), so binding this to a network means trusting everyone who can route to
+# it. On a shared LAN, bind an interface instead: `just hub 7777 10.0.0.5`.
+hub port="7777" host="0.0.0.0":
+    uv run cairn hub --port {{port}} --host {{host}} --db ~/.local/state/cairn/hub.db
+
+# Run a throwaway hub for local experiments. Nothing here is meant to survive.
+hub-dev port="7778":
     uv run cairn hub --port {{port}} --db /tmp/cairn-dev.db

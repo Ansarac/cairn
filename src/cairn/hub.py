@@ -186,9 +186,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _ack(self) -> None:
         obj = self._read()
-        cursor = self.store.ack(
-            str(obj.get("agent", "")), int(obj.get("seq") or 0), rewind=bool(obj.get("rewind"))
-        )
+        cursor = self.store.ack(str(obj.get("agent", "")), int(obj.get("seq") or 0), rewind=bool(obj.get("rewind")))
         self._reply(200, {"cursor": cursor})
 
 
