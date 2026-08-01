@@ -84,7 +84,24 @@ def test_the_sender_and_the_body_are_both_shown():
 
 
 def test_an_empty_inbox_reads_as_an_answer():
-    assert render.inbox_text([]) == "cairn inbox: no unread messages."
+    assert render.inbox_text([]) == "cairn inbox: no unread messages.\n"
+
+
+def test_every_rendering_ends_in_exactly_one_newline():
+    """`cli` prints all four with end="", so the newline has to come from here.
+
+    The empty inbox was the one that did not, and a peer agent polling in a loop
+    measured it: thirty-two bytes, no terminator, running into whatever came next.
+    """
+    for text in (
+        render.inbox_text([]),
+        render.inbox_text([_entry()]),
+        render.inbox_json([]),
+        render.peers_text([]),
+        render.peers_json([]),
+    ):
+        assert text.endswith("\n")
+        assert not text.endswith("\n\n")
 
 
 def test_json_output_carries_provenance():

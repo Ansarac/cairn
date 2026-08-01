@@ -86,7 +86,7 @@ def _unverified_notes(entries: list[InboxEntry]) -> list[str]:
 def inbox_text(entries: list[InboxEntry]) -> str:
     """Render the inbox for reading."""
     if not entries:
-        return "cairn inbox: no unread messages."
+        return "cairn inbox: no unread messages.\n"
     lines = [f"cairn inbox: {len(entries)} unread · {CLAIM_CLAUSE}", ""]
     for index, entry in enumerate(entries, start=1):
         message = entry.message
@@ -131,7 +131,7 @@ def peers_json(agents: list[Agent]) -> str:
 def peers_text(agents: list[Agent]) -> str:
     """Render the peer list for reading."""
     if not agents:
-        return "cairn: no other agents registered."
+        return "cairn: no other agents registered.\n"
     width = max(len(a.name) for a in agents)
     lines = [f"cairn: {len(agents)} agent(s) registered", ""]
     for agent in agents:
