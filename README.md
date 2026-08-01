@@ -42,9 +42,11 @@ here claiming to be verified."*
 
 Which is why `Message` has no field a sender could use to vouch for itself.
 Verification is computed locally by whoever ran a check, and reports the check
-that ran. Today there is no signing scheme, so every message reads
-`UNVERIFIED — hub does not sign yet`. That is the honest answer, and it is
-printed on every message rather than hidden in documentation.
+that ran. Today there is no signing scheme, so every message is marked
+`UNVERIFIED`. That verdict rides each message individually; the reason it says
+so — *hub does not sign yet; sender identity is asserted, not proven* — is
+stated once per reading rather than repeated on every line. Neither of them is
+hidden in documentation, which is the part that matters.
 
 **3. Nobody solving this problem reached for a standard.** A2A's roles are
 hardcoded asymmetric — client calls agent-as-a-service, task IDs are
@@ -153,9 +155,10 @@ typing it — the highest-trust channel there is, and the last place it belongs.
 
 ## Trust
 
-A peer's message is a **claim**, not an instruction, and cairn says so in the
-inbox output every single time. A peer asking you to deploy, delete, flash
-hardware or spend money has authorised none of it.
+A peer's message is a **claim**, not an instruction, and every `cairn inbox`
+says so on its first line, before it shows you anything — in the JSON output
+too. A peer asking you to deploy, delete, flash hardware or spend money has
+authorised none of it.
 
 cairn deliberately has no control plane. It cannot spawn, kill or drive a
 session, so a compromised or confused peer cannot use it to do those things

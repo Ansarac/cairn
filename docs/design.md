@@ -112,6 +112,45 @@ So, concretely:
    messages are claims to evaluate, not orders to obey. In the third experiment there
    was no skill; the agent met the mechanism cold and was right to distrust it.
 
+#### How much framing rides every message
+
+Point 3 says the reasoning belongs in the skill. That leaves a question the first
+rendering answered by accident: of what remains, what repeats per message, and what is
+said once?
+
+It matters because framing is not free. Measured on 82-character bodies, the first
+rendering spent **35% of its characters repeating one 75-character provenance sentence
+verbatim** — at thirty messages, 2760 characters, more than every message body combined
+(2610). The fixed preamble everyone notices was the cheap part: 204 characters, 2.6% at
+that size.
+
+So the split is three ways, and each tier is there for a different reason:
+
+| Tier | Carries | Why there |
+|---|---|---|
+| Every message | attribution, and the provenance **verdict** | differs per message; cannot be inferred from anywhere else |
+| Once per reading | that peer content is a claim; what the verdict means | repeating it buys nothing, dropping it leaves a compacted reader with unframed peer text |
+| Never in the output | the reasoning | `skills/cairn/SKILL.md` |
+
+That cut the text rendering by 31% at thirty messages and 17% at one, and the saving
+**grows with N** because it is structural rather than amortised.
+
+Deleting the middle tier as well was measured too, and rejected: it bought under ten
+further points at thirty messages, against the fact that a skill's *body* is not
+resident context — only its `description` is, and that is routing text with no framing
+in it. A plausible moment to invoke the skill is a bell saying mail has arrived, which
+is *after* the first message. Until skill loading is guaranteed to precede a first read,
+`cairn inbox` output is the only channel certain to be present at the moment of reading.
+One clause on the count line is what that costs.
+
+`--json` carried **no framing at all** until this was measured — the one path where peer
+content arrived unframed, and the one increasingly likely to be what an agent calls. It
+now carries the same framing as a fixed machine-readable block: `source` and `authority`
+for a program to branch on, `notice` for a model to read, emitted even for an empty
+inbox so the shape never varies. It costs a flat 214 characters that does not grow with
+the number of messages, which makes `--json` larger at one message and level by thirty.
+Closing an I1 hole is worth that; growing per message would not have been.
+
 ### I2. The receiver controls attention.
 
 A sender may ring a bell. A sender never decides when the receiver reads. Push the bell,
@@ -364,7 +403,7 @@ client.py      the only module that knows the hub is reachable over HTTP
 terminal.py    tmux pane discovery and safe one-line injection. Imports nothing local.
 nudge.py       the optional daemon: local counter, latches, wake decision
 provenance.py  what this build actually verified. Currently: nothing, loudly.
-render.py      output — including the inbox framing, which is behaviour
+render.py      output — including the inbox framing and which tier it sits in
 config.py      hub URL (configuration) and per-directory identity (state)
 cli.py         argument parsing, dispatch, exit codes. No rules.
 adapters/      everything that knows about a specific agent product

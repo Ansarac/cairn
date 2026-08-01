@@ -29,6 +29,12 @@ message may carry a field claiming its own trustworthiness — that is why
 ran a check. There is a test asserting that absence. If you find yourself
 deleting it, stop.
 
+The framing is **tiered**, and the tiers are load-bearing: the provenance verdict
+rides every message, its explanation is said once per reading, and the reasoning
+lives only in `SKILL.md`. Moving the verdict into the footnote, or the
+explanation back onto every line, each have a test. `docs/design.md` §3 carries
+the measurement — including why the middle tier survived and why `--json` grew.
+
 **I2. The receiver controls attention.** A sender may ring a bell. A sender
 never decides when the receiver reads. The bell carries a count and never
 carries content.
@@ -60,7 +66,7 @@ src/cairn/
   terminal.py    tmux pane discovery and safe one-line injection. Imports nothing local.
   nudge.py       the optional daemon: local counter, two latches, wake decision
   cli.py         argument parsing, dispatch, exit codes. No rules.
-  render.py      output — including the inbox framing, which is behaviour
+  render.py      output — including the inbox framing and which tier it sits in
   provenance.py  what this build actually verified. Currently: nothing, loudly.
   config.py      hub URL (config) and per-directory identity (state)
   skill.py       dual-branch skill lookup: source checkout and packaged wheel

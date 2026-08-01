@@ -33,8 +33,13 @@ guard:
 check: lint guard test
 
 # Install cairn globally from this checkout.
+#
+# --reinstall is load-bearing, not belt-and-braces. With the version unchanged
+# — which it is on every iteration between releases — `uv tool install --force .`
+# serves the cached wheel and silently installs the code you had before your
+# edit. Measured on uv 0.11.3, reproduced twice.
 install:
-    uv tool install --force .
+    uv tool install --reinstall --force .
 
 # Run a hub in the foreground against a scratch database.
 hub port="7777":

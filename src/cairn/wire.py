@@ -201,9 +201,18 @@ class Provenance:
         """Return the honest default: nothing was checked."""
         return cls(verified=False, method="none", detail=detail)
 
+    def token(self) -> str:
+        """Return the verdict alone, with no explanation attached.
+
+        This is what rides every message. The explanation is worth saying once
+        per reading, not once per message — but the verdict itself has to sit
+        next to the content it describes, so `UNVERIFIED` stays shouted.
+        """
+        return f"verified({self.method})" if self.verified else "UNVERIFIED"
+
     def label(self) -> str:
-        """Return a short human- and agent-readable verdict."""
-        return f"verified({self.method})" if self.verified else f"UNVERIFIED — {self.detail}"
+        """Return the verdict and why, for somewhere it is said only once."""
+        return self.token() if self.verified else f"UNVERIFIED — {self.detail}"
 
 
 @dataclass(frozen=True, slots=True)
