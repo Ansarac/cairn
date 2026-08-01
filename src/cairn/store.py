@@ -120,15 +120,43 @@ class SqliteStore:
     # -- agents ---------------------------------------------------------------
 
     def register(self, agent: Agent) -> Agent:
-        """Upsert the row, preserving `registered_at`, and park a new name at the head."""
+        """Upsert the row, and decide whether the cursor survives.
+
+        Three cases, and the distinction between the last two is the whole point.
+
+        A **new name** parks at the head, so a fresh session is not buried under
+        a month of other people's mail.
+
+        A **returning session** — same name, same `(machine, cwd)` — keeps its
+        cursor, so a restart still receives the backlog it actually missed.
+
+        A **takeover** — the same name arriving from somewhere else — parks at
+        the head too. Nothing separated these two before, and the consequence was
+        reproduced against a live hub: a second session registered an existing
+        name from another directory on another machine, inherited the cursor, and
+        read mail addressed to its predecessor. Neither was told.
+
+        `(machine, cwd)` is the discriminator because it is already carried, is
+        always populated, and is exactly the pair that "restarted in the same
+        directory" holds fixed. `session_id` would be stronger evidence and is
+        still stored, but a product that exports none leaves it `None`, so it
+        cannot be the test.
+
+        This does not stop a takeover — I3, and the hub cannot know which
+        claimant is legitimate. It stops the newcomer from silently inheriting a
+        conversation. The sending side refuses separately; see `config.check_pin`.
+        """
         existing = self.get_agent(agent.name)
+        moved = existing is not None and (existing.machine, existing.cwd) != (agent.machine, agent.cwd)
         stamped = Agent(
             name=agent.name,
             machine=agent.machine,
             cwd=agent.cwd,
             capabilities=agent.capabilities,
             session_id=agent.session_id,
-            registered_at=existing.registered_at if existing else agent.registered_at,
+            # A takeover is a new arrival, so it gets a new registration date.
+            # Keeping the old one would date the newcomer to its predecessor.
+            registered_at=existing.registered_at if existing and not moved else agent.registered_at,
             last_seen=now(),
         )
         self._db.execute(
@@ -152,6 +180,15 @@ class SqliteStore:
             # A name coming back — a restarted session — keeps whatever it had.
             self._db.execute(
                 "INSERT OR IGNORE INTO cursors (agent, last_acked_seq) VALUES (?, ?)",
+                (stamped.name, self._head()),
+            )
+        elif moved:
+            # Someone else now holds this name. Move the cursor forward to the
+            # head so the newcomer starts clean; `ack` refuses to rewind, so this
+            # is the one place a cursor may jump, and it only ever jumps forward.
+            self._db.execute(
+                """INSERT INTO cursors (agent, last_acked_seq) VALUES (?, ?)
+                   ON CONFLICT(agent) DO UPDATE SET last_acked_seq = MAX(last_acked_seq, excluded.last_acked_seq)""",
                 (stamped.name, self._head()),
             )
         return stamped
@@ -185,6 +222,7 @@ class SqliteStore:
             known = ", ".join(a.name for a in self.peers()) or "nobody yet"
             msg = f"unknown recipient {recipient!r}; registered agents are: {known}"
             raise UsageError(msg)
+        self._touch(sender)
         created = now()
         cursor = self._db.execute(
             """INSERT INTO messages (kind, sender, recipient, body, correlation_id, artifacts, created_at)
@@ -204,6 +242,7 @@ class SqliteStore:
 
     def unread(self, agent: str, limit: int = 50) -> list[Message]:
         """Select what is addressed to `agent` past its cursor, never its own sends."""
+        self._touch(agent)
         rows = self._db.execute(
             """SELECT * FROM messages
                WHERE seq > (SELECT last_acked_seq FROM cursors WHERE agent = ?)
@@ -216,6 +255,7 @@ class SqliteStore:
 
     def ack(self, agent: str, seq: int) -> int:
         """Move the cursor forward only: a late ack for old mail cannot rewind it."""
+        self._touch(agent)
         self._db.execute(
             """INSERT INTO cursors (agent, last_acked_seq) VALUES (?, ?)
                ON CONFLICT(agent) DO UPDATE SET last_acked_seq = MAX(last_acked_seq, excluded.last_acked_seq)""",
@@ -225,6 +265,23 @@ class SqliteStore:
         return int(row["last_acked_seq"])
 
     # -- internals ------------------------------------------------------------
+
+    def _touch(self, name: str) -> None:
+        """Record that `name` was heard from just now.
+
+        `last_seen` used to move only at registration, which made it mean
+        `last_registered`. Measured against a live hub: a peer that had sent
+        eight messages over twenty-five minutes still advertised the moment it
+        joined. That is misleading to a human reading `peers`, and useless to
+        anything trying to judge whether a name is still held by a live session
+        — which the takeover rule in `register` now depends on.
+
+        Silently a no-op for an unregistered name. Callers reach here through
+        paths that already validated the agent, or through `ack`, where refusing
+        to record a cursor because the agent row is missing would be worse than
+        not updating a timestamp.
+        """
+        self._db.execute("UPDATE agents SET last_seen = ? WHERE name = ?", (now(), name))
 
     def _head(self) -> int:
         row = self._db.execute("SELECT COALESCE(MAX(seq), 0) AS head FROM messages").fetchone()

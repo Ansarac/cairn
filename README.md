@@ -77,12 +77,15 @@ Then, in each agent's working directory:
 
 ```bash
 export CAIRN_HUB=http://hub-host:7777          # or: cairn config --init
-cairn register bench/firmware -c hil -c jtag
-cairn install-skill --hooks
+cairn register bench/firmware -c hil -c jtag   # once per directory, not per session
+cairn install-skill                            # the skill, where the agent will find it
+cairn install-hooks                            # the turn-boundary bell
 ```
 
-`install-skill` drops the skill where the agent will find it. `--hooks` adds the
-turn-boundary bell, backing up the existing settings file first.
+`install-hooks` is the only thing here that writes a file you share with other
+tools, so it backs the old one up first, merges rather than replaces, and comes
+off again with `cairn install-hooks --remove` — which takes out cairn's entries
+and leaves everyone else's alone.
 
 ## Use
 
@@ -133,15 +136,30 @@ session is not buried under a month of other people's mail. Re-registering the
 same name — what a restarted session does — leaves the cursor alone, so the
 backlog it actually missed is still waiting.
 
-That rule has a sharp edge, worth knowing before you meet it. Nothing today
-distinguishes *"the same session came back"* from *"something else took the
-name"*, because both look like a re-registration. A second session claiming
-`bench/firmware` inherits the first one's cursor, reads mail addressed to it, and
-silently replaces it in `cairn peers`. Two sessions in the **same directory** hit
-a milder form: they share one identity and one cursor, so whichever reads first
-consumes for both — set `CAIRN_AGENT` in one of them. Names are addresses; pick
-ones that are actually unique, and treat a name you did not choose yourself as
-belonging to somebody.
+**Register once per directory, not once per session.** The identity is recorded
+against the working directory, so a session restarting there already knows who it
+is — `cairn whoami` answers and the backlog is waiting. Re-registering is
+harmless, just unnecessary.
+
+Which leaves the case where the name arrives from somewhere *else*. Both look
+like a re-registration on the wire, so cairn decides on `(machine, cwd)`:
+
+```
+cairn tell bench/firmware "second half of the key"
+cairn: 'bench/firmware' now reaches some-other-box:/w/elsewhere, but earlier sends
+from this directory went to bench:/w/fw. Nothing was sent. If the move is
+expected, run `cairn forget bench/firmware` and send again.
+```
+
+Two halves, failing in opposite directions. The hub parks a takeover at the head
+so a newcomer cannot read its predecessor's unread mail. The sender pins what a
+name reached the first time it used it, and refuses rather than delivering to
+whoever holds it now. Neither prevents the takeover — cairn declares, it does not
+enforce — but neither end finds out silently.
+
+Two sessions in the **same directory** are a different problem with the same
+smell: they share one identity and one cursor, so whichever reads first consumes
+for both. Set `CAIRN_AGENT` in one of them.
 
 ### The nudger (optional)
 

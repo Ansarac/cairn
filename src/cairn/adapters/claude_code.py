@@ -79,6 +79,42 @@ def merge_hooks(settings: dict[str, object]) -> dict[str, object]:
     return merged
 
 
+def remove_hooks(settings: dict[str, object]) -> dict[str, object]:
+    """Return `settings` with cairn's hooks taken out and everyone else's left alone.
+
+    The inverse of `merge_hooks`, and it exists for a reason that is not
+    symmetry: hooks are the one thing cairn writes into a file the user owns and
+    shares with other tools. Backing that out should be a command, not an
+    instruction to hand-edit JSON — and hand-editing is exactly where somebody
+    deletes a neighbour's hook by accident.
+
+    Empty containers are pruned on the way out, so uninstalling from a file that
+    had no other hooks leaves no `"hooks": {}` behind to puzzle over later.
+    """
+    merged = dict(settings)
+    hooks = dict(merged.get("hooks") or {})  # type: ignore[arg-type]
+    for event in list(hooks):
+        kept = []
+        for entry in hooks[event] or []:  # type: ignore[union-attr]
+            if not isinstance(entry, dict):
+                kept.append(entry)
+                continue
+            inner = [h for h in entry.get("hooks") or [] if BELL_COMMAND not in json.dumps(h)]
+            if inner:
+                kept.append({**entry, "hooks": inner})
+            elif not entry.get("hooks"):
+                kept.append(entry)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    if hooks:
+        merged["hooks"] = hooks
+    else:
+        merged.pop("hooks", None)
+    return merged
+
+
 def sessions_dir() -> Path:
     """Return the directory where this product publishes live session state."""
     return Path.home() / ".claude" / "sessions"

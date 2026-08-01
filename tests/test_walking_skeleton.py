@@ -50,7 +50,52 @@ def hub(hub_server: ThreadingHTTPServer) -> HubClient:
 def _register(hub: HubClient, name: str, **kwargs) -> None:
     from cairn.wire import Agent
 
-    hub.register(Agent(name=name, machine=kwargs.pop("machine", "testbox"), cwd="/tmp/x", **kwargs))
+    hub.register(
+        Agent(
+            name=name,
+            machine=kwargs.pop("machine", "testbox"),
+            cwd=kwargs.pop("cwd", "/tmp/x"),
+            **kwargs,
+        )
+    )
+
+
+def test_a_name_that_moved_stops_reaching_its_old_holder(hub, tmp_path, monkeypatch):
+    """Both halves of the takeover rule, over a real socket, in the order they fire.
+
+    They are only meaningful together, which is why they are one test: the hub
+    stops a newcomer inheriting the conversation, and the sender stops new mail
+    following the name to whoever holds it now. Either alone leaves half the
+    exchange going somewhere nobody chose.
+    """
+    from cairn.cli import _check_recipient
+    from cairn.errors import NameMoved
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)
+
+    _register(hub, "ops/dispatch", cwd="/w/ops")
+    _register(hub, "rig/a", machine="bench", cwd="/w/rig")
+    _check_recipient(hub, "rig/a")
+    hub.send("tell", "ops/dispatch", "rig/a", "flash key is in the usual place")
+
+    _register(hub, "rig/a", machine="some-other-box", cwd="/w/elsewhere")
+
+    assert hub.inbox("rig/a") == []
+    with pytest.raises(NameMoved) as caught:
+        _check_recipient(hub, "rig/a")
+    assert "bench:/w/rig" in str(caught.value)
+
+
+def test_broadcast_has_no_holder_to_pin(hub, tmp_path, monkeypatch):
+    """`*` is not an address anyone can take over, so the check must not fire on it."""
+    from cairn.cli import _check_recipient
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)
+    _register(hub, "ops/dispatch", cwd="/w/ops")
+    _check_recipient(hub, "*")
+    assert hub.send("tell", "ops/dispatch", "*", "bench down ten minutes").seq > 0
 
 
 def test_a_message_crosses_between_two_agents(hub):

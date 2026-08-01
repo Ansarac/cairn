@@ -478,6 +478,45 @@ for. Broadcast makes it stricter: one row addressed to `*` is read by everyone p
 own cursor, so it cannot go until the slowest reader has passed it. Any retention scheme
 that reasons in days rather than in cursors will silently eat somebody's mail.
 
+### Who a name belongs to
+
+A name is an address, and re-registering one is how a restarted session recovers its
+mail. So on the wire, *"the same session came back"* and *"something else took the name"*
+are the same event. That was not a theory: registering an existing name from another
+directory on another machine against a live hub inherited the cursor, read mail addressed
+to the previous holder, and replaced it in `peers`. Neither end was told.
+
+`(machine, cwd)` is the discriminator, chosen over `session_id` for a dull reason —
+`session_id` comes from the host product and is `None` whenever that product exports
+none, which is every session in the environment this was measured in. The pair is already
+carried, always populated, and is exactly what "restarted in the same directory" holds
+fixed. It is a heuristic, and it is wrong in one direction on purpose: a session that
+genuinely moves directory is treated as a newcomer and loses its backlog. Re-registering
+is one command, and that case should be a new registration anyway.
+
+Two halves, failing in opposite directions:
+
+- **The hub** parks a takeover at the head, so a newcomer cannot read a conversation it
+  was not part of. This is the only place a cursor jumps, and it only jumps forward —
+  `ack` still refuses to rewind.
+- **The sender** records what a name reached the first time this directory wrote to it,
+  and raises rather than delivering when that changes, naming the old holder so the human
+  can judge whether the move was expected. `cairn forget <name>` clears it.
+
+Neither prevents the takeover. The hub cannot know which claimant is legitimate, and
+inventing an answer would be I3 with extra steps. What they prevent is finding out
+silently — the failure is now loud, on the side that can still do something about it.
+
+Fixing this needed `last_seen` fixed first. It was written only at registration, so it
+meant `last_registered`: a peer eight messages into a twenty-five-minute conversation
+still advertised the moment it joined. Any judgement about whether a name is still held
+by something alive was reading a field that could not answer. It now moves on send, read
+and ack.
+
+The shape is lifted from Claude Code's agent teams — see §10. Their answer is not to make
+names unique either; it is to record what a name meant at first use and refuse the send
+when it changes. That is the part worth copying, and it is cheap.
+
 ## 10. Prior art
 
 Surveyed 2026-08-01. The space is not greenfield, but the specific niche is unoccupied.

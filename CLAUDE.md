@@ -119,11 +119,23 @@ prints `{}` and exits 0. If you touch it, verify with the hub down.
 seq it has rung for. Without that, a reader who chose not to open the inbox gets
 a loop instead of a reminder.
 
-**A new agent starts at the head; a returning agent does not.** First
-registration parks the cursor at the current head so a fresh session is not
-buried under a month of other people's mail. Re-registration leaves the cursor
-alone so a restarted session still gets its backlog. Getting either direction
-wrong is immediately visible to users, and neither is obvious from the code.
+**Registration has three cases, and the last two look identical on the wire.** A
+new name parks the cursor at the current head, so a fresh session is not buried
+under a month of other people's mail. A returning session — same name, same
+`(machine, cwd)` — keeps its cursor, so a restart still gets its backlog. A
+**takeover** — the same name from anywhere else — parks at the head too, because
+otherwise a stranger inherits the conversation, which was reproduced against a
+live hub before it was fixed. `(machine, cwd)` is the discriminator; `session_id`
+is stored but is `None` whenever the host product exports none, so it cannot be
+the test. Getting any of the three wrong is immediately visible to users and none
+is obvious from the code — `tests/test_identity.py` pins all three.
+
+**The sending side pins names too, and it fails closed.** `config.check_pin`
+records what a name reached the first time this directory sent to it and raises
+`NameMoved` if that changes; `cairn forget <name>` is the escape hatch. This is a
+declaration, not enforcement (I3) — the hub still cannot know which claimant is
+legitimate. It exists so the failure is *loud on the sender* rather than silent
+on both ends.
 
 **The bell stream is allowed to drop; making it reliable breaks the hub.** If a
 subscriber's queue fills, `events.py` discards and counts rather than waiting —

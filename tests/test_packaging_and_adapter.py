@@ -63,6 +63,42 @@ def test_merging_hooks_leaves_other_hooks_alone():
     assert "PreToolUse" in merged["hooks"]
 
 
+def test_removing_hooks_undoes_merging_exactly():
+    assert claude_code.remove_hooks(claude_code.merge_hooks({})) == {}
+
+
+def test_removing_hooks_leaves_other_hooks_alone():
+    """The whole reason removal is a command: hand-editing is how a neighbour's hook dies."""
+    existing = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "make lint"}]}]}}
+    stripped = claude_code.remove_hooks(claude_code.merge_hooks(existing))
+    assert stripped == existing
+
+
+def test_removing_hooks_from_a_shared_entry_keeps_the_neighbour():
+    """A single entry holding both commands must lose one hook, not the entry."""
+    shared = {
+        "hooks": {
+            "Stop": [
+                {"hooks": [{"type": "command", "command": "make lint"}, {"type": "command", "command": "cairn bell"}]}
+            ]
+        }
+    }
+    stripped = claude_code.remove_hooks(shared)
+    assert "make lint" in json.dumps(stripped)
+    assert claude_code.BELL_COMMAND not in json.dumps(stripped)
+    assert len(stripped["hooks"]["Stop"]) == 1
+
+
+def test_removing_hooks_twice_is_a_no_op():
+    once = claude_code.remove_hooks(claude_code.merge_hooks({}))
+    assert claude_code.remove_hooks(once) == once
+
+
+def test_removing_hooks_leaves_no_empty_husk_behind():
+    """Nobody should have to wonder later what an empty `"hooks": {}` was for."""
+    assert "hooks" not in claude_code.remove_hooks(claude_code.merge_hooks({"env": {"A": "1"}}))
+
+
 def test_session_states_degrades_to_empty_rather_than_raising(tmp_path, monkeypatch):
     """The session registry is undocumented. A shape change must cost a nudge, not an outage."""
     monkeypatch.setattr(claude_code, "sessions_dir", lambda: tmp_path)

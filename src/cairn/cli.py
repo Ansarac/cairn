@@ -40,6 +40,23 @@ def _client(args: argparse.Namespace) -> HubClient:
     return HubClient(config.hub_url(getattr(args, "hub", None)))
 
 
+def _check_recipient(client: HubClient, recipient: str) -> None:
+    """Refuse to send if this name has moved since this directory last used it.
+
+    Costs one lookup per send. That is the price of not silently handing a
+    colleague's mail to whoever holds the name now, and it is paid on a command
+    that is already talking to the hub.
+
+    Broadcast is exempt: `*` has no holder to move. An unknown recipient is left
+    alone too — the hub rejects it with a better message than this could.
+    """
+    if recipient == BROADCAST:
+        return
+    match = next((a for a in client.peers() if a.name == recipient), None)
+    if match is not None:
+        config.check_pin(recipient, match.machine, match.cwd)
+
+
 def _artifacts(specs: Sequence[str]) -> list[Artifact]:
     artifacts = []
     for spec in specs:
@@ -95,7 +112,9 @@ def cmd_peers(args: argparse.Namespace) -> int:
 def cmd_tell(args: argparse.Namespace) -> int:
     """Send a message that needs no answer."""
     me = config.require_identity()
-    message = _client(args).send("tell", me, args.recipient, args.body, artifacts=_artifacts(args.artifact))
+    client = _client(args)
+    _check_recipient(client, args.recipient)
+    message = client.send("tell", me, args.recipient, args.body, artifacts=_artifacts(args.artifact))
     print(f"sent seq {message.seq} to {message.recipient}")
     return 0
 
@@ -109,7 +128,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
     """
     me = config.require_identity()
     correlation = args.correlation or f"q-{uuid.uuid4().hex[:8]}"
-    message = _client(args).send(
+    client = _client(args)
+    _check_recipient(client, args.recipient)
+    message = client.send(
         "ask", me, args.recipient, args.body, correlation_id=correlation, artifacts=_artifacts(args.artifact)
     )
     print(f"asked seq {message.seq} of {message.recipient}, correlation {correlation}")
@@ -119,7 +140,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
 def cmd_reply(args: argparse.Namespace) -> int:
     """Answer an `ask`."""
     me = config.require_identity()
-    message = _client(args).send("reply", me, args.recipient, args.body, correlation_id=args.correlation)
+    client = _client(args)
+    _check_recipient(client, args.recipient)
+    message = client.send("reply", me, args.recipient, args.body, correlation_id=args.correlation)
     print(f"replied seq {message.seq} to {message.recipient} for {args.correlation}")
     return 0
 
@@ -141,6 +164,15 @@ def cmd_ack(args: argparse.Namespace) -> int:
     cursor = _client(args).ack(config.require_identity(), args.seq)
     print(f"cursor at {cursor}")
     return 0
+
+
+def cmd_forget(args: argparse.Namespace) -> int:
+    """Drop this directory's pin for a name, so the next send re-learns it."""
+    if config.forget_pin(args.name):
+        print(f"forgot where {args.name} was; the next send will learn it again")
+        return 0
+    print(f"no pin recorded for {args.name} in this directory")
+    return EXIT_NOTHING
 
 
 def cmd_bell(args: argparse.Namespace) -> int:
@@ -256,23 +288,39 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
 
 def cmd_install_skill(args: argparse.Namespace) -> int:
-    """Install the bundled skill, and optionally the turn-boundary hooks."""
+    """Install the bundled skill."""
+    from cairn.adapters import default
+
+    target = skill.install_skill(default().skills_dir())
+    print(f"skill installed at {target}")
+    _ = args
+    return 0
+
+
+def cmd_install_hooks(args: argparse.Namespace) -> int:
+    """Add or remove the turn-boundary bell in the host product's settings.
+
+    This is the only file cairn writes that the user owns and shares with other
+    tools, which is why removal is a command rather than a paragraph telling
+    someone to edit JSON — that paragraph is how a neighbour's hook gets deleted
+    by accident. The previous file is always saved alongside first.
+    """
     from cairn.adapters import default
 
     adapter = default()
-    target = skill.install_skill(adapter.skills_dir())
-    print(f"skill installed at {target}")
-    if not args.hooks:
-        print("hooks not installed; re-run with --hooks to add the turn-boundary bell")
-        return 0
     settings_file = adapter.settings_path()
     settings = {}
     if settings_file.is_file():
         settings = json.loads(settings_file.read_text(encoding="utf-8"))
         settings_file.with_suffix(".json.cairn-backup").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    updated = adapter.remove_hooks(settings) if args.remove else adapter.merge_hooks(settings)
+    verb = "removed from" if args.remove else "installed in"
+    if updated == settings:
+        print(f"hooks already {'absent from' if args.remove else 'present in'} {settings_file}; nothing to do")
+        return 0
     settings_file.parent.mkdir(parents=True, exist_ok=True)
-    settings_file.write_text(json.dumps(adapter.merge_hooks(settings), indent=2) + "\n", encoding="utf-8")
-    print(f"hooks installed in {settings_file} (previous file saved alongside)")
+    settings_file.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    print(f"hooks {verb} {settings_file} (previous file saved alongside)")
     return 0
 
 
@@ -346,6 +394,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_inbox)
 
+    p = sub.add_parser("forget", help="drop this directory's pin for a name that has legitimately moved")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_forget)
+
     p = sub.add_parser("ack", help="move the read cursor by hand")
     p.add_argument("seq", type=int)
     p.set_defaults(func=cmd_ack)
@@ -372,8 +424,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.set_defaults(func=cmd_hub)
 
     p = sub.add_parser("install-skill", help="install the bundled skill")
-    p.add_argument("--hooks", action="store_true", help="also install the turn-boundary bell")
     p.set_defaults(func=cmd_install_skill)
+
+    p = sub.add_parser("install-hooks", help="add the turn-boundary bell to the host product's settings")
+    p.add_argument("--remove", action="store_true", help="take cairn's hooks back out, leaving any others alone")
+    p.set_defaults(func=cmd_install_hooks)
 
     p = sub.add_parser("config", help="show or create the config file")
     p.add_argument("--init", action="store_true")

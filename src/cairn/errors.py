@@ -44,3 +44,21 @@ class NotRegistered(CairnError):  # noqa: N818 - ditto: this is a state of the s
         """Build the standard message, appending `detail` in parentheses if given."""
         suffix = f" ({detail})" if detail else ""
         super().__init__(f"this session is not registered{suffix}; run `cairn register <name>` first")
+
+
+class NameMoved(CairnError):  # noqa: N818 - a fact about the network, not a fault in the caller
+    """A name no longer reaches what it reached earlier from this directory.
+
+    Nothing is sent. Failing closed is the point: the alternative is delivering
+    a message meant for a colleague to whoever happens to hold the name now, and
+    the sender never learning that it happened.
+    """
+
+    exit_code = 3
+
+    def __init__(self, name: str, was: str, now_is: str) -> None:
+        """Name what changed, and what the name used to reach."""
+        super().__init__(
+            f"{name!r} now reaches {now_is}, but earlier sends from this directory went to {was}. "
+            f"Nothing was sent. If the move is expected, run `cairn forget {name}` and send again."
+        )

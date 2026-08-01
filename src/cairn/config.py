@@ -15,6 +15,14 @@ recovering the name recovers the backlog.
 
 Known limit, stated rather than papered over: two sessions in the *same*
 directory would share one identity. Set `CAIRN_AGENT` in one of them.
+
+**Which peers I have talked to** is also state, also keyed by working directory.
+A name is an address and re-registering one is how a restarted session recovers
+its mail, so nothing on the network distinguishes "the same session came back"
+from "something else took the name". The pin file records what each name reached
+the first time this directory sent to it, and `check_pin` refuses when that
+changes. Registering once per directory is the normal case and costs nothing
+here — the pin only ever fires when a name genuinely moves.
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from cairn.errors import NotRegistered
+from cairn.errors import NameMoved, NotRegistered
 
 DEFAULT_HUB = "http://127.0.0.1:7777"
 
@@ -100,6 +108,71 @@ def require_identity(cwd: Path | None = None) -> str:
         detail = f"no identity recorded for {cwd or Path.cwd()}"
         raise NotRegistered(detail)
     return name
+
+
+def _pin_file(cwd: Path | None = None) -> Path:
+    return state_dir() / "pins" / f"{_slug(cwd or Path.cwd())}.json"
+
+
+def _read_pins(cwd: Path | None = None) -> dict[str, str]:
+    path = _pin_file(cwd)
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: str(v) for k, v in loaded.items()} if isinstance(loaded, dict) else {}
+
+
+def _write_pins(pins: dict[str, str], cwd: Path | None = None) -> None:
+    path = _pin_file(cwd)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(pins, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def pin_of(machine: str, peer_cwd: str) -> str:
+    """Return the identity a name is pinned to: where the holder actually is.
+
+    `(machine, cwd)` rather than a session id, because a session id is optional
+    — a product that publishes none leaves it empty — while these two are always
+    populated, already travel on the wire, and are exactly the pair that a
+    session restarting in place holds fixed.
+    """
+    return f"{machine}:{peer_cwd}"
+
+
+def check_pin(name: str, machine: str, peer_cwd: str, cwd: Path | None = None) -> None:
+    """Remember what `name` reaches, or refuse because it has changed.
+
+    A name is an address, and re-registering one is how a restarted session gets
+    its mail back — so nothing on the network distinguishes "the same session
+    came back" from "something else took the name". The hub stops a newcomer
+    inheriting a predecessor's unread mail; this stops a sender delivering *new*
+    mail to a stranger.
+
+    The pin is per sending directory and is recorded on first use, so it costs
+    nothing until a name actually moves. Raising rather than warning is
+    deliberate: a warning about a message that was sent anyway is not a
+    safeguard, it is a note in a log nobody reads.
+    """
+    pins = _read_pins(cwd)
+    current = pin_of(machine, peer_cwd)
+    previous = pins.get(name)
+    if previous and previous != current:
+        raise NameMoved(name, previous, current)
+    if previous != current:
+        pins[name] = current
+        _write_pins(pins, cwd)
+
+
+def forget_pin(name: str, cwd: Path | None = None) -> bool:
+    """Drop the pin for `name`, so the next send re-learns it. True if there was one."""
+    pins = _read_pins(cwd)
+    if pins.pop(name, None) is None:
+        return False
+    _write_pins(pins, cwd)
+    return True
 
 
 def write_default_config(hub: str = DEFAULT_HUB) -> Path:
