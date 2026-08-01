@@ -65,6 +65,30 @@ class _Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict[str, str]:
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
+    @staticmethod
+    def _int_param(query: dict[str, str], name: str, default: int) -> int:
+        """Read a numeric query parameter, refusing a non-number as a refusal.
+
+        `int(q.get("limit") or 50)` reads well and lands on the wrong exit code.
+        A `ValueError` here falls to `_dispatch`'s catch-all, which answers 500,
+        which `client._call` maps to `Unreachable` — exit 2, "the hub could not
+        be reached", for a hub that is up and simply disagreed with an argument.
+        That is a malformed request, which is 400 and exit 3.
+
+        Only reachable by a hand-built request today, because argparse converts
+        `--limit` before the client is called. It is fixed rather than left
+        because cut 4 would otherwise have copied the wart onto a second route,
+        and a wart on two routes is a pattern the next route will follow.
+        """
+        raw = query.get(name)
+        if raw is None or raw == "":
+            return default
+        try:
+            return int(raw)
+        except ValueError as exc:
+            msg = f"{name} must be a whole number, got {raw!r}"
+            raise UsageError(msg) from exc
+
     def _dispatch(self, table: dict[str, Any]) -> None:
         route = urlparse(self.path).path
         handler = table.get(route)
@@ -88,12 +112,21 @@ class _Handler(BaseHTTPRequestHandler):
                 "/v1/peers": self._peers,
                 "/v1/inbox": self._inbox,
                 "/v1/events": self._events,
+                "/v1/notes": self._notes,
+                "/v1/subjects": self._subjects,
             }
         )
 
     def do_POST(self) -> None:
         """Handle the write routes."""
-        self._dispatch({"/v1/register": self._register, "/v1/messages": self._send, "/v1/ack": self._ack})
+        self._dispatch(
+            {
+                "/v1/register": self._register,
+                "/v1/messages": self._send,
+                "/v1/ack": self._ack,
+                "/v1/notes": self._write_note,
+            }
+        )
 
     def _health(self) -> None:
         self._reply(200, {"ok": True, "agents": len(self.store.peers())})
@@ -108,7 +141,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not agent:
             msg = "inbox requires an ?agent= parameter"
             raise UsageError(msg)
-        limit = int(q.get("limit") or 50)
+        limit = self._int_param(q, "limit", 50)
         self._reply(200, {"messages": [m.to_json() for m in self.store.unread(agent, limit=limit)]})
 
     def _register(self) -> None:
@@ -188,6 +221,46 @@ class _Handler(BaseHTTPRequestHandler):
         obj = self._read()
         cursor = self.store.ack(str(obj.get("agent", "")), int(obj.get("seq") or 0), rewind=bool(obj.get("rewind")))
         self._reply(200, {"cursor": cursor})
+
+    def _write_note(self) -> None:
+        obj = self._read()
+        settles = obj.get("settles")
+        note = self.store.write_note(
+            author=obj.get("author", ""),
+            body=obj.get("body", ""),
+            subject=obj.get("subject"),
+            question=bool(obj.get("question")),
+            settles=int(settles) if settles is not None else None,
+            artifacts=[Artifact.from_json(a) for a in obj.get("artifacts") or ()],
+        )
+        self._reply(200, {"note": note.to_json()})
+        # No `notifier.publish` here, and its absence is the design rather than an
+        # omission. A note has no recipient to ring, and ringing everyone would
+        # turn sediment into mail — the receiver decides when to look at a
+        # subject, which is invariant I2. There is a test for this silence.
+
+    def _notes(self) -> None:
+        q = self._query()
+        entries, total = self.store.notes(
+            subject=q.get("subject"),
+            open_only=q.get("open") == "1",
+            find=q.get("find"),
+            limit=self._int_param(q, "limit", 50),
+        )
+        # Serialized by hand rather than through `NoteEntry.to_json()`, because
+        # that form carries a `provenance` block and the hub has no business
+        # sending one: a trust verdict is worth exactly the check that produced
+        # it, and no check ran here. See wire.NoteEntry and invariant I1.
+        self._reply(
+            200,
+            {
+                "notes": [{"note": e.note.to_json(), "settled_by": e.settled_by} for e in entries],
+                "total": total,
+            },
+        )
+
+    def _subjects(self) -> None:
+        self._reply(200, {"subjects": [s.to_json() for s in self.store.subjects()]})
 
 
 def make_server(

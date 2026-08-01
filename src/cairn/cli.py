@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, NoReturn
 from cairn import __version__, config, nudge, provenance, render, skill
 from cairn.client import HubClient
 from cairn.errors import CairnError, UsageError
-from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry
+from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, WireError, normalize_subject
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,8 +37,18 @@ if TYPE_CHECKING:
 EXIT_NOTHING = 1
 
 
+def _hub(args: argparse.Namespace) -> str:
+    """Resolve which hub this command talks to.
+
+    Named separately from `_client` because the URL is also *output*: every
+    answer of "nothing" prints it, so the reader can tell a quiet network from a
+    misconfigured one without a second command.
+    """
+    return config.hub_url(getattr(args, "hub", None))
+
+
 def _client(args: argparse.Namespace) -> HubClient:
-    return HubClient(config.hub_url(getattr(args, "hub", None)))
+    return HubClient(_hub(args))
 
 
 def _check_recipient(client: HubClient, recipient: str) -> None:
@@ -58,13 +68,61 @@ def _check_recipient(client: HubClient, recipient: str) -> None:
         config.check_pin(recipient, match.machine, match.cwd)
 
 
+def _subject(raw: str) -> str:
+    """Fold a subject locally, and make a bad one exit 3 rather than traceback.
+
+    `wire.normalize_subject` raises `WireError`, which is a `ValueError` and so
+    is deliberately *not* caught by `run()`. Left alone that means a mistyped
+    subject prints a stack trace and exits 1 — the code for "asked, nothing to
+    report" — which is the same shape as the poisoned mailbox docs/design.md
+    §12 item 3 records, arriving through a different door. A malformed argument
+    is exit 3, so the conversion happens at the boundary where the argument
+    arrives.
+    """
+    try:
+        return normalize_subject(raw)
+    except WireError as exc:
+        raise UsageError(str(exc)) from exc
+
+
 def _artifacts(specs: Sequence[str]) -> list[Artifact]:
+    """Parse `HOST:PATH` pairs, warning about a path nobody else can follow.
+
+    Warned about rather than refused, because cairn never resolves a path and
+    the filesystem it names is usually not this one — a rule this build has no
+    standing to enforce is I3 again. What it can do is report the two things it
+    is actually able to check, and both were found by live sessions.
+
+    **A relative path is not a location.** It is meaningless the moment it leaves
+    the shell that produced it, and an artifact on a *note* is read months later
+    by somebody with no idea what the writer's working directory was.
+
+    **A path that is not here may already be broken.** The harder case, and the
+    one the first warning walked straight past: a session wrote
+    `bench:/srv/hil/441/n33-coldstart.ctf` into an append-only note and later
+    found the file unreachable from its own machine. Absolute, well-formed,
+    stored in silence, permanent. So a path that does not exist locally is said
+    out loud — with the condition attached, because the ordinary cross-machine
+    reference is a path that legitimately is not here. That phrasing matters: the
+    check cannot tell the two apart, so it must not pretend to.
+    """
     artifacts = []
     for spec in specs:
         host, sep, path = spec.partition(":")
         if not sep or not path:
-            msg = f"artifact {spec!r} must look like HOST:/absolute/path"
+            msg = f"artifact {spec!r} must look like HOST:/absolute/path — HOST is always required"
             raise UsageError(msg)
+        if not path.startswith("/"):
+            print(
+                f"cairn: warning: artifact path {path!r} is not absolute, so it names nothing on {host}",
+                file=sys.stderr,
+            )
+        elif not Path(path).exists():
+            print(
+                f"cairn: note: {path} is not on this machine — fine if {host} is somewhere else, "
+                f"already broken if {host} is here",
+                file=sys.stderr,
+            )
         artifacts.append(Artifact(host=host, path=path))
     return artifacts
 
@@ -84,14 +142,38 @@ def cmd_register(args: argparse.Namespace) -> int:
         capabilities=tuple(args.capability),
         session_id=adapter.session_id(),
     )
-    registration = _client(args).register(agent)
+    client = _client(args)
+    registration = client.register(agent)
     joined = registration.agent
     config.remember_identity(joined.name)
     print(f"registered as {joined.name} on {joined.machine}")
     print(f"  cwd          {joined.cwd}")
     print(f"  capabilities {', '.join(joined.capabilities) or '—'}")
     print(render.arrival_note(registration), end="")
+    print(_open_questions(client), end="")
     return 0
+
+
+def _open_questions(client: HubClient) -> str:
+    """Return the "something is unanswered" line, or nothing.
+
+    Wrapped in its own catch, and that is not defensive noise. `/v1/subjects`
+    does not exist on a hub built before this cut, and `client._call` maps a 404
+    to `Unreachable` — so without this, registering against an older hub would
+    fail outright with exit 2 on a hub that is up, healthy, and perfectly able to
+    carry messages. Additive routes are only additive if the caller treats their
+    absence as "no answer" rather than as an outage.
+
+    `WireError` is caught alongside, and only here. It is a `ValueError`, so
+    `run()` lets it become a traceback — correct for a real read, where a hub
+    speaking nonsense is something the caller must be told about. This is a
+    courtesy line on a command whose actual job already succeeded; failing a
+    registration over the garnish would be the tail wagging the dog.
+    """
+    try:
+        return render.open_questions_hint(client.subjects())
+    except (CairnError, WireError):
+        return ""
 
 
 def cmd_whoami(args: argparse.Namespace) -> int:
@@ -106,20 +188,62 @@ def cmd_whoami(args: argparse.Namespace) -> int:
 
 
 def cmd_peers(args: argparse.Namespace) -> int:
-    """List the other agents on the network."""
-    agents = _client(args).peers(exclude=config.current_identity())
-    print(render.peers_json(agents) if args.json else render.peers_text(agents), end="")
+    """List the other agents on the network, optionally only those that can do a thing.
+
+    The filter is client-side and needs no route of its own. It exists because
+    the skill sells capabilities as *how you find the machine that has the thing
+    you need*, and then offered no way to ask — a live session went looking for
+    it, did not find it, and read the whole list by eye. Three agents is fine by
+    eye; the promise stops being true well before thirty.
+
+    Matching is exact against the strings agents registered. Those strings are
+    unverified assertions — a session registering `-c hil` is claiming, not
+    proving, and one live session advertised hardware capabilities it turned out
+    not to have. I3: this narrows a list, it does not certify anyone.
+    """
+    hub = _hub(args)
+    everyone = HubClient(hub).peers(exclude=config.current_identity())
+    agents = everyone
+    if args.capability:
+        wanted = set(args.capability)
+        agents = [a for a in everyone if wanted <= set(a.capabilities)]
+    text = render.peers_text(agents, hub, wanted=args.capability, registered=len(everyone))
+    print(render.peers_json(agents) if args.json else text, end="")
     return 0 if agents else EXIT_NOTHING
 
 
 def cmd_tell(args: argparse.Namespace) -> int:
-    """Send a message that needs no answer."""
+    """Send a message that needs no answer.
+
+    A broadcast reports how far it went. `sent seq 1 to *` is the same line on a
+    hub with twelve agents and on a hub with none, and the whole point of a
+    broadcast is discovery — a live session used one to announce a capability,
+    and could only infer that anybody had heard by getting a reply. The count
+    costs one lookup, and only on `*`.
+    """
     me = config.require_identity()
     client = _client(args)
     _check_recipient(client, args.recipient)
     message = client.send("tell", me, args.recipient, args.body, artifacts=_artifacts(args.artifact))
-    print(f"sent seq {message.seq} to {message.recipient}")
+    print(f"sent seq {message.seq} to {message.recipient}{_reach(client, message.recipient, me)}")
     return 0
+
+
+def _reach(client: HubClient, recipient: str, me: str) -> str:
+    """Say how many mailboxes a broadcast landed in, or nothing at all.
+
+    Guarded like the other garnishes: the message is already stored, so a lookup
+    that fails must cost the count and not the send. Zero is worth saying out
+    loud — it is the shape of "you are the only one here", which on a two-machine
+    tool is more often a misconfiguration than a fact.
+    """
+    if recipient != BROADCAST:
+        return ""
+    try:
+        others = len(client.peers(exclude=me))
+    except (CairnError, WireError):
+        return ""
+    return f" · {others} other agent{'' if others == 1 else 's'} registered"
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
@@ -191,7 +315,7 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     # nothing here handles SIGTERM, so a host killing the command in the window
     # between these two lines would move the cursor past mail that never reached
     # the terminal — the one way this command can lose a message outright.
-    print(render.inbox_json(entries) if args.json else render.inbox_text(entries), end="", flush=True)
+    print(render.inbox_json(entries) if args.json else render.inbox_text(entries, _hub(args)), end="", flush=True)
     if not messages:
         if args.wait is not None:
             print(f"cairn: waited {args.wait:g}s, still nothing.", file=sys.stderr)
@@ -199,6 +323,124 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if not args.no_ack:
         client.ack(me, max(m.seq for m in messages))
     return 0
+
+
+def cmd_note(args: argparse.Namespace) -> int:
+    """Leave something on a subject for whoever turns up next.
+
+    Prints the subject the hub filed it under rather than the one that was
+    typed, and says so when the two differ. Subjects are case-folded so that
+    `rig-a` and `Rig-A` cannot become two piles — but a fold nobody is told about
+    is the same silent surprise in a smaller font.
+
+    It also says whether the pile is one that already existed. Folding case only
+    catches the split it was designed for; a live session pointed out the bigger
+    one it does not touch — `soak-441`, `eval-441`, `run-441` and `441` are four
+    subjects cairn will happily create, and creating one looks exactly like
+    adding to one. So the write reports which happened, and a new pile says so.
+    """
+    me = config.require_identity()
+    client = _client(args)
+    note = client.write_note(
+        author=me,
+        body=args.body,
+        subject=_subject(args.subject),
+        question=args.question,
+        artifacts=_artifacts(args.artifact),
+    )
+    print(f"{'question' if note.question else 'note'} {note.id} on {note.subject}{_pile(client, note.subject)}")
+    if note.subject != args.subject:
+        print(f"  subject folded from {args.subject!r}")
+    if note.question:
+        print(f'  it stays open until someone runs `cairn settle {note.id} "…"` — including after you are gone')
+    return 0
+
+
+def _pile(client: HubClient, subject: str) -> str:
+    """Say whether that subject already existed, and how much is on it now.
+
+    Counted from the index, which groups by exact subject, so writing to `rig-a`
+    when only `rig-a/chamber` has notes still reads as new — which it is.
+
+    Guarded like `_open_questions`, and for the same reason: this is a garnish on
+    a write that already succeeded, and an older hub without the route must not
+    turn a stored note into a failed command.
+
+    It costs a second round trip, and fetches the whole index to read one row.
+    Accepted for now because notes are written a handful of times a shift and the
+    index is one row per subject. The cheaper shape is the write response
+    carrying the count — that is a sibling key next to `note`, exactly as
+    `Registration` gained its own, and worth doing if the index ever grows past
+    a screenful or if a caller starts writing notes in a loop.
+    """
+    try:
+        match = next((s for s in client.subjects() if s.subject == subject), None)
+    except (CairnError, WireError):
+        return ""
+    if match is None or match.notes <= 1:
+        return " · new subject — `cairn notes` lists the ones that already exist"
+    return f" · {match.notes} notes there now"
+
+
+def cmd_settle(args: argparse.Namespace) -> int:
+    """Answer an open question, whoever asked it.
+
+    No ownership check, deliberately: the whole reason this exists is a session
+    that ended and took its questions with it, leaving a peer holding the answer.
+    See invariant I3 — cairn declares intent and does not enforce it.
+
+    The subject is not an argument. It comes from the question being settled, so
+    an answer cannot be filed away from its question.
+    """
+    me = config.require_identity()
+    note = _client(args).write_note(author=me, body=args.body, settles=args.id, artifacts=_artifacts(args.artifact))
+    print(f"note {note.id} on {note.subject} settles question {args.id}")
+    return 0
+
+
+def cmd_notes(args: argparse.Namespace) -> int:
+    """Read sediment: one subject, everything unanswered, or the index.
+
+    Reading a note consumes nothing. There is no cursor here and no ack — a pile
+    is not a queue, and the next reader must find it exactly as this one did.
+
+    With no subject and no filter this prints the index rather than every note
+    ever written, because the useful question on arrival is "is there anything
+    here", not "show me everything".
+
+    The subject is folded to its canonical form *here*, before the call, so that
+    the header names the pile that was actually searched. Sending the raw text
+    and printing the raw text agrees with itself and disagrees with the hub —
+    `cairn notes RIG-A` would head its output `RIG-A` while reading `rig-a`.
+    """
+    # A non-positive limit is refused rather than clamped, because both ways of
+    # getting it wrong lie. SQLite reads `LIMIT -1` as "no limit", so a negative
+    # number silently returns everything; `LIMIT 0` returns nothing, and an empty
+    # page renders as "nothing on rig-a yet" — a pile of five notes reported as an
+    # empty subject, which is the one answer a reader will act on without checking.
+    if args.limit < 1:
+        msg = f"--limit needs to be at least 1, got {args.limit}"
+        raise UsageError(msg)
+    client = _client(args)
+    subject = _subject(args.subject) if args.subject is not None else None
+    if subject is None and not args.open and not args.find:
+        summaries = client.subjects()
+        print(render.subjects_json(summaries) if args.json else render.subjects_text(summaries, _hub(args)), end="")
+        return 0 if summaries else EXIT_NOTHING
+    entries, total = client.notes(subject, open_only=args.open, find=args.find, limit=args.limit)
+    read = [e.checked(provenance.assess_note(e.note)) for e in entries]
+    scope = {"subject": subject, "open_only": args.open, "find": args.find}
+    # Only the text renderer names the hub. The "nothing" answers say who they
+    # asked because a *model* reads them and may have no idea what this
+    # directory is configured against; whatever invoked `--json` chose the hub
+    # itself one call ago, so telling it would be telling it its own argument.
+    text = (
+        render.notes_json(read, total, **scope)
+        if args.json
+        else render.notes_text(read, total, hub=_hub(args), **scope)
+    )
+    print(text, end="")
+    return 0 if read else EXIT_NOTHING
 
 
 def cmd_ack(args: argparse.Namespace) -> int:
@@ -428,6 +670,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.set_defaults(func=cmd_whoami)
 
     p = sub.add_parser("peers", help="list the other agents")
+    p.add_argument(
+        "-c",
+        "--capability",
+        action="append",
+        default=[],
+        help="repeatable; show only agents claiming all of these, e.g. -c gpu",
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_peers)
 
@@ -475,6 +724,48 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
         help="if the inbox is empty, block this long for something to arrive (default 60)",
     )
     p.set_defaults(func=cmd_inbox)
+
+    p = sub.add_parser(
+        "note",
+        help="leave something on a subject for whoever turns up next",
+        description=(
+            "Leave a fact, a decision or an open question on a subject — a rig, a run, a board. "
+            "A note has no recipient, rings no bell and is never consumed by reading: it waits at "
+            "the subject for whoever turns up next, including sessions that do not exist yet."
+        ),
+    )
+    p.add_argument("subject", help="the thing this is about, e.g. rig-a or eval-441")
+    p.add_argument("body")
+    p.add_argument(
+        "-q",
+        "--question",
+        action="store_true",
+        help="record this as an open loop; it stays open until someone runs `cairn settle`",
+    )
+    p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
+    p.set_defaults(func=cmd_note)
+
+    p = sub.add_parser("settle", help="answer an open question, whoever asked it")
+    p.add_argument("id", type=int, help="the note id printed by `cairn notes`")
+    p.add_argument("body")
+    p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
+    p.set_defaults(func=cmd_settle)
+
+    p = sub.add_parser(
+        "notes",
+        help="read notes: one subject, everything unanswered, or the index",
+        description=(
+            "Read sediment. With no subject this prints the index of subjects and how much is "
+            "unanswered on each. Reading consumes nothing — there is no cursor here, so the next "
+            "reader finds everything you found."
+        ),
+    )
+    p.add_argument("subject", nargs="?", help="omit to see the index of subjects")
+    p.add_argument("--open", action="store_true", help="only questions nobody has settled")
+    p.add_argument("--find", metavar="TEXT", help="substring search across bodies and subjects")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_notes)
 
     p = sub.add_parser("forget", help="drop this directory's pin for a name that has legitimately moved")
     p.add_argument("name")

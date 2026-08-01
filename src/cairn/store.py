@@ -11,6 +11,12 @@ An agent can be gone for a week, come back with an empty disk, and `unread()`
 still returns exactly what it missed. This is the whole answer to "the peer was
 switched off", and it costs one integer per agent.
 
+**Notes are not messages with a longer shelf life.** They live in their own
+table, have no recipient and no cursor, and reading one moves nothing. A message
+is addressed to a session; a note is addressed to a *subject* and waits there for
+whoever turns up next. Whether a question is still open is derived from whether
+any note points at it, never stored — see `write_note`.
+
 **A new agent starts at the end, a returning agent does not.** Registering a
 name for the first time sets its cursor to the current head, so a fresh session
 is not buried under a month of other people's mail. Re-registering the same
@@ -27,7 +33,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from cairn.errors import UsageError
-from cairn.wire import BROADCAST, KINDS, Agent, Arrival, Artifact, Message, MessageKind, Registration, now
+from cairn.wire import (
+    BROADCAST,
+    KINDS,
+    MAX_BODY_CHARS,
+    Agent,
+    Arrival,
+    Artifact,
+    Message,
+    MessageKind,
+    Note,
+    NoteEntry,
+    Registration,
+    SubjectSummary,
+    normalize_subject,
+    now,
+)
 
 _COUNT_ALL = 1_000_000
 """A limit high enough to mean "all of it" when counting a skipped backlog."""
@@ -60,6 +81,18 @@ CREATE TABLE IF NOT EXISTS cursors (
     agent          TEXT PRIMARY KEY,
     last_acked_seq INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject    TEXT NOT NULL,
+    author     TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    question   INTEGER NOT NULL DEFAULT 0,
+    settles    INTEGER REFERENCES notes (id),
+    artifacts  TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
+CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
 """
 
 
@@ -96,6 +129,32 @@ class Store(Protocol):
 
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
         """Move the cursor to `seq` and return where it now sits."""
+        ...
+
+    def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `append`
+        self,
+        author: str,
+        body: str,
+        subject: str | None = None,
+        question: bool = False,  # noqa: FBT001, FBT002 - mirrors `Note.question`; keyword-only here would not match the wire
+        settles: int | None = None,
+        artifacts: Sequence[Artifact] = (),
+    ) -> Note:
+        """Durably record a note and return it with its assigned id."""
+        ...
+
+    def get_note(self, note_id: int) -> Note | None:
+        """Return one note, or None."""
+        ...
+
+    def notes(
+        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
+    ) -> tuple[list[NoteEntry], int]:
+        """Return a page of notes, oldest first, and the total the filter matched."""
+        ...
+
+    def subjects(self) -> list[SubjectSummary]:
+        """Return every subject that has notes, with counts."""
         ...
 
 
@@ -321,6 +380,177 @@ class SqliteStore:
         row = self._db.execute("SELECT last_acked_seq FROM cursors WHERE agent = ?", (agent,)).fetchone()
         return int(row["last_acked_seq"])
 
+    # -- notes ----------------------------------------------------------------
+
+    def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `append`
+        self,
+        author: str,
+        body: str,
+        subject: str | None = None,
+        question: bool = False,  # noqa: FBT001, FBT002 - mirrors `Note.question`; keyword-only here would not match the wire
+        settles: int | None = None,
+        artifacts: Sequence[Artifact] = (),
+    ) -> Note:
+        """Insert a note, deriving the subject when this one settles a question.
+
+        Three refusals, each closing a way for sediment to become useless.
+
+        **An unregistered author.** Same rule as `append`: a name that nobody
+        can look up is not attribution.
+
+        **An empty body.** A note with nothing in it still occupies a subject and
+        still shows in the counts, so it costs a future reader a read and tells
+        them nothing.
+
+        **Settling something that is not an open question.** `--settles` exists
+        to close a loop; pointing it at a statement would make `open` mean
+        whatever the last caller felt like.
+
+        A settling note **inherits its target's subject** rather than being given
+        one. That removes an entire class of mistake — an answer filed under a
+        different subject from its question is an answer nobody finds — and it is
+        why `cairn settle` takes an id and no subject.
+
+        A settling note is never itself a question. An answer that raises a new
+        question is a second note on the same subject; folding both into one row
+        would make "is this open" ambiguous for the one field whose whole value
+        is that it is not.
+        """
+        if self.get_agent(author) is None:
+            msg = f"unknown author {author!r}; register before writing a note"
+            raise UsageError(msg)
+        if settles is not None:
+            target = self.get_note(settles)
+            if target is None:
+                msg = f"no note {settles} to settle"
+                raise UsageError(msg)
+            if not target.question:
+                msg = f"note {settles} is not a question, so there is nothing to settle; add a note to its subject"
+                raise UsageError(msg)
+            subject, question = target.subject, False
+        if subject is None:
+            msg = "a note needs a subject: the rig, run or board it is about"
+            raise UsageError(msg)
+        subject = normalize_subject(subject)
+        text = body.strip()
+        if not text:
+            msg = "a note with no body is not sediment; say what a reader six months from now needs to know"
+            raise UsageError(msg)
+        if len(text) > MAX_BODY_CHARS:
+            msg = f"note body is {len(text)} chars, limit is {MAX_BODY_CHARS}; reference an artifact instead"
+            raise UsageError(msg)
+        self._touch(author)
+        created = now()
+        cursor = self._db.execute(
+            """INSERT INTO notes (subject, author, body, question, settles, artifacts, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (subject, author, text, int(question), settles, json.dumps([a.to_json() for a in artifacts]), created),
+        )
+        return Note(
+            id=int(cursor.lastrowid or 0),
+            subject=subject,
+            author=author,
+            body=text,
+            question=question,
+            settles=settles,
+            artifacts=tuple(artifacts),
+            created_at=created,
+        )
+
+    def get_note(self, note_id: int) -> Note | None:
+        """Look one note up by id."""
+        row = self._db.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return _note_from_row(row) if row else None
+
+    def notes(
+        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
+    ) -> tuple[list[NoteEntry], int]:
+        """Return a page of notes and the total the same filter matched.
+
+        The total is returned rather than inferred, and that is the fix for a
+        defect this project already has elsewhere: `cairn inbox` truncates at
+        `--limit` and says nothing, which is how the turn-boundary bell goes
+        permanently deaf past that limit — see the appendix of docs/design.md. A
+        caller that cannot tell a full page from a complete answer will
+        eventually treat one as the other, so the count ships with the page.
+
+        The page is the **newest** matches, handed back oldest-first. Truncation
+        therefore drops ancient sediment rather than today's, while the reading
+        order stays chronological — a pile is read forwards even when only its
+        top is shown.
+
+        `settled_by` is the *first* note that settled each question. A second
+        opinion is allowed to arrive later and is stored like anything else; what
+        it does not do is reopen the question or replace the answer of record.
+
+        A subject read includes everything filed **under** it — see the prefix
+        clause below. The index does not roll up, deliberately: it lists the
+        piles that exist, while a read answers "what is known about this thing",
+        and those are different questions.
+        """
+        where = ["1 = 1"]
+        params: list[object] = []
+        if subject is not None:
+            # Reading a subject includes everything under it. `/` is a legal
+            # subject character, so `rig-a/chamber` is a natural thing to write —
+            # and a reader who writes it has been invited by the character to
+            # believe `cairn notes rig-a` will find it. Without this clause it
+            # does not, and the note is invisible from the only place anyone
+            # would look for it. Found by a session writing the docs, which had
+            # read the character set and drawn exactly that conclusion.
+            #
+            # `_like_escape` is not optional here: `_` is in the permitted set,
+            # so an unescaped prefix of `rig_a` would also match `rigXa/…`.
+            root = normalize_subject(subject)
+            where.append("(n.subject = ? OR n.subject LIKE ? ESCAPE '\\')")
+            params += [root, f"{_like_escape(root)}/%"]
+        if open_only:
+            where.append("n.question = 1 AND NOT EXISTS (SELECT 1 FROM notes s WHERE s.settles = n.id)")
+        if find:
+            where.append("(n.body LIKE ? ESCAPE '\\' OR n.subject LIKE ? ESCAPE '\\')")
+            pattern = f"%{_like_escape(find)}%"
+            params += [pattern, pattern]
+        clause = " AND ".join(where)
+        total = int(self._db.execute(f"SELECT COUNT(*) AS c FROM notes n WHERE {clause}", params).fetchone()["c"])  # noqa: S608 - `clause` is built from literals above; every value is a bound parameter
+        rows = self._db.execute(
+            f"""SELECT n.*, (SELECT MIN(s.id) FROM notes s WHERE s.settles = n.id) AS settled_by
+                FROM notes n WHERE {clause} ORDER BY n.id DESC LIMIT ?""",  # noqa: S608 - ditto
+            [*params, limit],
+        ).fetchall()
+        entries = [
+            NoteEntry(note=_note_from_row(r), settled_by=int(r["settled_by"]) if r["settled_by"] is not None else None)
+            for r in reversed(rows)
+        ]
+        return entries, total
+
+    def subjects(self) -> list[SubjectSummary]:
+        """Return every subject holding notes, most in need of attention first.
+
+        Ordered by open questions and then by recency, because the question this
+        answers is "is there anything here I should read before I start" — and an
+        alphabetical list makes the reader do that sort themselves, every time.
+        """
+        rows = self._db.execute(
+            """SELECT n.subject AS subject,
+                      COUNT(*) AS notes,
+                      SUM(CASE WHEN n.question = 1
+                                AND NOT EXISTS (SELECT 1 FROM notes s WHERE s.settles = n.id)
+                               THEN 1 ELSE 0 END) AS open_questions,
+                      MAX(n.created_at) AS last_at
+               FROM notes n
+               GROUP BY n.subject
+               ORDER BY open_questions DESC, last_at DESC"""
+        ).fetchall()
+        return [
+            SubjectSummary(
+                subject=r["subject"],
+                notes=int(r["notes"]),
+                open_questions=int(r["open_questions"]),
+                last_at=r["last_at"],
+            )
+            for r in rows
+        ]
+
     # -- internals ------------------------------------------------------------
 
     def _touch(self, name: str) -> None:
@@ -358,6 +588,29 @@ def _agent_from_row(row: sqlite3.Row) -> Agent:
         session_id=row["session_id"],
         registered_at=row["registered_at"],
         last_seen=row["last_seen"],
+    )
+
+
+def _like_escape(text: str) -> str:
+    r"""Neutralise SQL `LIKE` wildcards so a search for `100%` finds `100%`.
+
+    Paired with `ESCAPE '\'` at every call site. Without it a body containing a
+    literal `%` is unsearchable and a search *for* `%` matches the whole table,
+    which reads as a broken index rather than as a quoting rule.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _note_from_row(row: sqlite3.Row) -> Note:
+    return Note(
+        id=int(row["id"]),
+        subject=row["subject"],
+        author=row["author"],
+        body=row["body"],
+        question=bool(row["question"]),
+        settles=int(row["settles"]) if row["settles"] is not None else None,
+        artifacts=tuple(Artifact.from_json(a) for a in json.loads(row["artifacts"])),
+        created_at=row["created_at"],
     )
 
 

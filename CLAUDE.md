@@ -39,6 +39,11 @@ the measurement — including why the middle tier survived and why `--json` grew
 never decides when the receiver reads. The bell carries a count and never
 carries content.
 
+A `note` is the limit case: it has no recipient, so it rings nothing at all, and
+reading it consumes nothing. Both absences are tested. Adding a bell to notes, or
+a per-agent read position, turns a pile into a queue and breaks the one property
+the cut exists for — that the *next* reader finds what the last one found.
+
 **I3. cairn declares intent; it does not enforce it.** A claim says someone is
 using a resource. It is not a lock. Real exclusion over hardware belongs to the
 kernel on the machine that owns it.
@@ -60,6 +65,7 @@ src/cairn/
   wire.py        the contract: message schema + PROTOCOL_VERSION. Imports nothing local.
   errors.py      exceptions carrying their exit code
   store.py       Store protocol + SqliteStore. Server-side cursors live here.
+                 Notes live here too, and they have no cursor — see I2.
   events.py      SSE codec + in-process fan-out. Allowed to drop; read its docstring.
   hub.py         stdlib HTTP + the SSE route. Parse, call one store method, serialize.
   client.py      the only module that knows the hub is reachable over HTTP
@@ -109,6 +115,15 @@ carried out as asked · `130` interrupted.
 an answer; an unreachable hub means messages are not being delivered and nobody
 is being told.
 
+**A `WireError` reaching `run()` is a traceback plus exit `1`** — a stack trace
+under the code for "asked, nothing to report", which is the poisoned-mailbox
+shape wearing a different hat. `WireError` is a `ValueError`, so `run()`
+deliberately does not catch it. Anything in `wire.py` that validates *caller
+input* therefore needs converting at the boundary: `cli._subject` wraps
+`normalize_subject` and re-raises `UsageError`. Any new validator wants the same
+wrapper, and the test to prove it is an exit-code assertion through `cli.run`,
+not a call to the helper.
+
 A malformed command line is `3`, and that costs one non-obvious line of code:
 argparse's own `error()` exits **2**, so `cli._Parser` overrides it to raise
 `UsageError` and `run()` parses inside its `try`. Subparsers inherit the class
@@ -122,6 +137,14 @@ whether the hub had died.
 **A change to `wire.py` without a `PROTOCOL_VERSION` bump is a silent break.**
 Two builds will disagree and neither will say so. Run `git diff -- src/cairn/wire.py`
 before finishing any session that touched it.
+
+**And a bump for a purely additive change is a loud one.** `check_version`
+compares for equality, so bumping does not deprecate an old peer — it
+disconnects one, on every route, including the ones that did not change. Cut 4
+added `Note` and three routes and left the version at 1 for exactly that reason:
+an old hub 404s a new route, which the caller handles. Bump when an existing
+shape changes meaning; if you cannot name the exchange that breaks without the
+bump, you do not need one. The reasoning is on `PROTOCOL_VERSION` itself.
 
 **`cairn bell` must never fail loudly.** It runs from another program's hook, so
 an exception there degrades the session it is attached to. Every failure path
@@ -182,6 +205,15 @@ stream tears itself down on a timer.
 until it has all `n` bytes or the connection closes, so a sixty-byte bell sits
 unseen behind a 4 KiB buffer. This was measured, and the obvious code is wrong.
 
+**An answer of "nothing" names the hub it asked, and that has to stay true on
+every surface.** `render._asked` is shared by the empty inbox, the empty peer
+list and both empty note readings. Pointing at the wrong hub is the classic
+failure of a two-machine tool and it is indistinguishable from a quiet network;
+a live session checked `peers` five times and then polled for ninety seconds
+before it could tell. A new "nothing" branch that skips the clause is worse than
+none of them having it, because a reader who has learned to look for the hub and
+does not find it concludes the wrong thing. `--json` is deliberately exempt.
+
 **Only ever type into a session reported `idle`.** `busy` fights the input buffer;
 `waiting` means the session is on a prompt, so the nudge becomes the answer to it;
 an unrecognised status is not a safe status. A record whose pid is dead is not
@@ -214,6 +246,17 @@ claim is attached to a measurement or a failure. Keep it that way — an abstrac
 rationale ("shared resources can end up inconsistent") persuades nobody, while the
 concrete one it came from ("a crashed flash leaves a board half-written, so the
 next claimant has to be told where the last one stopped") does.
+
+**An example must not be liftable as an answer.** This one is specific to a tool
+whose output is durable, and it was found the hard way. `SKILL.md`'s `settle`
+example carried a plausible root cause — "PLL lock time on a cold die; iteration
+33 is the first at full clock" — and a live session whose actual unsolved problem
+was *iteration 33 fails after a cold start* began writing that fabricated
+diagnosis into permanent sediment as its own finding. It caught itself. The next
+one might not. So when an example answers a question, the answer has to be
+visibly welded to that example's own particulars, and example subjects and names
+have to read as examples rather than as conventions — the same session nearly
+adopted `eval-441` for a soak run because it had seen it in a code block.
 
 The rule when adding to it: **keep the shape of the problem, drop its identity.**
 Role words — bench, compute, infra, rig, firmware, `hil`, `jtag` — are industry

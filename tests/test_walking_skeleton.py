@@ -640,3 +640,288 @@ def test_a_malformed_command_line_is_not_an_unreachable_hub(hub, monkeypatch, ca
     capsys.readouterr()
     assert cli.run(["--hub", "http://127.0.0.1:1", "peers"]) == 2
     assert "cannot reach hub" in capsys.readouterr().err
+
+
+# -- what a session leaves behind ----------------------------------------------
+#
+# Cut 4, and the same seam with one thing taken out of it: a note has no
+# recipient. So nothing below is addressed to a session, nothing below is
+# consumed by reading, and nothing below may ring. Two of these drive the whole
+# command surface — `register`, `tell`, `note`, `settle`, `notes` — from separate
+# working directories against one hub, because the entire claim being made is
+# that a note is still there for somebody who was not in the conversation, and a
+# claim about somebody who was not there cannot be tested inside one module.
+
+
+def _cli(hub: HubClient, *argv: str) -> int:
+    """Run one cairn command against the live hub, the way that session's shell would."""
+    return cli.run(["--hub", hub.base_url, *argv])
+
+
+def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatch, capsys):
+    """The exchange this cut exists for: the session goes, its open loop does not.
+
+    Cut 3's live run produced it unprompted and docs/design.md §12 item 4 records
+    it. One of the two sessions was on a machine being handed to another team,
+    and when it ended it took its open questions with it — a message is addressed
+    to a session, and the session was the thing that went away. The surviving
+    peer reconstructed them into its own shift log under a heading it invented.
+
+    So what is asserted here is a contrast, and both halves are measured against
+    one hub in one run. The going-away is the real one: the same name registered
+    from another machine and another directory, which `store.register` treats as
+    a takeover and which parks the mailbox cursor at the head. The mail addressed
+    to that name goes with it — stated on the way past, and out of reach. The
+    note and the question the same session wrote are still on their subject, and
+    a peer that was told nothing by any message finds them, answers one, and
+    files the answer under a subject it never names.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    # Identity here is per-directory, which is the whole mechanism by which these
+    # are two sessions rather than one; an inherited $CAIRN_AGENT would override it.
+    monkeypatch.delenv("CAIRN_AGENT", raising=False)
+    bench, compute, newcomer = (tmp_path / name for name in ("bench", "compute", "newcomer"))
+    for directory in (bench, compute, newcomer):
+        directory.mkdir()
+
+    monkeypatch.chdir(bench)
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+    monkeypatch.chdir(compute)
+    assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0
+    assert _cli(hub, "tell", "bench/firmware", "the correlation plot is on the share") == 0
+    capsys.readouterr()
+
+    # The bench session writes down what it knows and what it does not, and never
+    # reads the mail it was sent.
+    monkeypatch.chdir(bench)
+    assert _cli(hub, "note", "rig-a", "the flash jig needs the 3v3 rail jumpered before a soak run") == 0
+    assert _cli(hub, "note", "rig-a", "does the iteration-12 failure survive the older bootloader?", "-q") == 0
+    capsys.readouterr()
+
+    # And then it is gone: the rig went to another team, and the name comes back
+    # from a machine and a directory that are not the ones that held it.
+    monkeypatch.chdir(newcomer)
+    assert _cli(hub, "register", "bench/firmware", "--machine", "handover-box") == 0
+    handover = capsys.readouterr().out
+    assert "no longer in your inbox" in handover, "the takeover did not report the mail it stepped over"
+    assert "unanswered question" in handover, "the same arrival that reported the loss said nothing about the question"
+    assert hub.inbox("bench/firmware") == [], "the takeover was a no-op; nothing was actually left behind"
+
+    kept, total = hub.notes("rig-a")
+    assert total == 2, "the session ended and took its sediment with it"
+    assert [entry.is_open for entry in kept] == [False, True]
+
+    # The peer was never told any of this. Nothing was ever addressed to it.
+    monkeypatch.chdir(compute)
+    assert hub.inbox("compute/analysis") == []
+    assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0
+    arrival = capsys.readouterr().out
+    assert "1 unanswered question" in arrival
+    assert "cairn notes --open" in arrival
+
+    assert _cli(hub, "notes", "--open", "--json") == 0
+    found = json.loads(capsys.readouterr().out)
+    assert found["open_questions"] == 1
+    question = found["notes"][0]
+    assert question["open"] is True
+    assert "older bootloader" in question["body"]
+    assert question["author"] == "bench/firmware"
+
+    # Settling names an id and an artifact, and no subject anywhere.
+    answer = "40 of 40 clean on the older bootloader, so it is the new one"
+    assert _cli(hub, "settle", str(question["id"]), answer, "-a", "compute:/srv/analysis/441/soak.csv") == 0
+    filed = capsys.readouterr().out
+    assert f"settles question {question['id']}" in filed
+    assert "rig-a" in filed, "the answer was not filed under the subject of the question it settles"
+
+    assert _cli(hub, "notes", "--open") == 1, "the settled question is still being offered as unanswered"
+    assert "no open questions" in capsys.readouterr().out
+
+    pile, total = hub.notes("rig-a")
+    assert total == 3, "settling replaced the record instead of adding to it"
+    assert [entry.is_open for entry in pile] == [False, False, False]
+    assert pile[1].settled_by == pile[2].note.id
+    assert pile[2].note.subject == "rig-a"
+    assert pile[2].note.artifacts[0].path == "/srv/analysis/441/soak.csv"
+
+
+def test_a_note_rings_no_bell_though_a_message_still_does(hub):
+    """Sediment must not become mail — invariant I2, asserted on the wire.
+
+    A note has no recipient, so the only way to ring for one is to ring
+    everybody, and a hub that interrupted every session on it each time somebody
+    filed a fact would have handed the writer control over when peers read.
+    `hub._write_note` keeps that invariant by *not* calling `notifier.publish`.
+    An absence is the kind of thing a well-meaning patch puts back, and the kind
+    of thing nothing short of a live stream can be asked about.
+
+    The ordering is what makes the silence provable rather than lucky. Both
+    streams are open before the note is written and the `tell` goes out after it,
+    and bells arrive on a subscription in order — so if the note had rung, the
+    first frame the peer decoded would be the note's rather than the message's.
+    A test that merely waited a while and saw nothing would prove the network
+    was quiet.
+    """
+    _register(hub, "bench/firmware", machine="bench")
+    _register(hub, "compute/analysis", machine="compute")
+
+    author: list[list[dict]] = []
+    peer: list[list[dict]] = []
+    listeners = [
+        threading.Thread(target=lambda: author.append(_bells(hub, "bench/firmware", want=1, timeout=3.0)), daemon=True),
+        threading.Thread(target=lambda: peer.append(_bells(hub, "compute/analysis", want=1, timeout=3.0)), daemon=True),
+    ]
+    for listener in listeners:
+        listener.start()
+    time.sleep(0.4)  # let both subscriptions land before anything is written
+
+    hub.write_note("bench/firmware", "the flash jig needs the 3v3 rail jumpered", subject="rig-a", question=True)
+    time.sleep(0.4)  # a bell for that note would be on both streams by now
+    sent = hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
+    for listener in listeners:
+        listener.join(timeout=8.0)
+
+    assert peer, "the peer's collector never finished"
+    assert peer[0], "no bell arrived for the message"
+    assert peer[0][0].get("seq") == sent.seq, "the first bell on the peer's stream was the note, not the message"
+    assert author, "the author's collector never finished"
+    assert author[0] == [], "writing a note rang a bell"
+
+
+def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path, monkeypatch, capsys):
+    """A pile is not a queue: the next reader has to find exactly what this one did.
+
+    Two failures at once, because notes and messages share a hub, a client and a
+    store. If reading a subject filed a cursor the way `inbox` does, the peer who
+    turns up tomorrow finds it empty and sediment is just a message with extra
+    steps. And if a note read touched the *message* cursor — the one thing on
+    this hub a read is allowed to move — it would silently ack mail nobody has
+    seen, which is the failure `cmd_inbox` flushes before acking to avoid.
+
+    `GET /v1/notes` carries no `?agent=` at all, which is what makes both
+    impossible rather than merely unlikely. Asserted end to end anyway: the seam
+    is where a guarantee that holds inside every module quietly stops holding.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench, compute = (tmp_path / name for name in ("bench", "compute"))
+    for directory in (bench, compute):
+        directory.mkdir()
+    _register(hub, "bench/firmware", machine="bench", cwd=str(bench))
+    _register(hub, "compute/analysis", machine="compute", cwd=str(compute))
+    hub.send("tell", "compute/analysis", "bench/firmware", "the knee is at 39 degrees")
+    hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
+    waiting_mail = {name: [m.seq for m in hub.inbox(name)] for name in ("bench/firmware", "compute/analysis")}
+    assert [len(seqs) for seqs in waiting_mail.values()] == [1, 1], "nothing was pending, so nothing could be lost"
+    hub.write_note("bench/firmware", "the flash jig needs the 3v3 rail jumpered", subject="rig-a")
+    hub.write_note("bench/firmware", "does iteration 12 survive the older bootloader?", subject="rig-a", question=True)
+
+    monkeypatch.chdir(compute)
+    assert _cli(hub, "notes", "rig-a") == 0
+    read_first = capsys.readouterr().out
+    monkeypatch.chdir(bench)
+    assert _cli(hub, "notes", "rig-a") == 0
+    read_second = capsys.readouterr().out
+
+    assert "OPEN" in read_first
+    assert read_second == read_first, "the second reader did not find what the first one read"
+    assert {name: [m.seq for m in hub.inbox(name)] for name in waiting_mail} == waiting_mail
+
+
+def test_a_hub_that_predates_notes_still_registers_and_says_nothing_about_them(
+    hub, hub_server, tmp_path, monkeypatch, capsys
+):
+    """A missing `/v1/subjects` is "no answer", never "nobody heard you".
+
+    `client._call` maps a 404 to `Unreachable`, so an unguarded
+    `client.subjects()` on the registration path exits **2** — cairn's code for
+    an outage — against a hub that is up, healthy and carrying messages
+    perfectly, purely because it was built before this cut. That is cut 3's
+    `/v1/events` failure again, arriving at the one command a new build runs
+    first against whatever hub is already deployed. `cli._open_questions`'s catch
+    is the guard, and a dead port is not a test of it: that fails at connect,
+    while the case this cut is shaped around is a hub that answers everything
+    else and 404s one route.
+
+    The route is removed from the dispatch table rather than made to fail, so the
+    404 is the hub's own, byte for byte. The healthy hub is registered against
+    first in the same run, so the hint being absent afterwards means the guard
+    fired rather than that there was nothing to say.
+    """
+    from cairn.errors import Unreachable
+
+    def read_routes_from_before_notes(self) -> None:
+        self._dispatch(
+            {
+                "/v1/health": self._health,
+                "/v1/peers": self._peers,
+                "/v1/inbox": self._inbox,
+                "/v1/events": self._events,
+            }
+        )
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.delenv("CAIRN_AGENT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    _register(hub, "bench/firmware", machine="bench")
+    hub.write_note("bench/firmware", "does iteration 12 survive the older bootloader?", subject="rig-a", question=True)
+
+    assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0
+    assert "unanswered question" in capsys.readouterr().out
+
+    monkeypatch.setattr(hub_server.RequestHandlerClass, "do_GET", read_routes_from_before_notes)
+    with pytest.raises(Unreachable):
+        hub.subjects()
+
+    assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0, "an old hub read as an outage"
+    printed = capsys.readouterr()
+    assert "registered as compute/analysis" in printed.out
+    assert "unanswered" not in printed.out
+    assert printed.err == ""
+
+
+def test_the_json_pile_says_how_much_it_is_not_showing(hub, capsys):
+    """A truncated pile that reads as a whole one is the defect `cairn inbox` already has.
+
+    `inbox` cuts at `--limit` and says nothing, which is how the turn-boundary
+    bell goes permanently deaf past that limit — docs/design.md's appendix
+    carries the row. Notes are the surface that fixed it, and the fix only counts
+    over the wire: the hub serializes `total` by hand beside the page,
+    `client.notes` hands both back as a pair, and a program that never sees the
+    second number reports somebody's newest two notes as everything anyone has
+    ever written about the rig.
+
+    The bodies are asserted as well as the counts, because the page is the
+    *newest* matches printed oldest-first: truncation is meant to drop ancient
+    sediment while the reading order stays chronological, and getting either half
+    of that backwards is invisible to a count.
+    """
+    _register(hub, "bench/firmware", machine="bench")
+    for iteration in range(5):
+        hub.write_note("bench/firmware", f"soak iteration {iteration} logged", subject="rig-a")
+
+    assert _cli(hub, "notes", "rig-a", "--limit", "2", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (payload["showing"], payload["total"]) == (2, 5)
+    assert [n["body"] for n in payload["notes"]] == ["soak iteration 3 logged", "soak iteration 4 logged"]
+    assert payload["framing"]["notice"] == render.NOTES_NOTICE
+
+
+def test_an_empty_pile_still_arrives_framed(hub, capsys):
+    """`--json` must not become the one path where peer content arrives unframed.
+
+    It was, once: `inbox_json` carried no framing block at all, so a program
+    reading JSON got peer text with nothing attached saying it was a claim. The
+    fix is to emit the block whether or not there is anything to frame, and the
+    empty case is where that gets lost — "there is nothing to frame" sounds
+    reasonable exactly there, and a caller forced to special-case the empty shape
+    is a caller that will special-case the full one next.
+
+    Exit 1 rides along because an empty subject is an answer. Collapsing it into
+    2 would say the hub was unreachable while it was answering.
+    """
+    assert _cli(hub, "notes", "rig-b", "--json") == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (payload["notes"], payload["total"]) == ([], 0)
+    assert payload["framing"] == {"source": "peer-agents", "authority": "none", "notice": render.NOTES_NOTICE}

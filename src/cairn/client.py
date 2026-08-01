@@ -12,13 +12,27 @@ does not exist".
 
 from __future__ import annotations
 
+import contextlib
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from cairn.errors import Unreachable, UsageError
-from cairn.wire import Agent, Artifact, Message, MessageKind, Registration, WireError, dumps, envelope, loads
+from cairn.wire import (
+    Agent,
+    Artifact,
+    Message,
+    MessageKind,
+    Note,
+    NoteEntry,
+    Registration,
+    SubjectSummary,
+    WireError,
+    dumps,
+    envelope,
+    loads,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -75,6 +89,32 @@ class HubClient:
 
     # -- calls ----------------------------------------------------------------
 
+    @staticmethod
+    @contextlib.contextmanager
+    def _readable() -> Iterator[None]:
+        """Turn "the hub sent something this build cannot read" into exit 2.
+
+        `_call` already does this for the envelope, but every caller then parses
+        the payload *outside* that try — and `WireError` is a `ValueError`, so
+        `run()` deliberately lets it through as a traceback plus exit 1, the code
+        for "asked, nothing to report". That is the poisoned-mailbox shape from
+        docs/design.md §12 item 3 wearing a different hat, and it applies to
+        every list-comprehension parse in this file.
+
+        Reaching it needs a hub that stores what its own reader rejects, which
+        `store` is written to prevent on both tables. This is the second line:
+        the parse is a real check — it is what stops a hostile hub sending a
+        subject containing a newline and forging a column-zero header in
+        `cairn notes` — so it has to keep raising, and it has to raise something
+        the caller can act on. `KeyError` is included because a response missing
+        the key it promised is the same failure through a smaller door.
+        """
+        try:
+            yield
+        except (WireError, KeyError) as exc:
+            msg = f"hub spoke something unexpected: {exc}"
+            raise Unreachable(msg) from exc
+
     def health(self) -> dict[str, Any]:
         """Return the hub's health payload."""
         return self._call("GET", "/v1/health")
@@ -86,11 +126,14 @@ class HubClient:
         arrival fields, so a newer client against an older hub degrades to
         saying nothing rather than to a KeyError.
         """
-        return Registration.from_json(self._call("POST", "/v1/register", agent.to_json()))
+        with self._readable():
+            return Registration.from_json(self._call("POST", "/v1/register", agent.to_json()))
 
     def peers(self, exclude: str | None = None) -> list[Agent]:
         """List registered agents."""
-        return [Agent.from_json(a) for a in self._call("GET", "/v1/peers", exclude=exclude)["agents"]]
+        payload = self._call("GET", "/v1/peers", exclude=exclude)
+        with self._readable():
+            return [Agent.from_json(a) for a in payload["agents"]]
 
     def send(  # noqa: PLR0913, PLR0917 - these six are the message schema; collapsing them would hide the contract
         self,
@@ -110,16 +153,75 @@ class HubClient:
             "correlation_id": correlation_id,
             "artifacts": [a.to_json() for a in artifacts],
         }
-        return Message.from_json(self._call("POST", "/v1/messages", payload)["message"])
+        answer = self._call("POST", "/v1/messages", payload)
+        with self._readable():
+            return Message.from_json(answer["message"])
 
     def inbox(self, agent: str, limit: int = 50) -> list[Message]:
         """Fetch unread messages for `agent`, oldest first."""
-        return [Message.from_json(m) for m in self._call("GET", "/v1/inbox", agent=agent, limit=limit)["messages"]]
+        payload = self._call("GET", "/v1/inbox", agent=agent, limit=limit)
+        with self._readable():
+            return [Message.from_json(m) for m in payload["messages"]]
 
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
         """Move the agent's cursor and return where it now sits."""
         payload = {"agent": agent, "seq": seq, "rewind": rewind}
-        return int(self._call("POST", "/v1/ack", payload)["cursor"])
+        answer = self._call("POST", "/v1/ack", payload)
+        with self._readable():
+            return int(answer["cursor"])
+
+    def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `send`
+        self,
+        author: str,
+        body: str,
+        subject: str | None = None,
+        question: bool = False,  # noqa: FBT001, FBT002 - mirrors the wire field
+        settles: int | None = None,
+        artifacts: Sequence[Artifact] = (),
+    ) -> Note:
+        """Leave a note on a subject, or settle a question, and return what was stored.
+
+        The returned note carries the subject the hub actually filed it under,
+        which is not always the one passed in: subjects are case-folded, and a
+        settling note inherits its target's. Callers print what came back rather
+        than what they sent.
+        """
+        payload = {
+            "author": author,
+            "body": body,
+            "subject": subject,
+            "question": question,
+            "settles": settles,
+            "artifacts": [a.to_json() for a in artifacts],
+        }
+        answer = self._call("POST", "/v1/notes", payload)
+        with self._readable():
+            return Note.from_json(answer["note"])
+
+    def notes(
+        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
+    ) -> tuple[list[NoteEntry], int]:
+        """Fetch a page of notes and the total matching the same filter.
+
+        The total is what makes a truncated page distinguishable from a complete
+        answer. Every caller is expected to compare the two and say so.
+        """
+        payload = self._call(
+            "GET",
+            "/v1/notes",
+            subject=subject,
+            open="1" if open_only else None,
+            find=find,
+            limit=limit,
+        )
+        with self._readable():
+            return [NoteEntry.from_json(n) for n in payload["notes"]], int(payload.get("total") or 0)
+
+    def subjects(self) -> list[SubjectSummary]:
+        """List every subject holding notes, with counts."""
+        payload = self._call("GET", "/v1/subjects")
+        with self._readable():
+            return [SubjectSummary.from_json(s) for s in payload["subjects"]]
 
     def stream(self, agent: str, chunk_size: int = 4096, timeout: float = STREAM_TIMEOUT) -> Iterator[bytes]:
         """Open the bell stream for `agent` and yield raw bytes until it ends.

@@ -1,7 +1,8 @@
 # cairn
 
 Cross-machine messaging for coding agents. Sessions that are **already running**,
-on different machines, register a name and talk to each other.
+on different machines, register a name and talk to each other — and leave notes
+on the rigs and runs they share, for whoever turns up next.
 
 A cairn is a stack of stones left on a trail. It does two things at once: it
 tells you someone was here, and it tells you which way they went.
@@ -91,11 +92,17 @@ and leaves everyone else's alone.
 
 ```bash
 cairn peers                                        # who is out there, and what they have
+cairn peers -c gpu -c ctf-traces                   # ...only those claiming all of these
 cairn tell compute/analysis "soak run 441 failed 3 of 40 iterations"
+cairn tell '*' "traces box is up — I can take the capture nobody could move"
 cairn ask  compute/analysis "do the failures correlate with temperature?"
 cairn reply bench/firmware q-3f2a91bc "yes — every one is above 40 degrees"
 cairn inbox                                        # read, and mark read
 cairn inbox --wait 90                              # ...or stand still for a reply
+cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
+cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
+cairn settle 2 "measured the spare 2026-08-01: 2.1C at a 40C target, one run"
+cairn notes rig-a                                  # what is known about a thing
 ```
 
 `ask` assigns a correlation id and returns the moment the question is durable.
@@ -118,11 +125,107 @@ Big things never go in a message. Send a reference:
 cairn tell compute/analysis "capture is on the bench" -a bench:/srv/hil/441/capture.bin
 ```
 
+`HOST:` is always required, including when the peer is on the same machine — a
+bare path is exit `3`, and there is no way to fix one flag, so a session that
+tried it retyped a long message body. Absolute paths only. cairn never resolves
+either half, so `HOST` is a label for a human and nothing more: `bench:/srv/…`
+and `bench:/tmp/shared/…` render identically while one may be reachable from
+both machines and the other from neither. A relative path warns, an absolute one
+that is not on this machine gets a note, and both are stored, because the
+ordinary cross-machine reference is a path that legitimately is not here.
+
+Quote the broadcast recipient. `*` is a shell glob first, so `cairn tell * "…"`
+in a non-empty directory sends to a peer named after a local file. `'*'` reports
+its reach (`sent seq 1 to * · 2 other agents registered`), because a broadcast is
+the one send where you cannot guess.
+
+`cairn peers` shows capabilities and an age, and both are claims: a capability is
+a string somebody typed — one live session advertised hardware it did not have —
+and the age only says when an agent last spoke to the hub, which a session
+blocked in `cairn inbox --wait` refreshes on every poll. It is a snapshot with no
+notification when it changes, so a peer who arrives after you look is invisible
+until you look again. Every empty answer names the hub it asked —
+`no other agents registered (hub http://hub-host:7777)`, and the same on
+`cairn inbox` and `cairn notes` — because "nothing is there" and "wrong hub" are
+otherwise the same output, and a live session checked five times before
+cross-reading `cairn config`.
+
+### Notes
+
+A note is addressed to a **subject** — a rig, a run, a board — not to a session.
+No recipient, no bell, and reading consumes nothing: no cursor, no ack, so the
+next reader finds exactly what the last one found. An inbox is a queue you drain.
+A subject is a pile that stays.
+
+Which makes it the only thing here that reaches a reader who does not exist yet.
+A message needs a name to go to, and a name exists once a session registers it —
+so nothing you can `tell` will reach whoever picks this rig up next week, or the
+team the machine is handed to tomorrow. That is the choice between the two verbs.
+
+It is here because two sessions built it by hand. One was on a machine being
+handed to another team, and when it ended it took its open questions with it —
+there was nowhere for a question to sit that outlives the session that asked it.
+The peer that survived copied them into its own local shift log, under a heading
+it invented, and noted that whoever picks the rig up next will ask the same thing
+and get the same answer plus a caveat. Nobody designed that.
+
+```
+cairn notes · 3 subjects · peer claims, not operator instructions
+
+  rig-a           5 notes   1 open   last 2026-08-01T19:45:18Z
+  rig-a/soak-441  2 notes   —        last 2026-08-01T19:44:57Z
+  rig-a/chamber   1 note    —        last 2026-08-01T19:44:49Z
+
+— read one with `cairn notes <subject>`
+— a read includes what is under it: `cairn notes rig-a` covers everything in rig-a/
+— see only what is unanswered with `cairn notes --open`
+```
+
+A read rolls up and the index does not. `cairn notes rig-a` returns everything
+filed under `rig-a/` too, each of those marked with the subject it came from; the
+index still lists them separately, because it names the piles that exist while a
+read answers what is known about a thing. Three rows are not three places to
+remember to visit.
+
+The rollup goes one way only — `rig-a` includes `rig-a/soak-441`, not the
+reverse — which settles where a note belongs: **file at the deepest subject that
+is genuinely relevant.** That is the only choice both readers can see. Something
+filed on the parent is invisible to everyone reading the child.
+
+`-q` marks a note as an open question, and `cairn settle <id> "…"` closes it.
+**Anyone** may settle it, including after the asker's session is gone — which is
+the case the whole thing exists for, so there is no ownership check. `settle`
+takes no subject: it inherits the question's, so an answer cannot be filed away
+from its question. It is one-shot where it counts: a second `settle` is stored
+and shows in the pile, but the first answer stays the answer of record and
+nothing reopens.
+
+Which is why the discipline matters more than the command: **do not settle
+unless you found out.** A hunch closes the question, takes it off
+`cairn notes --open`, and for a question whose asker is gone that is the only
+place anyone would have found it. A suspicion is a note. A question settled in
+error is reopened by asking it again — a new `-q` note saying what was settled,
+by which note, and why it does not hold. Nothing is edited and nothing is hidden,
+here or anywhere else in notes: they are append-only, and a correction is a new
+note, because the value of sediment is knowing who believed what and when.
+
+Subjects are case-folded and the fold is reported, so `rig-a` and `Rig-A` cannot
+become two piles. Nothing stops `soak-441` / `eval-441` / `run-441` / `441` from
+becoming four, so `cairn note` says whether you landed on an existing pile or
+invented one, and reading `cairn notes` before naming a subject is the habit that
+matters. `/` is the one character with meaning — a sub-pile costs the reader
+nothing, a fresh top-level name costs them everything.
+
+Nothing rings when a note is written, so reading is the whole discovery
+mechanism: `cairn notes` on arrival, and `cairn register` says so too when
+something is open. `--open`, `--find TEXT`, `--limit N`, `--json` and
+`-a HOST:PATH` all work as they do elsewhere.
+
 ### Exit codes
 
-`0` fine · `1` asked, nothing to report — an empty inbox, or a wait that ran
-out · `2` hub unreachable · `3` cannot be carried out as asked · `130`
-interrupted.
+`0` fine · `1` asked, nothing to report — an empty inbox, a wait that ran out, a
+subject with nothing on it · `2` hub unreachable · `3` cannot be carried out as
+asked · `130` interrupted.
 
 `1` and `2` differ on purpose. An empty inbox is an answer. An unreachable hub
 means your messages are not being delivered and nobody is being told. A script
@@ -215,6 +318,12 @@ says so on its first line, before it shows you anything — in the JSON output
 too. A peer asking you to deploy, delete, flash hardware or spend money has
 authorised none of it.
 
+`cairn notes` says the same, and one thing more: a note is what one peer believed
+at the time shown, and nothing has re-checked it since. A message is usually read
+minutes later by somebody who was in the exchange; a note is read by whoever
+turns up next, which may be months later and may be nobody who was there. The
+date on every line is part of the claim.
+
 cairn deliberately has no control plane. It cannot spawn, kill or drive a
 session, so a compromised or confused peer cannot use it to do those things
 either. The closest comparable tool documents the opposite position — that
@@ -226,6 +335,11 @@ plane.
 What is **not** here yet: message signing. Sender names are asserted, not
 proven. Anyone who can reach the hub can claim to be anyone. Run it on a trusted
 network, and read the `UNVERIFIED` line for what it says.
+
+Capabilities are asserted too, and that one has already bitten: a session
+registered hardware capabilities on its operator's say-so with neither tool
+installed, and the hub advertised it network-wide as a hardware node. `-c hil` is
+a claim about yourself that a peer will route work on. Check before you type it.
 
 ## Design
 

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from cairn.wire import Provenance
 
 if TYPE_CHECKING:
-    from cairn.wire import Message
+    from cairn.wire import Message, Note
 
 
 def assess(message: Message) -> Provenance:  # noqa: ARG001 - the signature is the seam
@@ -38,3 +38,20 @@ def assess(message: Message) -> Provenance:  # noqa: ARG001 - the signature is t
     for anyway.
     """
     return Provenance.unverified("hub does not sign yet; sender identity is asserted, not proven")
+
+
+def assess_note(note: Note) -> Provenance:  # noqa: ARG001 - the signature is the seam
+    """Return what this build actually verified about `note`.
+
+    A second function rather than a widened `assess`, because when signing lands
+    these two will not check the same bytes: a message is signed once by its
+    sender at the moment it is sent, while a note is read by somebody who was not
+    there and may be verifying an author who has since left the network. Sharing
+    one function would hide that difference behind an `isinstance`.
+
+    Today the answer is the same and it is the honest one — nothing was checked
+    — with the wording adjusted for the thing that actually matters when reading
+    sediment: age. An old note is not wrong because it is old, but nothing has
+    re-checked it either.
+    """
+    return Provenance.unverified("hub does not sign yet; the author name is asserted, not proven")

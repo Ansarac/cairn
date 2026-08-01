@@ -75,11 +75,17 @@ later. The gap is that there is not always a PR.
 | `peers` | "who is around, doing what" | Cheap, always current |
 | `tell` | compute → bench: "eval 441 done, acc 0.913" | Recipient may be busy, idle, or gone |
 | `ask` / `reply` | bench → compute: "can you analyse this log for me?" | Correlation, and a way to stand still for the answer — `cairn inbox --wait`. Not a task lifecycle; see §12 item 3 |
-| `note` | "we chose lr=3e-4 because …" | Readable, searchable and citable by a human months later |
+| `note` / `settle` | "we chose lr=3e-4 because …", and "why does iteration 33 fail cold?" left standing until someone answers it | Outliving the session that wrote it, and being found by someone who was not there — see §12 item 4 |
 | `claim` | "I am using rig A for 40 minutes" | Mostly advisory — in practice one agent per rig |
 
 `note` is what the PR comments were really doing, and it is why the project has this
 name. The others are messages; `note` is sediment. Shared storage, separate interface.
+
+The hard part moved once this was built against a live run. It was written as
+*readable, searchable and citable by a human months later*, which is a statement about
+format. What the evidence produced was a statement about **lifetime**: a question that
+outlives the session that asked it. Both are real, but only the second one has been
+observed costing anybody anything, and §12 item 4 records which one was therefore built.
 
 ## 3. Invariants
 
@@ -469,16 +475,18 @@ each other. Same machines, different plane, no dependency in either direction.
 ```
   every agent session — interactive, on any machine, started by a human
       cairn CLI  +  skills/cairn/SKILL.md
-        active   cairn register | peers | tell | ask | reply | note | claim | inbox
+        active   cairn register | peers | tell | ask | reply | inbox
+                 cairn note | settle | notes            — sediment, no recipient
+                 cairn claim                                          (todo)
         passive  Stop hook rings a bell → the agent calls `cairn inbox`
                                     │
                                     │  HTTP + SSE
   ┌─ one machine ────────────────────▼──────────────────────────────┐
   │  cairn hub                                                      │
-  │   ├─ SQLite: agents, messages, cursors, notes index, claims     │
+  │   ├─ SQLite: agents, messages, cursors, notes, claims           │
   │   ├─ GET /v1/events — one SSE bell stream per agent             │
-  │   ├─ signs every message; `cairn inbox` verifies locally  (todo) │
-  │   └─ git repo: notes committed as markdown                (todo) │
+  │   │    messages only; a note never rings                        │
+  │   └─ signs every message; `cairn inbox` verifies locally  (todo) │
   └─────────────────────────────────────────────────────────────────┘
                                     │
   ┌─ optional, per machine ─────────▼──────────────────────────────┐
@@ -528,11 +536,19 @@ agents    name, machine, session_id, cwd, capabilities[], last_seen, pubkey
 messages  seq, from, to, kind(tell|ask|reply), correlation_id, body,
           artifacts[], sig, created_at
 cursors   agent → last_acked_seq        -- server-side; clients hold no state
-notes     index only; content lives in the git repo
+notes     id, subject, author, body, question, settles → notes.id,
+          artifacts[], created_at       -- no recipient, and no cursor anywhere
 claims    resource, holder, fence, note, constraints{}, since, expires_at
 ```
 
-Two things worth calling out.
+Three things worth calling out.
+
+**`notes` has no cursor and never will.** Every other table here answers "what has this
+agent not seen yet"; this one answers "what is true about this thing". A per-agent read
+position would make a pile into a queue, and the whole value of a note is that the *next*
+reader — who may not have registered yet — finds exactly what the last one found.
+`settles` is the only pointer, and whether a question is still open is derived from
+whether any row points at it rather than stored as a flag with two writers.
 
 **Artifacts never travel in messages.** Traces, waveforms, logs, firmware and datasets
 are referenced as `{host, path, sha256, bytes}`. The prior document's worry about 1 MiB
@@ -881,6 +897,18 @@ framework-internal orchestration, not network protocols.
      measured. Build it when a live exchange produces a reader who lost track of a
      question — and give every row a count of what has arrived from that peer since,
      because without that it is guesses printed as facts.
+
+     **That trigger fired during cut 4, and it is cut 5's first candidate.** Two sessions
+     held a twenty-minute exchange with three correlation ids in flight and tracked them
+     in scrollback, because nothing else would. One was waiting on `q-d9698ba3` when a
+     reply arrived quoting `q-7591dac1` — an *older* question — and reported afterwards
+     that the only thing that stopped it reading that as its answer was the skill's
+     warning that a wait stops at anything unread. It then asked for something this
+     rejection did not consider, and which is the better half of the idea: not a list of
+     unanswered questions but a log of **what this session has sent**. `inbox` shows only
+     what arrived, so a restarted session has no record of what it already told anyone.
+     That is smaller, needs no inference, and has none of the three ways to be wrong
+     above — every row is a fact about this session's own actions.
    - **`cairn ask --wait`** — a strict composition of two existing commands with one exit
      code for two outcomes. If the waiting half fails, the caller cannot tell whether the
      question was sent, and re-sending duplicates it under a new correlation id.
@@ -891,7 +919,9 @@ framework-internal orchestration, not network protocols.
      this build talk to a hub that predates it.
 
    `PROTOCOL_VERSION` is unchanged and `wire.py` has no diff.
-4. **`note`** — git-backed sediment; replaces what PR comments do today.
+4. ~~**`note`** — git-backed sediment; replaces what PR comments do today.~~ **Done, as
+   a place rather than an archive.** `cairn note <subject> <body> [-q]`,
+   `cairn settle <id> <body>`, `cairn notes [subject] [--open] [--find TEXT]`.
 
    Cut 3's live run produced the first real evidence of what this is for, unprompted. One
    of the two sessions was on a machine being handed to another team; the other was on
@@ -908,6 +938,268 @@ framework-internal orchestration, not network protocols.
    is a better argument for this cut than the one originally written here, and a warning
    about its shape: what they needed was not a message archive but somewhere a *question*
    could stay open after the session that asked it had gone.
+
+   **So a note is addressed to a subject, not to a session**, and that one difference
+   generates everything else. There is no recipient, so there is nobody to ring: writing a
+   note publishes no bell, and there is an end-to-end test asserting that silence next to
+   a `tell` that does ring, because a silence you did not prove is a race you got lucky
+   on. There is no recipient, so there is no cursor: reading consumes nothing, and the
+   next reader — who may not have registered yet — finds precisely what the last one
+   found. Both absences are load-bearing rather than unimplemented. A per-agent read
+   position on notes would turn a pile into a queue and make "has anyone seen this" a
+   thing somebody has to maintain, which is the failure the surviving peer was already
+   working around by hand.
+
+   **An open question is the shape the evidence asked for.** `-q` marks a note as an open
+   loop; it stays open until some note points at it. Anyone may settle it — not just the
+   asker, and specifically including after the asker's machine has gone, which is the
+   entire scenario. That is I3 stated in a verb: cairn declares intent and enforces
+   nothing. Two smaller decisions fall out and both close a class of mistake rather than
+   express a taste. Open is **derived**, never stored, so it cannot drift and there is no
+   flag with two writers. And `settle` **takes no subject** — it inherits the question's —
+   because an answer filed under a different subject from its question is an answer
+   nobody finds, and requiring the caller to retype something the id already determines is
+   an invitation to file it wrong.
+
+   **Subjects are case-folded, and that is not cosmetic.** If `rig-a` and `Rig-A` are two
+   piles, the reader finds one of them and has no way to learn the other exists — silent,
+   and fatal to the only thing notes are for. The fold is reported on every write, because
+   a normalization nobody is told about is the same surprise in a smaller font. The
+   character set also excludes whitespace outright, and that is the subject's half of the
+   column-zero rule I1 already imposes on bodies: a body can be indented, a subject sits
+   inside the header line and cannot be, so it is constrained instead. `--find` is free
+   text and *is* echoed into that header, so it is folded to one line before printing —
+   an agent may well build a search out of something a peer asked it to look for.
+
+   **A subject read rolls up everything beneath it**, and that clause was added because a
+   session writing this cut's documentation read the permitted character set, concluded
+   that `rig-a/chamber` was a sub-subject of `rig-a`, wrote one, and found it invisible
+   from the only place anybody would look. `/` is legal in a subject and it *invites* that
+   reading; a character set that invites a belief and then quietly contradicts it is worse
+   than one that forbids the character. So `cairn notes rig-a` matches `rig-a` and
+   `rig-a/%`, each rolled-up entry names its own subject in the header, and a footnote
+   says the read was widened. The index does **not** roll up, deliberately: it lists the
+   piles that exist, while a read answers "what is known about this thing", and conflating
+   those would hide where a note actually lives. One detail that is easy to get wrong:
+   `_` is in the permitted set, so the prefix has to be `LIKE`-escaped or a read of
+   `rig_a` also returns everything under `rigxa/`.
+
+   **The page ships with its total**, which the inbox does not, and the contrast is the
+   argument. `cairn inbox` truncates at `--limit` in silence; that silence is how the
+   turn-boundary bell goes permanently deaf past the limit (see the appendix). A caller
+   that cannot distinguish a full page from a complete answer will eventually treat one as
+   the other, so `notes` returns `(page, total)` and every renderer says when it is
+   showing fewer. The page is the **newest** matches handed back oldest-first, so
+   truncation drops ancient sediment rather than today's while the reading order stays
+   chronological.
+
+   **Discovery is the part with no bell**, so it had to come from somewhere. Two places:
+   `cairn notes` with no argument prints the index of subjects and how much is unanswered
+   on each, and `cairn register` adds one line when anything is open. The second is not a
+   push — it is output on a command the reader chose to run — and it is guarded, which
+   matters more than it looks. `/v1/subjects` does not exist on a hub built before this
+   cut and `client._call` maps 404 to `Unreachable`, so an unguarded call would have made
+   `cairn register` exit 2 against a hub that is up, healthy and carrying messages fine.
+   Additive routes are only additive if the caller reads their absence as "no answer".
+
+   **The cut also closed the poisoned-mailbox shape's last door in `client.py`.** Every
+   call in that file parsed its payload *outside* `_call`'s try, so a `WireError` from
+   `Message.from_json` or `NoteEntry.from_json` escaped as the `ValueError` it is — which
+   `run()` deliberately does not catch, giving a traceback under exit 1, the code for
+   "asked, nothing to report". Identical to what cut 3 fixed in `store.append`, one layer
+   out, and on every route rather than one. Reaching it needs a hub storing what its own
+   reader rejects, which the store now prevents on both tables; but the parse is a real
+   check and has to keep raising, because it is what stops a hostile hub sending a subject
+   containing a newline and forging a column-zero header in `cairn notes`. So it raises
+   `Unreachable` instead — "the hub spoke something this build cannot read" is exactly what
+   exit 2 means, and it is what `client.py`'s own module docstring already promised.
+
+   **`PROTOCOL_VERSION` is unchanged, deliberately, and the reason generalises.**
+   `check_version` compares for **equality**, not ordering — so bumping it does not
+   deprecate an old peer, it disconnects one, and a v2 client would fail to `tell` or
+   `inbox` against a v1 hub over a disagreement about a route neither exchange touches.
+   Cut 4 adds new shapes at new paths and changes no existing one: an old hub 404s the new
+   routes, a new hub is unchanged for an old client. The rule that follows is worth
+   stating once — bump when an existing shape changes meaning, not when a new one appears,
+   and if you cannot name the exchange that breaks without the bump, you do not need it.
+
+   **Git-backed markdown was not built, and that is a decision.** §2 wrote the hard part
+   as *readable, searchable and citable by a human months later*, which is about format;
+   the evidence above is about lifetime, and a row in SQLite satisfies it completely. This
+   section's own precedent from cut 3 applies without modification: the friction has not
+   been measured. Nobody has yet been observed wanting to link a note into a review, and
+   the cost is not zero — the hub gains a dependency on a binary, a commit on the request
+   path, a lock, and a second place for the write to half-succeed. What it would buy today
+   is `grep`, and `cairn notes <subject> > NOTES.md` buys that for nothing. Build it when a
+   live exchange produces someone who needed to cite a note somewhere cairn was not
+   installed, and when it is built, decide first which side is authoritative: an index row
+   whose content failed to commit is a dangling pointer, which is the poisoned-mailbox
+   shape from cut 3 with a different door.
+
+   **Then it was run for real, unfinished, and that changed five things.** A session was
+   put on a bench with the skill, the three facts above, and no mention of `note` — told
+   only that its machine was being handed to another team tonight. It worked out for
+   itself that a message cannot reach somebody who has not registered yet, filed five
+   notes across three subjects with one question left open, and invented a fifth note
+   nobody asked for: a warning to its successor that the stale `bench/firmware` name would
+   offer a resume seq and that rewinding to it yields nothing, because that mailbox was
+   empty all shift. Nothing in the design produced that. The takeover report from cut 3
+   taught it, and it wrote the counter-note unprompted — which is the second time this
+   loop has produced a session reconstructing a missing affordance rather than asking for
+   one.
+
+   What its friction list changed:
+
+   - **`cairn note` now says whether the pile already existed** — `new subject`, or
+     `7 notes there now`. Case folding stops `rig-a` / `Rig-A`; the split that actually
+     happens is `soak-441` / `eval-441` / `run-441` / `441`, and creating a fourth pile
+     looked exactly like adding to the first.
+   - **The subject index says a read rolls up, before you read.** The session finished its
+     handover, saw three index rows, and briefly believed it had scattered the work — the
+     rollup footnote only appears at the foot of a read, which is after the worry.
+   - **Every answer of "nothing" now names the hub it asked.** The session checked
+     `cairn peers` five times and then polled for ninety seconds, and could not separate
+     "nobody is out there" from "you are pointed at the wrong hub" without cross-reading
+     `cairn config`. That is the classic failure of a two-machine tool, printed as a
+     confident sentence. Fixing only `peers` was the first attempt and it was wrong — an
+     empty `cairn notes` carries the identical ambiguity, on the surface where the reader
+     is most often hunting for something they were *told* exists. A rule that holds on
+     three surfaces out of four is one nobody trusts, so `render._asked` is shared and
+     every empty text answer carries it. `--json` is exempt on purpose: whatever invoked
+     it chose the hub one call ago, and a model reading text may not know what this
+     directory is configured against.
+   - **A non-absolute `-a` path now warns.** cairn does not resolve paths and has no
+     standing to refuse one, but a relative path is meaningless the moment it leaves the
+     shell that produced it, and an artifact on a *note* is followed months later.
+   - **The skill's own example nearly became the reader's content**, and this is the one
+     that changed no code. The `settle` example carried a fabricated root cause — "PLL
+     lock time on a cold die; iteration 33 is the first at full clock" — and the session's
+     genuine unsolved problem was *iteration 33 fails after a cold start*. It wrote the
+     example's diagnosis into permanent sediment as its own finding before catching
+     itself. In a tool built to be citable months later that is a landmine, and the rule
+     it generalises to is in `CLAUDE.md` under writing the docs. The same session almost
+     adopted the example subject `eval-441` for a soak run, because example values read as
+     conventions.
+
+   **A second live run, two sessions at once, and this time they talked.** A night shift
+   took over the rig the first session had left, and a compute box with a trace toolchain
+   registered alongside it. What the notes did was the thing they were built for: the
+   incoming session named, note by note, which of the five changed which decision — the
+   stale-name warning saved it from spending the night waiting on a corpse that `peers`
+   still showed as online; the derate trap turned its own reproduction into a
+   conditional result rather than a clean one; the open question turned its one lucky
+   cold-start failure into the only evidence in existence, and told it to file before
+   going looking for help. **Neither session settled anything.** Both had hunches, four
+   questions stayed open, and one filed a note whose entire purpose was to record that
+   the night's null result was a plumbing failure rather than a dead end — because
+   otherwise, in its words, somebody six months out reads it as "the trace was analysed
+   and it was clean". The other refused outright to produce a null result it had not
+   earned, on the grounds that "we found nothing" and "we never looked" are
+   indistinguishable in a summary and are opposites. That is the guessing guidance from
+   the first run, working.
+
+   What the second run changed:
+
+   - **`cairn notes` no longer prints `[1]`, `[2]` position markers**, and that is a
+     defect this cut introduced. `[1] note 3` puts two numbers on one line where the next
+     command takes exactly one, `cairn settle` takes the id, and settling is one-shot in
+     the way that matters. One character, near-irreversible. The inbox keeps its markers
+     because a wrong `ack` is undone by `--rewind`.
+   - **`-a` now flags an absolute path that is not on this machine.** Both sessions named
+     this their most dangerous finding, independently. The first-run fix warned about
+     *relative* paths, which is the easy case; the hard one is a well-formed absolute path
+     to a file nobody has opened, written into an append-only note and unreachable from
+     the author's own box. It is reported with the condition attached, because the check
+     cannot tell a legitimate cross-machine reference from a broken one and must not
+     pretend to.
+   - **`peers` shows an age rather than a timestamp**, and says `N other agents`. A
+     session that had ended hours earlier sat in the list looking exactly like a working
+     one, and a prose note left by the dead session was doing the liveness detection the
+     tool would not. Age is reported and no verdict is drawn. It is still not
+     availability: `store.unread` refreshes `last_seen` on every poll, so an agent blocked
+     in `inbox --wait` is the freshest thing on the hub while doing nothing.
+   - **`cairn peers -c gpu`**, because the skill sells capabilities as how you find the
+     machine with the thing you need and then offered no way to ask. A session went
+     looking for the flag and read the list by eye instead. It also matches on strings
+     nobody has verified — one of the two sessions registered `-c hil -c jtag` on its
+     operator's say-so with neither binary on its PATH, and the hub then advertised it
+     network-wide as a hardware node. It called that its biggest finding of the night.
+     The flag narrows a list; it certifies nobody, and the skill now says to check a
+     capability before claiming one.
+
+     Building it immediately reintroduced the bug the hub name had been added to fix,
+     which is worth recording as its own small lesson: `-c fpga` against three registered
+     agents printed `no other agents registered`, because a filter matching nothing is a
+     *third* explanation for an empty list and the code knew only two. An empty filtered
+     answer now says what it filtered on and how many were there before it did. A rule
+     about not lying by omission has to be re-checked by every feature that can produce
+     the same empty output, not just installed once.
+   - **A broadcast says how far it went.** `sent seq 1 to *` was the same line on an empty
+     hub and a full one, and discovery is the entire point of a broadcast — the session
+     could only infer that anybody had heard by getting a reply.
+
+   Three findings were recorded and not built, and they are the honest shape of what cut 4
+   does not cover. **A sender has no delivery signal**: `asked seq 5 of bench/night-shift`
+   means stored, not seen, and combined with a stale peer looking live, a question to a
+   dead agent is silently unrecoverable. **A broadcast cannot be retracted**; one session's
+   stale offer of help is still standing on the network. And **concurrent note writers
+   duplicate in silence** — the two sessions wrote up one conversation into four
+   overlapping notes, neither able to see the other writing, and had to spend a fifth note
+   warning readers that the repetition is one source written twice rather than two
+   independent confirmations. That last one is the sharpest: append-only is right, but
+   duplication mimicking corroboration is an epistemic hazard rather than clutter, and the
+   obvious fix — "what changed since you last read" — needs a per-reader position on
+   notes, which is the cursor this cut refused on purpose. It is not obvious that the
+   cursor is the wrong answer any more.
+
+   One more thing worth recording for cut 6: **`UNVERIFIED` became wallpaper.** It appeared
+   about ten times in one session, identical every time, because the hub signs nothing. The
+   session did act on it — it treated every hardware claim as a claim — but reported that
+   the tiering bought nothing while there was no verified message anywhere to contrast
+   against. The verdict is honest and must stay; what it needs is something to differ from.
+
+   One thing it reported that was left alone on purpose: `cairn settle "<a guess>"` is a
+   short command that closes a question and removes it from `--open`, which is the whole
+   discovery path — so a well-meant guess destroys the only signal that survives a
+   handover. No mechanism can tell an answer from a sentence typed in the answer box, and
+   inventing one would be I3 with extra steps. It is taught instead, in both halves: do
+   not settle unless you found out, and a question settled in error is reopened by asking
+   it again on the same subject and saying which note settled it and why that does not
+   hold. Append-only, and it leaves the wrong answer visible rather than hidden.
+
+   Four more things were considered and deliberately not built, so they are not proposed
+   again as omissions:
+
+   - **Editing or deleting a note.** A correction is a new note. The value of sediment is
+     knowing who believed what and when; an edited note is one whose history is gone, and
+     a reader six months later cannot tell it was edited. This is the same reasoning as
+     "nothing is ever deleted" in §9, applied to the one table where a human would most
+     want an exception.
+   - **Reopening a settled question.** `settled_by` is the *first* note that settled it. A
+     later note disagreeing is welcome and is stored like anything else; what it does not
+     do is flip a boolean, because the moment "open" has two writers it stops being
+     derivable and starts being a thing to reconcile.
+   - **Telling a second answerer that the question was already settled.** A session
+     writing this cut's documentation found the silence and read it as unintended, which
+     was the right instinct applied to the wrong case. Compare it with the takeover, where
+     the notice *is* built: there, mail became unreachable, and a stated loss was the whole
+     remedy. Here nothing is lost — both answers sit in the pile in order, and the question
+     line still names the answer of record — so what the notice would report is duplicated
+     effort, not a missing message. The reader has also almost certainly seen it already,
+     because getting the id at all normally means reading the pile, which prints
+     `settled by 18` on the question. So it stays documented rather than built, on this
+     section's own bar. What would change that: a live exchange where somebody settled from
+     an id they got out of a message rather than out of the pile.
+   - **An answer that is also a new question.** A settling note is never itself a
+     question — that is enforced, not merely undocumented. The honest cost is one extra
+     command in the common case where an answer raises the next question, and the honest
+     benefit is that `open` stays unambiguous for the one field whose whole worth is that
+     it is not. If the live loop shows people forgetting the second command, this is the
+     first thing to revisit.
+   - **Notifying the asker when their question is settled.** Tempting, and wrong twice
+     over: the asker is frequently gone, which is the premise of the cut, and a note that
+     rings is a message. If the answer needs to reach a particular session, that is what
+     `tell` is for, and the settling agent is in a position to send one.
 5. **`claim`** — advisory, with a constraints blob nobody interprets yet.
 6. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
@@ -932,6 +1224,14 @@ All taken 2026-08-01 on Linux, Claude Code 2.1.220, unless noted.
 | Prompt cache across three turns of one long-lived session | `cache_read` 0 / 0 / 8383; `cache_create` 8362 / 8383 / 21 |
 | An existing Postgres or Redis to build on | Neither present on the candidate hub host |
 | `systemd-run --user --scope` | Available |
+| A session given three findings and a handover deadline, never told `note` exists | Chose notes over messages unaided, filed 5 across 3 subjects, left 1 question open, and added an unasked-for note warning its successor that rewinding the stale name yields nothing |
+| A skill example carrying a plausible root cause, read by a session holding that exact question | Written into permanent sediment as the session's own finding, then caught by the session itself before filing. See the writing-the-docs rule in the repository guide |
+| `cairn peers` on a hub with nobody else registered | Checked 5 times, then polled 90 s; "nobody there" and "wrong hub" were indistinguishable without cross-reading `cairn config` |
+| Reading a subject whose notes were filed under `subject/child` | Invisible before the prefix rollup; `/` is legal and invites a hierarchy the query did not implement |
+| Two sessions handed the same rig in sequence, second one told nothing about the first | Named 5 of 5 notes as having changed a specific decision; settled none of 4 open questions, having established nothing |
+| A `-a` path that is absolute, well-formed, and on no reachable filesystem | Stored in silence into an append-only note; undetectable by either end until the reader tried to open it |
+| A session that ended hours earlier, in `cairn peers` | Indistinguishable from a working one; the dead session's own prose note was doing the liveness detection |
+| `UNVERIFIED` across ~10 messages and notes in one session | Acted on, but reported as wallpaper — identical every time, with no verified item anywhere to contrast against |
 
 Found while building, all of them invisible to unit tests and all of them costing an
 afternoon each if rediscovered:

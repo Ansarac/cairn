@@ -21,12 +21,32 @@ reports only what was actually checked. See docs/design.md, invariant I1.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, Self
 
 PROTOCOL_VERSION = 1
-"""Bumped on any incompatible change to the shapes below."""
+"""Bumped on any incompatible change to the shapes below.
+
+**Incompatible**, and the word is doing real work, because `check_version`
+compares for equality rather than ordering. Bumping this does not deprecate an
+old peer; it disconnects one. A v2 client and a v1 hub cannot exchange a `tell`
+or an `inbox` either — every route fails, not just the new one.
+
+So a purely *additive* change does not bump, and cut 4 is the worked example:
+`Note` and its routes are new shapes at new paths. An old hub answers the new
+route with 404, which `client._call` maps to `Unreachable`; a new hub is
+unchanged for an old client, which never calls them. Nothing that worked before
+stops working, and every reader of the two builds still agrees on what a
+`Message` is. Bumping here would have broken messaging between two builds that
+disagree about nothing.
+
+What *does* bump: changing or removing a field on an existing shape, changing
+what a field means, or making an old payload parse differently. If you cannot
+say which existing exchange breaks without the bump, you probably do not need
+one — and if you do bump, both ends have to be upgraded together, so say so.
+"""
 
 BROADCAST = "*"
 """Recipient meaning "every registered agent except the sender"."""
@@ -37,10 +57,50 @@ KINDS: tuple[MessageKind, ...] = ("tell", "ask", "reply")
 MAX_BODY_CHARS = 16_000
 """Messages are prose between agents. Anything larger is an artifact (see `Artifact`)."""
 
+MAX_SUBJECT_CHARS = 120
+"""A subject is an address for a pile of notes, not a sentence."""
+
+_SUBJECT = re.compile(r"[a-z0-9][a-z0-9._/-]*")
+"""What a subject may contain. Narrow on purpose; see `normalize_subject`."""
+
 
 def now() -> str:
     """Return the current time as an RFC 3339 string in UTC."""
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def normalize_subject(raw: str) -> str:
+    """Return the canonical form of a note subject, or raise.
+
+    Two rules, and both are load-bearing rather than tidiness.
+
+    **It folds case.** A subject is how a note is found months later by somebody
+    who was not there when it was written. If `rig-a` and `Rig-A` are two piles,
+    the reader finds one of them and has no way to learn the other exists — a
+    silent failure that destroys the only thing notes are for. The fold happens
+    here, and every command that takes a subject prints the one it actually used
+    so the normalization is never a surprise.
+
+    **The character set excludes whitespace entirely.** A subject is
+    peer-authored text that `cairn notes` prints in its own column-zero header
+    line, so a subject containing a newline could forge a header exactly as a
+    message body could. `render` indents bodies for that reason; subjects cannot
+    be indented, so they are constrained instead. There is a test.
+    """
+    subject = raw.strip().lower()
+    if not subject:
+        msg = "a note needs a subject: the rig, run or board it is about"
+        raise WireError(msg)
+    if len(subject) > MAX_SUBJECT_CHARS:
+        msg = f"subject is {len(subject)} chars, limit is {MAX_SUBJECT_CHARS}; a subject is an address, not a sentence"
+        raise WireError(msg)
+    if not _SUBJECT.fullmatch(subject):
+        msg = (
+            f"subject {subject!r} may contain only a-z, 0-9 and . _ - / and must start with a letter or digit; "
+            f"try something like 'rig-a' or 'eval-441'"
+        )
+        raise WireError(msg)
+    return subject
 
 
 class WireError(ValueError):
@@ -237,6 +297,161 @@ class InboxEntry:
                 "detail": self.provenance.detail,
             },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class Note:
+    """One piece of sediment: something worth knowing that outlives its session.
+
+    A `Message` is addressed to a session and read once. A `Note` is addressed to
+    a **subject** — a rig, a run, a board — and waits there for whoever turns up
+    next, who may be nobody that was present when it was written. That is the
+    whole difference, and it is why notes are not messages with a longer shelf
+    life: there is no recipient, no cursor, no bell, and reading one consumes
+    nothing.
+
+    Like `Message`, it carries no field asserting its own trustworthiness.
+
+    `question` marks a note that is not settled knowledge but an open loop, and
+    `settles` is how a later note closes one. Whether a question is still open is
+    therefore **derived** — it is open while no note points at it — rather than a
+    column somebody has to remember to update. Deriving it is what stops it
+    drifting; append-only is what keeps the record of who thought what, when.
+    """
+
+    id: int
+    subject: str
+    author: str
+    body: str
+    question: bool = False
+    settles: int | None = None
+    artifacts: tuple[Artifact, ...] = ()
+    created_at: str = field(default_factory=now)
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the wire form."""
+        return {
+            "id": self.id,
+            "subject": self.subject,
+            "author": self.author,
+            "body": self.body,
+            "question": self.question,
+            "settles": self.settles,
+            "artifacts": [a.to_json() for a in self.artifacts],
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the wire form."""
+        body = _require(obj, "body", str)
+        if len(body) > MAX_BODY_CHARS:
+            msg = f"note body is {len(body)} chars, limit is {MAX_BODY_CHARS}; reference an artifact instead"
+            raise WireError(msg)
+        settles = obj.get("settles")
+        return cls(
+            id=int(obj.get("id") or 0),
+            subject=normalize_subject(_require(obj, "subject", str)),
+            author=_require(obj, "author", str),
+            body=body,
+            question=bool(obj.get("question")),
+            settles=int(settles) if settles is not None else None,
+            artifacts=tuple(Artifact.from_json(a) for a in obj.get("artifacts") or ()),
+            created_at=obj.get("created_at") or now(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NoteEntry:
+    """A note, what the hub computed about it, and what *this process* checked.
+
+    Read carefully: the three fields have three different origins, and mixing
+    them up is how a trust claim gets laundered.
+
+    - `note` came off the wire.
+    - `settled_by` is the hub's arithmetic over its own table — a fact about
+      counts, not about who anybody is, so it is safe to parse for the same
+      reason `Registration` is.
+    - `provenance` is **never parsed**. `from_json` ignores any `provenance` key
+      the wire offers and leaves the honest default in place; only
+      `checked()` may replace it, and only the code that ran a check calls that.
+      A hub that sends `{"provenance": {"verified": true}}` changes nothing, and
+      there is a test saying so.
+    """
+
+    note: Note
+    settled_by: int | None = None
+    provenance: Provenance = field(default_factory=Provenance.unverified)
+
+    @property
+    def is_open(self) -> bool:
+        """Return whether this is a question nobody has answered yet."""
+        return self.note.question and self.settled_by is None
+
+    def checked(self, provenance: Provenance) -> Self:
+        """Return a copy carrying the verdict of a check that actually ran."""
+        return replace(self, provenance=provenance)
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form.
+
+        Output, not wire input: `cairn notes --json` prints it and no endpoint
+        accepts it. The hub serializes `note` and `settled_by` by hand and never
+        emits a provenance key, so this asymmetry is structural.
+        """
+        return {
+            **self.note.to_json(),
+            "settled_by": self.settled_by,
+            "open": self.is_open,
+            "provenance": {
+                "verified": self.provenance.verified,
+                "method": self.provenance.method,
+                "detail": self.provenance.detail,
+            },
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse what the hub sends, deliberately dropping any asserted provenance."""
+        settled_by = obj.get("settled_by")
+        return cls(
+            note=Note.from_json(_require(obj, "note", dict)),
+            settled_by=int(settled_by) if settled_by is not None else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectSummary:
+    """How much sediment has collected on one subject, and how much of it is unanswered.
+
+    Counts only. This is what `cairn notes` prints with no subject named, and it
+    is the answer to the question the evidence in docs/design.md §12 item 4 was
+    really asking: *is there anything here I should read before I start?*
+    """
+
+    subject: str
+    notes: int
+    open_questions: int
+    last_at: str
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the wire form."""
+        return {
+            "subject": self.subject,
+            "notes": self.notes,
+            "open_questions": self.open_questions,
+            "last_at": self.last_at,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the wire form."""
+        return cls(
+            subject=normalize_subject(_require(obj, "subject", str)),
+            notes=int(obj.get("notes") or 0),
+            open_questions=int(obj.get("open_questions") or 0),
+            last_at=str(obj.get("last_at") or ""),
+        )
 
 
 Arrival = Literal["new", "returning", "takeover"]
