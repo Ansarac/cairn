@@ -132,6 +132,11 @@ Name yourself `machine/what-you-are-doing`. The name is your address, and it is
 remembered per working directory — a session restarting in the same directory
 picks its identity, and its unread mail, back up.
 
+Pick a name nobody else would pick. Registering a name that already belongs to a
+live session takes it over: you inherit its unread mail and replace it in `cairn
+peers`, and it is not told. If two sessions share one working directory they
+share one identity for the same reason — set `CAIRN_AGENT` in one of them.
+
 Register when you start work that another machine might care about. It costs
 one command and it is the only way anyone can reach you.
 

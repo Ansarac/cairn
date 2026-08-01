@@ -465,6 +465,19 @@ per rig is the norm today, so a claim is advisory: it makes the situation legibl
 (`who / what / since when / what they intend`) without pretending to enforce anything.
 The column exists so that enforcement can be added later without a schema migration.
 
+**Nothing is ever deleted, and that is a decision rather than an omission.** No TTL, no
+archive job, no `VACUUM`. `messages` grows monotonically and a cursor only moves forward,
+so the only thing that disappears is a reader's *unread* status. Bodies are prose and
+payloads are references, so a bench running this all year measures in megabytes. The cost
+of keeping everything is below the cost of a policy that can be wrong.
+
+If that ever stops being true, the safe boundary is not a date. It is
+`min(last_acked_seq)` over every agent still registered — a returning session is supposed
+to get its backlog, and pruning under its cursor deletes precisely the mail it came back
+for. Broadcast makes it stricter: one row addressed to `*` is read by everyone past their
+own cursor, so it cannot go until the slowest reader has passed it. Any retention scheme
+that reasons in days rather than in cursors will silently eat somebody's mail.
+
 ## 10. Prior art
 
 Surveyed 2026-08-01. The space is not greenfield, but the specific niche is unoccupied.

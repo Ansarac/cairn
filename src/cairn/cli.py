@@ -113,7 +113,6 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "ask", me, args.recipient, args.body, correlation_id=correlation, artifacts=_artifacts(args.artifact)
     )
     print(f"asked seq {message.seq} of {message.recipient}, correlation {correlation}")
-    print("no waiting yet: the answer will arrive in your inbox")
     return 0
 
 
@@ -318,7 +317,17 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
     p.set_defaults(func=cmd_tell)
 
-    p = sub.add_parser("ask", help="send a message that expects an answer")
+    p = sub.add_parser(
+        "ask",
+        help="send a message that expects an answer",
+        description=(
+            "Send a message that expects an answer. This assigns a correlation id and "
+            "delivers; it does not wait, time out or track state. The answer arrives in "
+            "your inbox like any other message. Said here rather than on every send: it "
+            "is true once, and printing it each time costs the reader more than it tells "
+            "them."
+        ),
+    )
     p.add_argument("recipient")
     p.add_argument("body")
     p.add_argument("--correlation", help="reuse an existing correlation id")

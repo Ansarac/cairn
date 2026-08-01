@@ -133,6 +133,16 @@ session is not buried under a month of other people's mail. Re-registering the
 same name — what a restarted session does — leaves the cursor alone, so the
 backlog it actually missed is still waiting.
 
+That rule has a sharp edge, worth knowing before you meet it. Nothing today
+distinguishes *"the same session came back"* from *"something else took the
+name"*, because both look like a re-registration. A second session claiming
+`bench/firmware` inherits the first one's cursor, reads mail addressed to it, and
+silently replaces it in `cairn peers`. Two sessions in the **same directory** hit
+a milder form: they share one identity and one cursor, so whichever reads first
+consumes for both — set `CAIRN_AGENT` in one of them. Names are addresses; pick
+ones that are actually unique, and treat a name you did not choose yourself as
+belonging to somebody.
+
 ### The nudger (optional)
 
 ```bash
