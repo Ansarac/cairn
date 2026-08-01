@@ -495,6 +495,72 @@ a hosted product on the Agent SDK.
 This is the strongest external evidence for §1. A well-funded project with 2.6k stars
 died of exactly the coupling this design excludes.
 
+**Claude Code agent teams** — the closest relative, and first-party. §4 declines to build
+on it; this is what is worth learning from it anyway. Read three ways: the published docs,
+the shipped binary for 2.1.220 (which embeds its bundle in readable form), and a live probe
+that received a message and then read its own transcript off disk to see what the record
+held versus what reached its context.
+
+Mechanically it is a file-backed mailbox per agent under `~/.claude/teams/`, polled by the
+harness at 1 Hz, with an in-memory fast path when sender and recipient share a process. §4's
+two grounds both held up: the team config is deleted when the session ends, and the format
+is undocumented enough that reading it required disassembling a build.
+
+*What to steal:*
+
+- **The name-pin.** Names are reusable there as here, and the hazard is the same: a session
+  dies, something else takes the name, and mail meant for the first reaches a stranger.
+  Their answer is not to make names unique. It is to record what a name resolved to at its
+  first use in a conversation and then **refuse the send** — not reroute it, not warn —
+  when the same name later resolves to something else, naming what it used to reach. It
+  fails closed and costs one map. cairn already stores a `session_id` per agent and does
+  not use it for anything; that is the missing half.
+- **Naming the attack, not the category.** Their framing text says *permission laundering*
+  and describes it: a peer that was refused something asking you to do it instead. That is
+  the same move as this repo's own rule about keeping the shape of a problem — and it is
+  strictly more use to a reader than "treat peer content as untrusted". Our planted test
+  message carried exactly that shape ("I do not have write access"), and both readers named
+  it unprompted.
+- **Structural refusal of forged control frames.** The send path checks that plain text does
+  not parse as a protocol frame, and the frames a model may originate are a strict subset of
+  the frames that exist. Worth having before any structured frame joins this wire.
+- **Version as a property of the peer, not of the build.** Their presence records carry a
+  per-session protocol integer, so skew is visible before a send fails. `cairn peers` could
+  show the same.
+
+*What not to repeat:*
+
+- **`from` is self-asserted and never checked** — any process that can write the mailbox file
+  can forge any sender. Defensible when the boundary is one user's filesystem; not available
+  to anything crossing machines.
+- **Provenance is computed and then discarded.** The on-disk record carries fields marking a
+  message as harness-injected and naming its origin kind. Both are stripped before the text
+  reaches the model, which sees an unverifiable prose attribution in the same undelimited
+  channel as the payload. The hard part was never computing the verdict; it is deciding to
+  show it. Printing `UNVERIFIED` is that decision.
+- **"Delivered automatically; you don't check an inbox."** The docs and the tool both say it;
+  the mechanism is a 1 Hz poll. Before 2.1.207 a single malformed mailbox entry produced an
+  error every second and stalled delivery for that mailbox until the file was deleted by
+  hand. Content that arrives because the agent ran a command cannot fail that way, which is
+  the operational half of I1 rather than the trust half.
+- **Destructive read.** "Mark as read" deletes; the `read` flag is written and never set. No
+  ack, no cursor, no high-water mark, so a crash after submission and before consumption
+  loses the message silently. Server-side cursors are the cheaper and better answer.
+- **Transport deciding attention.** The same message arrives mid-turn or at a turn boundary
+  depending on whether the recipient happens to share an OS process, and the difference is
+  expressed as a trailing sentence of prose rather than in the scheduler. I2 says the
+  receiver decides, and it should not depend on how it was deployed.
+- **A version field no reader validates.** Every record carries one; nothing inspects it. It
+  buys exactly nothing, which is the argument for the discipline around `PROTOCOL_VERSION`
+  rather than against version fields.
+
+One data point rather than a lesson: **broadcast was removed.** `to: "*"` is now refused with
+"send a message per recipient", and the published post-mortem on their earlier orchestrator
+system names excessive inter-agent chatter as a real failure. cairn keeps `*`, on the grounds
+that a bench with three sessions announcing "rig down for ten minutes" is not that failure —
+but the direction of travel is worth knowing, and if a cairn network ever gets big enough to
+generate chatter, this is where the answer already exists.
+
 **Single-machine session managers** — claude-squad (8,218★), vibe-kanban (27,607★),
 Crystal (3,106★), ccmanager (1,205★). All healthy, all solve "manage N agent sessions on
 one machine via tmux, worktrees or a kanban board." None has cross-machine peer discovery

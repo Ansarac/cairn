@@ -9,7 +9,11 @@ An inbox rendering has to do three things at once:
    from the operator;
 2. show the provenance **verdict** next to the content, not in a footnote —
    including, and especially, when that verdict is `UNVERIFIED`;
-3. stay readable for a human running the same command.
+3. stay readable for a human running the same command;
+4. keep column zero for itself. Entry headers and footnotes start there and
+   bodies are indented, so a peer cannot open a second `[2] … verified(…)` line
+   inside its own message and forge a sender. The indent reads as formatting and
+   is load-bearing; there is a test.
 
 Points 1 and 2 come from measurement, not taste. Given peer content with no
 framing, an agent either refuses it as prompt injection or complies with it
