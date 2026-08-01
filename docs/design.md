@@ -776,6 +776,10 @@ afternoon each if rediscovered:
 | `tmux send-keys` without `-l --` | Does key-name lookup, so a nudge containing `Up` or `C-c` arrives as that keypress |
 | `/proc/<pid>/stat` field splitting | The comm field is parenthesised and may contain spaces and parentheses; split on the last `)` |
 | A session record whose process has exited | Still reports `idle`. Liveness must be checked before believing it |
+| `uv tool install --force .` with the version unchanged | Serves the **cached wheel** and silently installs the code you had before your edit. Reproduced twice on uv 0.11.3. `--reinstall` is the flag that matters; `--force` alone only overwrites entrypoints. Every dev-install-from-checkout recipe needs it |
+| Two live session records for one working directory | Real, not hypothetical: twelve records on a working machine, two for the same checkout — one `busy`, one publishing no status. Lookup by first-glob-match let a **filename** decide which pane a nudge went to |
+| Live sessions publishing a `status` at all | **4 of 12.** The rest report nothing and can never be woken. That is the ceiling on the nudger, and the reason the turn-boundary hook is the primary path |
+| A message body trying to forge an inbox entry | Cannot reach column zero — bodies are indented and entry headers are not. Safe by an accident of formatting, so now asserted by a test |
 | A liveness signal with two writers | The counter file's mtime says "a daemon is alive". The bell also writes that file, to latch what it announced — so on a machine with **no** daemon the hook forged a heartbeat and then believed its own empty record. Every ring was followed by 90 seconds of deafness. Only the daemon may advance that mtime |
 
 The last one is worth dwelling on, because it is the only bug in this list that a
