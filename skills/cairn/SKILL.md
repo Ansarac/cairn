@@ -142,6 +142,12 @@ had already written to it gets a refusal rather than a delivery to you. If that
 happens to you as a sender, cairn tells you where the name used to point; decide
 whether the move was expected before running `cairn forget <name>` and re-sending.
 
+If `register` prints a `note` saying the name was held elsewhere, read it. When
+that previous holder was you — the same work, moved to a new directory — the line
+it prints ends in `cairn ack <seq> --rewind`, which is the only way to reach mail
+a takeover stepped over. When it was not you, do not run it: you would be reading
+somebody else's conversation.
+
 Two sessions sharing one working directory share one identity and one cursor, so
 whichever reads first consumes for both. Set `CAIRN_AGENT` in one of them.
 

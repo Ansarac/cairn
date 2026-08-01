@@ -112,8 +112,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(200, {"messages": [m.to_json() for m in self.store.unread(agent, limit=limit)]})
 
     def _register(self) -> None:
-        agent = self.store.register(Agent.from_json(self._read()))
-        self._reply(200, {"agent": agent.to_json()})
+        # `Registration.to_json()` already nests the agent under "agent", so a
+        # client that only reads that key keeps working across this addition.
+        self._reply(200, self.store.register(Agent.from_json(self._read())).to_json())
 
     def _send(self) -> None:
         obj = self._read()
@@ -185,7 +186,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _ack(self) -> None:
         obj = self._read()
-        cursor = self.store.ack(str(obj.get("agent", "")), int(obj.get("seq") or 0))
+        cursor = self.store.ack(
+            str(obj.get("agent", "")), int(obj.get("seq") or 0), rewind=bool(obj.get("rewind"))
+        )
         self._reply(200, {"cursor": cursor})
 
 

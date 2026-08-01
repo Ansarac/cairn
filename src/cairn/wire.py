@@ -239,6 +239,53 @@ class InboxEntry:
         }
 
 
+Arrival = Literal["new", "returning", "takeover"]
+"""Which of the three registration cases happened. See `store.register`."""
+
+
+@dataclass(frozen=True, slots=True)
+class Registration:
+    """What registering a name did, beyond the record it left behind.
+
+    Output only — the hub computes it, the client reports it, and no endpoint
+    accepts it. It is not a trust claim, so unlike `Provenance` it is safe to
+    parse: it says what the hub did, not who anybody is.
+
+    It exists because a takeover moves the cursor, and that used to happen in
+    silence. `resume_at` is the cursor as it stood before the jump, which makes
+    the loss recoverable rather than merely reported — without it, the only way
+    back is a hand-edited SQLite file.
+    """
+
+    agent: Agent
+    arrival: Arrival = "new"
+    skipped: int = 0
+    previous: str = ""
+    resume_at: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form, agent included."""
+        return {
+            "agent": self.agent.to_json(),
+            "arrival": self.arrival,
+            "skipped": self.skipped,
+            "previous": self.previous,
+            "resume_at": self.resume_at,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the rendering form, tolerating a hub that predates these fields."""
+        arrival = obj.get("arrival")
+        return cls(
+            agent=Agent.from_json(_require(obj, "agent", dict)),
+            arrival=arrival if arrival in ("new", "returning", "takeover") else "new",
+            skipped=int(obj.get("skipped") or 0),
+            previous=str(obj.get("previous") or ""),
+            resume_at=int(obj.get("resume_at") or 0),
+        )
+
+
 def envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Wrap a payload with the protocol version."""
     return {"v": PROTOCOL_VERSION, **payload}

@@ -83,11 +83,13 @@ def cmd_register(args: argparse.Namespace) -> int:
         capabilities=tuple(args.capability),
         session_id=adapter.session_id(),
     )
-    registered = _client(args).register(agent)
-    config.remember_identity(registered.name)
-    print(f"registered as {registered.name} on {registered.machine}")
-    print(f"  cwd          {registered.cwd}")
-    print(f"  capabilities {', '.join(registered.capabilities) or '—'}")
+    registration = _client(args).register(agent)
+    joined = registration.agent
+    config.remember_identity(joined.name)
+    print(f"registered as {joined.name} on {joined.machine}")
+    print(f"  cwd          {joined.cwd}")
+    print(f"  capabilities {', '.join(joined.capabilities) or '—'}")
+    print(render.arrival_note(registration), end="")
     return 0
 
 
@@ -160,8 +162,8 @@ def cmd_inbox(args: argparse.Namespace) -> int:
 
 
 def cmd_ack(args: argparse.Namespace) -> int:
-    """Move the read cursor by hand."""
-    cursor = _client(args).ack(config.require_identity(), args.seq)
+    """Move the read cursor by hand, forward or — when asked — back."""
+    cursor = _client(args).ack(config.require_identity(), args.seq, rewind=args.rewind)
     print(f"cursor at {cursor}")
     return 0
 
@@ -400,6 +402,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
 
     p = sub.add_parser("ack", help="move the read cursor by hand")
     p.add_argument("seq", type=int)
+    p.add_argument(
+        "--rewind",
+        action="store_true",
+        help="allow the cursor to move backwards, re-exposing mail a takeover skipped",
+    )
     p.set_defaults(func=cmd_ack)
 
     p = sub.add_parser("bell", help="turn-boundary hook entrypoint; prints hook JSON")

@@ -157,6 +157,21 @@ name reached the first time it used it, and refuses rather than delivering to
 whoever holds it now. Neither prevents the takeover — cairn declares, it does not
 enforce — but neither end finds out silently.
 
+If the takeover was *you*, having moved directory, registering says so and tells
+you how to pick the backlog back up:
+
+```
+registered as bench/firmware on some-other-box
+  cwd          /w/fw2
+  capabilities hil
+  note         this name was previously held at bench:/w/fw
+               3 messages addressed to it are no longer in your inbox
+               if this is that session, moved: cairn ack 2 --rewind
+```
+
+`--rewind` is the only way a cursor goes backwards. Ordinary acks move forward
+only, because they arrive out of order and a late one must not undo a newer one.
+
 Two sessions in the **same directory** are a different problem with the same
 smell: they share one identity and one cursor, so whichever reads first consumes
 for both. Set `CAIRN_AGENT` in one of them.

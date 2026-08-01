@@ -491,8 +491,23 @@ to the previous holder, and replaced it in `peers`. Neither end was told.
 none, which is every session in the environment this was measured in. The pair is already
 carried, always populated, and is exactly what "restarted in the same directory" holds
 fixed. It is a heuristic, and it is wrong in one direction on purpose: a session that
-genuinely moves directory is treated as a newcomer and loses its backlog. Re-registering
-is one command, and that case should be a new registration anyway.
+genuinely moves directory is read as a newcomer, and its backlog stops being reachable.
+
+That cost is acceptable; making it *silent* was not, and the first version of this did.
+`ack` moves forward only, so once the takeover jumps the cursor to the head the skipped
+mail is still in `messages` and no longer reachable by any command — which is the exact
+failure this document criticises in §10, built smaller. Two things fix it without
+reopening the semantics:
+
+- Registering **reports which of the three cases happened**, and a takeover says how many
+  messages it stepped over, where the name was previously held, and the seq to resume
+  from. The response gained sibling keys next to `agent`; `Agent` did not change and
+  `PROTOCOL_VERSION` did not move, because an older hub simply omits them and the client
+  defaults.
+- `cairn ack <seq> --rewind` lets a cursor go backwards **when asked**. Forward-only
+  exists because acks arrive out of order and a late one must not undo a newer one; that
+  reason does not apply to a human deliberately recovering a backlog. Without the flag
+  the only remedy was editing the database by hand, which is not a remedy.
 
 Two halves, failing in opposite directions:
 

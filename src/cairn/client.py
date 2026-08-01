@@ -18,7 +18,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from cairn.errors import Unreachable, UsageError
-from cairn.wire import Agent, Artifact, Message, MessageKind, WireError, dumps, envelope, loads
+from cairn.wire import Agent, Artifact, Message, MessageKind, Registration, WireError, dumps, envelope, loads
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -79,9 +79,14 @@ class HubClient:
         """Return the hub's health payload."""
         return self._call("GET", "/v1/health")
 
-    def register(self, agent: Agent) -> Agent:
-        """Join the network, or refresh an existing registration."""
-        return Agent.from_json(self._call("POST", "/v1/register", agent.to_json())["agent"])
+    def register(self, agent: Agent) -> Registration:
+        """Join the network, or refresh an existing registration.
+
+        `Registration.from_json` fills defaults for a hub that predates the
+        arrival fields, so a newer client against an older hub degrades to
+        saying nothing rather than to a KeyError.
+        """
+        return Registration.from_json(self._call("POST", "/v1/register", agent.to_json()))
 
     def peers(self, exclude: str | None = None) -> list[Agent]:
         """List registered agents."""
@@ -111,9 +116,10 @@ class HubClient:
         """Fetch unread messages for `agent`, oldest first."""
         return [Message.from_json(m) for m in self._call("GET", "/v1/inbox", agent=agent, limit=limit)["messages"]]
 
-    def ack(self, agent: str, seq: int) -> int:
-        """Advance the agent's cursor and return where it now sits."""
-        return int(self._call("POST", "/v1/ack", {"agent": agent, "seq": seq})["cursor"])
+    def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
+        """Move the agent's cursor and return where it now sits."""
+        payload = {"agent": agent, "seq": seq, "rewind": rewind}
+        return int(self._call("POST", "/v1/ack", payload)["cursor"])
 
     def stream(self, agent: str, chunk_size: int = 4096, timeout: float = STREAM_TIMEOUT) -> Iterator[bytes]:
         """Open the bell stream for `agent` and yield raw bytes until it ends.

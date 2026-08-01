@@ -98,8 +98,8 @@ def test_a_takeover_is_dated_from_its_own_arrival(store):
     store.append("tell", "sender", "held", "mail")
     store._db.execute("UPDATE agents SET registered_at = ? WHERE name = ?", (OLD, "held"))
     second = store.register(_agent("held", machine="elsewhere", cwd="/w/elsewhere"))
-    assert second.registered_at != OLD
-    assert first.registered_at != OLD
+    assert second.agent.registered_at != OLD
+    assert first.agent.registered_at != OLD
 
 
 def test_the_cursor_only_ever_moves_forward(store):
@@ -142,6 +142,61 @@ def test_last_seen_moves_when_an_agent_acks(store):
 def test_touching_an_unregistered_name_is_harmless(store):
     """`ack` must record a cursor even for a name with no agent row."""
     assert store.ack("never-registered", 3) == 3
+
+
+# -- saying what the takeover did, and undoing it ------------------------------
+
+
+def test_a_new_name_has_nothing_to_report(store):
+    assert store.register(_agent("fresh")).arrival == "new"
+
+
+def test_a_returning_session_is_reported_as_such(store):
+    store.register(_agent("held"))
+    assert store.register(_agent("held")).arrival == "returning"
+
+
+def test_a_takeover_reports_what_it_skipped_and_where_to_resume(store):
+    """A cursor moved and mail became unreachable. Saying so is the whole fix."""
+    store.register(_agent("sender", cwd="/w/send"))
+    store.register(_agent("held", machine="bench", cwd="/w/fw"))
+    for _ in range(5):
+        store.append("tell", "sender", "held", "mail")
+    taken = store.register(_agent("held", machine="some-other-box", cwd="/w/elsewhere"))
+    assert taken.arrival == "takeover"
+    assert taken.skipped == 5
+    assert taken.previous == "bench:/w/fw"
+    assert taken.resume_at == 0
+
+
+def test_the_resume_point_is_the_cursor_as_it_stood_not_zero(store):
+    store.register(_agent("sender", cwd="/w/send"))
+    store.register(_agent("held"))
+    for _ in range(5):
+        store.append("tell", "sender", "held", "mail")
+    store.ack("held", 2)
+    taken = store.register(_agent("held", machine="elsewhere", cwd="/w/elsewhere"))
+    assert (taken.skipped, taken.resume_at) == (3, 2)
+
+
+def test_rewinding_to_the_reported_point_restores_exactly_what_was_skipped(store):
+    """Without this the loss is unrecoverable: the mail is in the table, out of reach."""
+    store.register(_agent("sender", cwd="/w/send"))
+    store.register(_agent("held"))
+    for i in range(5):
+        store.append("tell", "sender", "held", f"msg {i + 1}")
+    store.ack("held", 2)
+    taken = store.register(_agent("held", machine="elsewhere", cwd="/w/elsewhere"))
+    assert store.unread("held") == []
+    store.ack("held", taken.resume_at, rewind=True)
+    assert [m.body for m in store.unread("held")] == ["msg 3", "msg 4", "msg 5"]
+
+
+def test_an_ordinary_ack_still_refuses_to_rewind(store):
+    """Forward-only is about out-of-order acks, and that reason has not gone away."""
+    store.register(_agent("reader"))
+    store.ack("reader", 5)
+    assert store.ack("reader", 2) == 5
 
 
 # -- the sending side ----------------------------------------------------------

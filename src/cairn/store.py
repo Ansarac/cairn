@@ -27,7 +27,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from cairn.errors import UsageError
-from cairn.wire import BROADCAST, Agent, Artifact, Message, MessageKind, now
+from cairn.wire import BROADCAST, Agent, Arrival, Artifact, Message, MessageKind, Registration, now
+
+_COUNT_ALL = 1_000_000
+"""A limit high enough to mean "all of it" when counting a skipped backlog."""
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -63,8 +66,8 @@ CREATE TABLE IF NOT EXISTS cursors (
 class Store(Protocol):
     """What the hub needs from durability, and nothing more."""
 
-    def register(self, agent: Agent) -> Agent:
-        """Add or refresh an agent. First registration parks the cursor at the head."""
+    def register(self, agent: Agent) -> Registration:
+        """Add or refresh an agent, and report which of the three cases it was."""
         ...
 
     def get_agent(self, name: str) -> Agent | None:
@@ -91,8 +94,8 @@ class Store(Protocol):
         """Return messages after the agent's cursor, oldest first."""
         ...
 
-    def ack(self, agent: str, seq: int) -> int:
-        """Advance the cursor to `seq` and return where it now sits."""
+    def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
+        """Move the cursor to `seq` and return where it now sits."""
         ...
 
 
@@ -119,7 +122,7 @@ class SqliteStore:
 
     # -- agents ---------------------------------------------------------------
 
-    def register(self, agent: Agent) -> Agent:
+    def register(self, agent: Agent) -> Registration:
         """Upsert the row, and decide whether the cursor survives.
 
         Three cases, and the distinction between the last two is the whole point.
@@ -148,6 +151,11 @@ class SqliteStore:
         """
         existing = self.get_agent(agent.name)
         moved = existing is not None and (existing.machine, existing.cwd) != (agent.machine, agent.cwd)
+        # Captured before the cursor moves, so the report can say what was skipped
+        # and where to resume from. Without `resume_at` the loss is unrecoverable:
+        # `ack` will not rewind, so the only way back would be editing the database.
+        resume_at = self._cursor(agent.name) if moved else 0
+        skipped = len(self.unread(agent.name, limit=_COUNT_ALL)) if moved else 0
         stamped = Agent(
             name=agent.name,
             machine=agent.machine,
@@ -191,7 +199,11 @@ class SqliteStore:
                    ON CONFLICT(agent) DO UPDATE SET last_acked_seq = MAX(last_acked_seq, excluded.last_acked_seq)""",
                 (stamped.name, self._head()),
             )
-        return stamped
+        arrival: Arrival = "takeover" if moved else ("returning" if existing else "new")
+        previous = f"{existing.machine}:{existing.cwd}" if moved and existing else ""
+        return Registration(
+            agent=stamped, arrival=arrival, skipped=skipped, previous=previous, resume_at=resume_at
+        )
 
     def get_agent(self, name: str) -> Agent | None:
         """Look one agent up by its exact registered name."""
@@ -253,14 +265,35 @@ class SqliteStore:
         ).fetchall()
         return [_message_from_row(r) for r in rows]
 
-    def ack(self, agent: str, seq: int) -> int:
-        """Move the cursor forward only: a late ack for old mail cannot rewind it."""
+    def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
+        """Move the cursor forward, or backward when asked explicitly.
+
+        Forward-only is the default and the reason is ordering, not policy: acks
+        arrive out of order, and one for old mail must not undo a newer one.
+
+        `rewind` is a different intent, and it needs its own door. A takeover
+        jumps the cursor to the head, so a session that merely moved directory
+        loses a backlog that is still sitting in `messages` — reachable, but only
+        if something is allowed to move the cursor back. Without this the sole
+        remedy is editing the database by hand, which is not a remedy.
+        """
         self._touch(agent)
-        self._db.execute(
-            """INSERT INTO cursors (agent, last_acked_seq) VALUES (?, ?)
-               ON CONFLICT(agent) DO UPDATE SET last_acked_seq = MAX(last_acked_seq, excluded.last_acked_seq)""",
-            (agent, seq),
-        )
+        # Two whole statements rather than one with an interpolated clause: the
+        # difference between them is the entire point of the flag, and splicing
+        # SQL to express it would hide that behind a suppressed warning.
+        if rewind:
+            self._db.execute(
+                """INSERT INTO cursors (agent, last_acked_seq) VALUES (?, ?)
+                   ON CONFLICT(agent) DO UPDATE SET last_acked_seq = excluded.last_acked_seq""",
+                (agent, seq),
+            )
+        else:
+            self._db.execute(
+                """INSERT INTO cursors (agent, last_acked_seq) VALUES (?, ?)
+                   ON CONFLICT(agent) DO UPDATE SET
+                       last_acked_seq = MAX(last_acked_seq, excluded.last_acked_seq)""",
+                (agent, seq),
+            )
         row = self._db.execute("SELECT last_acked_seq FROM cursors WHERE agent = ?", (agent,)).fetchone()
         return int(row["last_acked_seq"])
 
@@ -286,6 +319,10 @@ class SqliteStore:
     def _head(self) -> int:
         row = self._db.execute("SELECT COALESCE(MAX(seq), 0) AS head FROM messages").fetchone()
         return int(row["head"])
+
+    def _cursor(self, agent: str) -> int:
+        row = self._db.execute("SELECT last_acked_seq FROM cursors WHERE agent = ?", (agent,)).fetchone()
+        return int(row["last_acked_seq"]) if row else 0
 
 
 def _agent_from_row(row: sqlite3.Row) -> Agent:

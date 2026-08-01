@@ -130,6 +130,13 @@ is stored but is `None` whenever the host product exports none, so it cannot be
 the test. Getting any of the three wrong is immediately visible to users and none
 is obvious from the code — `tests/test_identity.py` pins all three.
 
+**A takeover must say what it stepped over.** `ack` moves forward only, so once a
+takeover jumps the cursor to the head, the skipped mail is still in `messages` and
+reachable by nothing. Registering therefore reports the case, the count, the
+previous holder and a resume seq, and `cairn ack <seq> --rewind` is the one door
+that moves a cursor backwards. Deleting either half turns a stated loss back into
+a silent one, which is the thing `docs/design.md` §10 criticises other systems for.
+
 **The sending side pins names too, and it fails closed.** `config.check_pin`
 records what a name reached the first time this directory sent to it and raises
 `NameMoved` if that changes; `cairn forget <name>` is the escape hatch. This is a
