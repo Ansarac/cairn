@@ -300,6 +300,45 @@ class InboxEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class SentEntry:
+    """A message this session sent, paired with what was verified about the record of it.
+
+    Not `InboxEntry`, and the difference is not cosmetic. An inbox entry is
+    somebody else's words arriving; this is the hub's account of **your own**,
+    handed back over a connection cairn does not authenticate. The verdict
+    therefore qualifies a different thing — on the inbox `UNVERIFIED` means "we
+    cannot prove who sent this", here it means "we cannot prove you sent this" —
+    which is why `provenance.assess_sent` is its own seam and why the two
+    renderers frame differently.
+
+    Keeping the type separate is what makes that structural. `InboxEntry.to_json`
+    says in its own docstring that it is what `cairn inbox` prints; reusing it
+    here would quietly make that false, and a reader comparing two `--json`
+    outputs would have no way to tell which surface they were looking at.
+    """
+
+    message: Message
+    provenance: Provenance = field(default_factory=Provenance.unverified)
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form.
+
+        Output, not wire input, on the same terms as `InboxEntry`: `cairn sent`
+        prints it and no endpoint accepts it. The hub serializes plain `Message`
+        rows and never emits a provenance key, so nothing can arrive claiming a
+        verdict this process did not reach.
+        """
+        return {
+            **self.message.to_json(),
+            "provenance": {
+                "verified": self.provenance.verified,
+                "method": self.provenance.method,
+                "detail": self.provenance.detail,
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Note:
     """One piece of sediment: something worth knowing that outlives its session.
 

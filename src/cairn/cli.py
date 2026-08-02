@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, NoReturn
 from cairn import __version__, config, nudge, provenance, render, skill
 from cairn.client import HubClient
 from cairn.errors import CairnError, UsageError
-from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, WireError, normalize_subject
+from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, SentEntry, WireError, normalize_subject
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -323,6 +323,42 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if not args.no_ack:
         client.ack(me, max(m.seq for m in messages))
     return 0
+
+
+def cmd_sent(args: argparse.Namespace) -> int:
+    """Read back what this session has sent.
+
+    `cairn inbox` shows only what arrived, so a session that restarted has no
+    record of what it already told anyone — which is what this is for, and it is
+    the friction docs/design.md §12 item 5 was built from.
+
+    **Reading consumes nothing.** There is no cursor on your own sends and no
+    ack follows: you have seen them by definition, so there is nothing here for a
+    read to use up and a second run returns the same rows.
+
+    Every row is a fact about this session's own actions, and that is the whole
+    reason this surface is safe where `cairn pending` was not. It says what was
+    sent. It does not say what was delivered, read or answered, and there is a
+    footnote saying so on every reading — see the `--limit` note below for the
+    other half of not lying by omission.
+    """
+    # Refused rather than clamped, exactly as `cmd_notes` refuses it and for the
+    # same recorded reason: SQLite reads `LIMIT -1` as "no limit", so a negative
+    # number silently returns everything, and `LIMIT 0` renders as "nothing sent
+    # from here yet" — a session's whole history reported as an empty one, which
+    # is precisely the answer a restarted reader would act on without checking.
+    if args.limit < 1:
+        msg = f"--limit needs to be at least 1, got {args.limit}"
+        raise UsageError(msg)
+    me = config.require_identity()
+    messages, total = _client(args).sent(me, limit=args.limit)
+    entries = [SentEntry(message=m, provenance=provenance.assess_sent(m)) for m in messages]
+    # Only the text renderer names the hub, on the same split as `cmd_notes`: a
+    # model reads the text and may not know what this directory points at, while
+    # whatever invoked `--json` chose the hub one call ago.
+    text = render.sent_text(entries, total, _hub(args)) if not args.json else render.sent_json(entries, total)
+    print(text, end="")
+    return 0 if entries else EXIT_NOTHING
 
 
 def cmd_note(args: argparse.Namespace) -> int:
@@ -724,6 +760,20 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
         help="if the inbox is empty, block this long for something to arrive (default 60)",
     )
     p.set_defaults(func=cmd_inbox)
+
+    p = sub.add_parser(
+        "sent",
+        help="read back what this session has sent",
+        description=(
+            "Read back what you have sent. `cairn inbox` shows only what arrived, so a session "
+            "that restarted has no record of what it already told anyone. Reading consumes "
+            "nothing — there is no cursor on your own sends. It says what you sent; it does not "
+            "say what was delivered, read or answered."
+        ),
+    )
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_sent)
 
     p = sub.add_parser(
         "note",

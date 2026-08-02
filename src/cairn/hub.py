@@ -111,6 +111,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/v1/health": self._health,
                 "/v1/peers": self._peers,
                 "/v1/inbox": self._inbox,
+                "/v1/sent": self._sent,
                 "/v1/events": self._events,
                 "/v1/notes": self._notes,
                 "/v1/subjects": self._subjects,
@@ -143,6 +144,18 @@ class _Handler(BaseHTTPRequestHandler):
             raise UsageError(msg)
         limit = self._int_param(q, "limit", 50)
         self._reply(200, {"messages": [m.to_json() for m in self.store.unread(agent, limit=limit)]})
+
+    def _sent(self) -> None:
+        q = self._query()
+        agent = q.get("agent")
+        if not agent:
+            msg = "sent requires an ?agent= parameter"
+            raise UsageError(msg)
+        messages, total = self.store.sent(agent, limit=self._int_param(q, "limit", 50))
+        # `total` rides along where `/v1/inbox` sends none. A page that cannot be
+        # told apart from a complete answer eventually gets treated as one; the
+        # inbox's silence here is the known defect, not the precedent.
+        self._reply(200, {"messages": [m.to_json() for m in messages], "total": total})
 
     def _register(self) -> None:
         # `Registration.to_json()` already nests the agent under "agent", so a

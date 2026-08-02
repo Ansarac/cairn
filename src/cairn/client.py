@@ -163,6 +163,16 @@ class HubClient:
         with self._readable():
             return [Message.from_json(m) for m in payload["messages"]]
 
+    def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
+        """Fetch a page of what `agent` sent, oldest first, and the total it has sent.
+
+        Reading this consumes nothing — there is no cursor on your own sends, so
+        no ack follows and a second call returns the same rows.
+        """
+        payload = self._call("GET", "/v1/sent", agent=agent, limit=limit)
+        with self._readable():
+            return [Message.from_json(m) for m in payload["messages"]], int(payload.get("total") or 0)
+
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
         """Move the agent's cursor and return where it now sits."""
         payload = {"agent": agent, "seq": seq, "rewind": rewind}

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages (recipient, seq);
+CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender, seq);
 CREATE TABLE IF NOT EXISTS cursors (
     agent          TEXT PRIMARY KEY,
     last_acked_seq INTEGER NOT NULL DEFAULT 0
@@ -125,6 +126,10 @@ class Store(Protocol):
 
     def unread(self, agent: str, limit: int = 50) -> list[Message]:
         """Return messages after the agent's cursor, oldest first."""
+        ...
+
+    def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
+        """Return a page of what the agent sent, oldest first, and the total."""
         ...
 
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
@@ -347,6 +352,36 @@ class SqliteStore:
             (agent, agent, BROADCAST, agent, limit),
         ).fetchall()
         return [_message_from_row(r) for r in rows]
+
+    def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
+        """Select what `agent` sent, newest page handed back oldest-first, with the total.
+
+        **No cursor is read and none is written**, and that absence is the whole
+        shape of this table's second reader. A cursor answers "what have I not
+        seen yet"; you have seen your own sends by definition, so there is
+        nothing here to consume and nothing a second read can miss. It is the
+        same absence `notes` has, arrived at from the opposite direction — a note
+        has no recipient, a send has no *unread* recipient in you.
+
+        The page is the **newest** `limit` rows, reversed to oldest-first. Same
+        contract and same reasoning as `notes`: truncation drops the oldest
+        traffic rather than this shift's, the reading order stays chronological,
+        and the total ships alongside so a caller can tell a full page from a
+        complete answer. `unread` is the counter-example and a known defect —
+        it takes the *oldest* N and says nothing, which is how the turn-boundary
+        bell goes deaf past its limit (see the appendix of docs/design.md).
+
+        `_touch`, like `unread` and `ack`: a named agent ran a command, so it was
+        heard from. Unlike `unread` this is not on a poll path, so it cannot
+        inflate a blocked waiter's freshness.
+        """
+        self._touch(agent)
+        total = int(self._db.execute("SELECT COUNT(*) AS c FROM messages WHERE sender = ?", (agent,)).fetchone()["c"])
+        rows = self._db.execute(
+            "SELECT * FROM messages WHERE sender = ? ORDER BY seq DESC LIMIT ?",
+            (agent, limit),
+        ).fetchall()
+        return [_message_from_row(r) for r in reversed(rows)], total
 
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
         """Move the cursor forward, or backward when asked explicitly.

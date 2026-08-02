@@ -55,3 +55,25 @@ def assess_note(note: Note) -> Provenance:  # noqa: ARG001 - the signature is th
     re-checked it either.
     """
     return Provenance.unverified("hub does not sign yet; the author name is asserted, not proven")
+
+
+def assess_sent(message: Message) -> Provenance:  # noqa: ARG001 - the signature is the seam
+    """Return what this build actually verified about a record of your own send.
+
+    A third function on exactly the reasoning that made `assess_note` a second:
+    when signing lands, these will not check the same bytes. Verifying a peer's
+    message means checking a key you do not hold. Verifying your **own** send
+    means checking a signature you made — the one check that can succeed before
+    any key exchange exists at all, because both halves are on this machine.
+    Sharing one function would hide that behind an `isinstance` and would make
+    the easiest win look like the hardest.
+
+    The wording differs from `assess` for a reason worth stating. On the inbox,
+    `UNVERIFIED` qualifies **who sent this**. Here the sender is not in doubt —
+    it is you — and what is unproven is whether these are the words you sent, or
+    even that you sent anything. A hub that lies to `cairn inbox` is a stranger
+    putting words in a peer's mouth, and a reader has some instinct for that. A
+    hub that lies here is putting words in *your* mouth, which reads as memory
+    rather than as testimony and so gets weighed less, not more.
+    """
+    return Provenance.unverified("hub does not sign yet; this is the hub's record of your send, not proof of it")

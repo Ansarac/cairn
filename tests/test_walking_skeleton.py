@@ -925,3 +925,192 @@ def test_an_empty_pile_still_arrives_framed(hub, capsys):
 
     assert (payload["notes"], payload["total"]) == ([], 0)
     assert payload["framing"] == {"source": "peer-agents", "authority": "none", "notice": render.NOTES_NOTICE}
+
+
+def test_a_restarted_session_recovers_what_it_said_from_the_hub(hub, tmp_path, monkeypatch, capsys):
+    """Cut 5's whole reason for existing, over a real socket.
+
+    The friction is recorded in docs/design.md §12 item 3 and was produced by a
+    live run: two sessions held a twenty-minute exchange with three correlation
+    ids in flight and tracked them in scrollback, because nothing else would.
+    Scrollback is the thing a restart destroys. `cairn inbox` shows only what
+    *arrived*, so after a restart a session knows what it was told and has no
+    record at all of what it told anyone.
+
+    The restart here is the real one the store already models — the same name
+    re-registering from the same `(machine, cwd)`, which `register` treats as a
+    returning session. What the log has to survive is that registration, and the
+    correlation ids are asserted individually because they are the specific thing
+    the session could not hold in its head.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/traces", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    capsys.readouterr()
+
+    assert _cli(hub, "tell", "compute/traces", "cold-start failure at iteration 33 reproduced, 1 in 3") == 0
+    assert _cli(hub, "ask", "compute/traces", "can you read a CTF trace?", "--correlation", "q-7591dac1") == 0
+    newer = "can the tracer write to the shared path?"
+    assert _cli(hub, "ask", "compute/traces", newer, "--correlation", "q-d9698ba3") == 0
+    capsys.readouterr()
+
+    # The peer answers the *older* question while the newer one is outstanding —
+    # the exact ordering the live run produced, and the reason the session could
+    # not tell from its inbox alone which of its own questions was still open.
+    hub.send("reply", "compute/traces", "bench/night-shift", "yes, send it", correlation_id="q-7591dac1")
+
+    # The restart: same name, same machine, same directory.
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    capsys.readouterr()
+
+    assert _cli(hub, "sent") == 0
+    printed = capsys.readouterr().out
+
+    assert "q-7591dac1" in printed
+    assert "q-d9698ba3" in printed, "the outstanding question was not in the session's own record"
+    assert "cold-start failure at iteration 33" in printed
+    assert "yes, send it" not in printed, "the peer's reply leaked into the sender's own log"
+    assert render.SENT_CLAUSE in printed
+    assert "not what anyone answered" in printed
+
+
+def test_reading_the_sent_log_consumes_nothing_and_rings_nobody(hub, tmp_path, monkeypatch, capsys):
+    """Both absences, asserted together because both are things a patch adds back.
+
+    **No cursor.** You have seen your own sends by definition, so there is
+    nothing here to consume — and the cursor a careless read could touch is the
+    one holding *unread mail*, where moving it acks messages nobody has seen.
+    That is the failure `cmd_inbox` flushes before acking to avoid, reachable
+    from a command that never intended to ack anything.
+
+    **No bell.** A read is not an event. Ringing here would be worse than the
+    note case invariant I2 already forbids, because the only plausible recipient
+    of such a bell is the peer whose message is being looked back at — turning a
+    private read into a notification.
+
+    The peer's stream is open before the read and a real `tell` is sent after it,
+    so the silence is provable rather than lucky: if the read had rung, the first
+    frame decoded would be its, not the message's.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/traces", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    hub.send("tell", "compute/traces", "bench/night-shift", "the knee is at 39 degrees")
+    hub.send("tell", "bench/night-shift", "compute/traces", "derate is in place")
+    capsys.readouterr()
+
+    unread_before = [m.seq for m in hub.inbox("bench/night-shift")]
+    assert unread_before, "no unread mail was waiting, so the cursor assertion proves nothing"
+
+    peer: list[list[dict]] = []
+    listener = threading.Thread(
+        target=lambda: peer.append(_bells(hub, "compute/traces", want=1, timeout=3.0)), daemon=True
+    )
+    listener.start()
+    time.sleep(0.4)  # let the subscription land before anything is read
+
+    assert _cli(hub, "sent") == 0
+    first = capsys.readouterr().out
+    assert _cli(hub, "sent") == 0
+    assert capsys.readouterr().out == first, "a second read did not find what the first one did"
+
+    time.sleep(0.4)  # a bell for either read would be on the stream by now
+    rung = hub.send("tell", "bench/night-shift", "compute/traces", "capture staged")
+    listener.join(timeout=8.0)
+
+    assert peer, "the peer's collector never finished"
+    assert peer[0], "no bell arrived for the message, so the silence proves nothing"
+    assert peer[0][0].get("seq") == rung.seq, "the first bell on the peer's stream was a sent read"
+    assert [m.seq for m in hub.inbox("bench/night-shift")] == unread_before, "reading the log moved the mail cursor"
+
+
+def test_a_hub_that_predates_the_sent_log_says_so_as_a_refusal_not_an_outage(hub, hub_server, tmp_path, monkeypatch):
+    """The cross-version case every additive route has to answer for.
+
+    `/v1/sent` does not exist on a hub built before cut 5, and `client._call`
+    maps a 404 to `Unreachable` — exit 2, "the hub could not be reached", on a
+    hub that is up and carrying messages fine. `cairn register` guards against
+    exactly this for `/v1/subjects` because a courtesy line must not fail a
+    command that succeeded.
+
+    `cairn sent` is **not** guarded, and that is the right answer rather than an
+    oversight: the route is the whole command, so there is no successful command
+    left to protect. What matters is that the failure is loud and immediate
+    instead of an empty log — "this hub has no record for you" and "this hub
+    cannot answer that" are opposites, and printing the first would tell a
+    restarted session it had said nothing all shift.
+    """
+    from cairn.errors import Unreachable
+
+    def read_routes_from_before_the_sent_log(self) -> None:
+        self._dispatch(
+            {
+                "/v1/health": self._health,
+                "/v1/peers": self._peers,
+                "/v1/inbox": self._inbox,
+                "/v1/events": self._events,
+                "/v1/notes": self._notes,
+                "/v1/subjects": self._subjects,
+            }
+        )
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/traces", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    assert _cli(hub, "tell", "compute/traces", "capture staged") == 0
+    assert _cli(hub, "sent") == 0, "the healthy hub did not answer, so the old one proves nothing"
+
+    monkeypatch.setattr(hub_server.RequestHandlerClass, "do_GET", read_routes_from_before_the_sent_log)
+    with pytest.raises(Unreachable):
+        hub.sent("bench/night-shift")
+    assert _cli(hub, "sent") == 2, "an old hub read as an empty log rather than as a refusal"
+
+
+def test_the_sent_json_says_how_much_it_is_not_showing(hub, tmp_path, monkeypatch, capsys):
+    """`total` has to survive the wire, the same way it does for notes.
+
+    A page indistinguishable from a complete history is the defect `cairn inbox`
+    still has, and on this surface it is worse: the reader is a restarted session
+    asking "what have I already said", and a silently truncated answer is one it
+    will act on by repeating itself.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/traces", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    for iteration in range(5):
+        assert _cli(hub, "tell", "compute/traces", f"soak iteration {iteration} logged") == 0
+    capsys.readouterr()
+
+    assert _cli(hub, "sent", "--limit", "2", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (payload["showing"], payload["total"]) == (2, 5)
+    assert [m["body"] for m in payload["messages"]] == ["soak iteration 3 logged", "soak iteration 4 logged"]
+    assert payload["framing"] == {"source": "hub-record-of-self", "authority": "none", "notice": render.SENT_NOTICE}
+
+
+def test_an_empty_sent_log_is_an_answer_and_names_the_hub(hub, tmp_path, monkeypatch, capsys):
+    """Exit 1, not 2, and the hub named — the rule every "nothing" branch re-applies."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    capsys.readouterr()
+
+    assert _cli(hub, "sent") == 1
+    printed = capsys.readouterr().out
+    assert "nothing sent from here yet" in printed
+    assert hub.base_url in printed, "an empty answer that does not name the hub is two answers at once"
