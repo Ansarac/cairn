@@ -119,6 +119,26 @@ Then the boundary test, both directions:
 **The measurable signal is that this file gets shorter over time.** If it grew,
 promotion did not happen — say so out loud rather than shipping the growth.
 
+## 3b. If the session ran a live hub, archive its database
+
+A live run is where most of `docs/design.md`'s reasoning comes from, and a scratch hub
+lives in `/tmp` — so the evidence behind a paragraph evaporates on the next reboot while
+the paragraph stays, and a claim nobody can re-read is a claim that gets re-argued from
+zero. Copy it while the hub is still up:
+
+```python
+import sqlite3
+
+src = sqlite3.connect("file:/tmp/<scratch>.db?mode=ro", uri=True)  # WAL-safe, stdlib
+dst = sqlite3.connect("handoffs/archive/<cut>.db")
+src.backup(dst)
+```
+
+Render a companion `.md` **through the commands a reader would actually run**, not as a
+table dump — that is what preserves the framing tiers invariant I1 specifies. `handoffs/`
+is gitignored, so the copy survives locally without putting a run's raw prose into a
+public repository, and the handoff points at it.
+
 ## 4. Commit, then emit the paste prompt
 
 `CLAUDE.md` and `docs/` are tracked; the handoff is not. Promotion is the only way

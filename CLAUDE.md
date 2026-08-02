@@ -39,10 +39,9 @@ the measurement — including why the middle tier survived and why `--json` grew
 never decides when the receiver reads. The bell carries a count and never
 carries content.
 
-A `note` is the limit case: it has no recipient, so it rings nothing at all, and
-reading it consumes nothing. Both absences are tested. Adding a bell to notes, or
-a per-agent read position, turns a pile into a queue and breaks the one property
-the cut exists for — that the *next* reader finds what the last one found.
+A `note` is the limit case: no recipient, so it rings nothing and reading it
+consumes nothing. Both absences are tested. A bell on notes, or a per-agent read
+position, turns a pile into a queue.
 
 **I3. cairn declares intent; it does not enforce it.** A claim says someone is
 using a resource. It is not a lock. Real exclusion over hardware belongs to the
@@ -117,12 +116,11 @@ is being told.
 
 **A `WireError` reaching `run()` is a traceback plus exit `1`** — a stack trace
 under the code for "asked, nothing to report", which is the poisoned-mailbox
-shape wearing a different hat. `WireError` is a `ValueError`, so `run()`
-deliberately does not catch it. Anything in `wire.py` that validates *caller
-input* therefore needs converting at the boundary: `cli._subject` wraps
-`normalize_subject` and re-raises `UsageError`. Any new validator wants the same
-wrapper, and the test to prove it is an exit-code assertion through `cli.run`,
-not a call to the helper.
+shape wearing a different hat. It is a `ValueError`, so `run()` deliberately does
+not catch it, and anything in `wire.py` that validates input must be converted at
+the boundary instead: `cli._subject` → `UsageError`, `client._readable` →
+`Unreachable`. This escaped three separate ways in one cut. Prove a new validator
+with an exit-code assertion through `cli.run`, not a call to the helper.
 
 A malformed command line is `3`, and that costs one non-obvious line of code:
 argparse's own `error()` exits **2**, so `cli._Parser` overrides it to raise
@@ -139,12 +137,10 @@ Two builds will disagree and neither will say so. Run `git diff -- src/cairn/wir
 before finishing any session that touched it.
 
 **And a bump for a purely additive change is a loud one.** `check_version`
-compares for equality, so bumping does not deprecate an old peer — it
-disconnects one, on every route, including the ones that did not change. Cut 4
-added `Note` and three routes and left the version at 1 for exactly that reason:
-an old hub 404s a new route, which the caller handles. Bump when an existing
-shape changes meaning; if you cannot name the exchange that breaks without the
-bump, you do not need one. The reasoning is on `PROTOCOL_VERSION` itself.
+compares for equality, so a bump does not deprecate an old peer, it disconnects
+one — on every route, including the unchanged ones. Bump when an existing shape
+changes meaning, never when a new one appears. Worked example and full reasoning
+on `PROTOCOL_VERSION` itself.
 
 **`cairn bell` must never fail loudly.** It runs from another program's hook, so
 an exception there degrades the session it is attached to. Every failure path
@@ -205,14 +201,10 @@ stream tears itself down on a timer.
 until it has all `n` bytes or the connection closes, so a sixty-byte bell sits
 unseen behind a 4 KiB buffer. This was measured, and the obvious code is wrong.
 
-**An answer of "nothing" names the hub it asked, and that has to stay true on
-every surface.** `render._asked` is shared by the empty inbox, the empty peer
-list and both empty note readings. Pointing at the wrong hub is the classic
-failure of a two-machine tool and it is indistinguishable from a quiet network;
-a live session checked `peers` five times and then polled for ninety seconds
-before it could tell. A new "nothing" branch that skips the clause is worse than
-none of them having it, because a reader who has learned to look for the hub and
-does not find it concludes the wrong thing. `--json` is deliberately exempt.
+**Every new "nothing" branch has to carry `render._asked`.** Skipping it on one
+surface is worse than none of them having it — a reader who has learned to look
+for the hub and does not find it concludes the wrong thing. That docstring says
+why, and `peers -c` rebuilt the same lie within an hour of the rule landing.
 
 **Only ever type into a session reported `idle`.** `busy` fights the input buffer;
 `waiting` means the session is on a prompt, so the nudge becomes the answer to it;
@@ -247,16 +239,12 @@ rationale ("shared resources can end up inconsistent") persuades nobody, while t
 concrete one it came from ("a crashed flash leaves a board half-written, so the
 next claimant has to be told where the last one stopped") does.
 
-**An example must not be liftable as an answer.** This one is specific to a tool
-whose output is durable, and it was found the hard way. `SKILL.md`'s `settle`
-example carried a plausible root cause — "PLL lock time on a cold die; iteration
-33 is the first at full clock" — and a live session whose actual unsolved problem
-was *iteration 33 fails after a cold start* began writing that fabricated
-diagnosis into permanent sediment as its own finding. It caught itself. The next
-one might not. So when an example answers a question, the answer has to be
-visibly welded to that example's own particulars, and example subjects and names
-have to read as examples rather than as conventions — the same session nearly
-adopted `eval-441` for a soak run because it had seen it in a code block.
+**An example must not be liftable as an answer.** In a tool whose output is
+durable, an example that answers a question plausibly enough to transplant will
+be transplanted — a live session began writing `SKILL.md`'s invented root cause
+into permanent sediment as its own finding, and nearly adopted an example subject
+as a convention. Weld an example answer to its own particulars. `docs/design.md`
+§12 item 4 has the incident.
 
 The rule when adding to it: **keep the shape of the problem, drop its identity.**
 Role words — bench, compute, infra, rig, firmware, `hil`, `jtag` — are industry
@@ -277,38 +265,15 @@ unit test and only appeared here.
 Every test is offline. The hub binds an ephemeral loopback port, and no test
 spawns a process, drives real tmux, or reads real `/proc`.
 
-### Proving it live, and the three ways that loop lies to you
+**Green tests are not the bar; a live run is.** Three things in that loop will
+silently serve you stale code, and each has cost a session real time:
 
-Green tests are not the bar here. The most valuable findings in cuts 3 and 4 came
-from putting an agent session in a realistic situation with the skill installed
-and **no mention of the command it was supposed to reach for** — that is what
-tells you whether the tool explains itself. Forbid it from reading `src/`
-explicitly; a session that has read the implementation is no longer a user, and
-its report is worth much less.
-
-Three things in that loop will silently serve you stale code, and all three cost
-time this way:
-
-- **`uv tool install --force .` does not rebuild when the version has not
-  changed.** It reports success and leaves the old wheel in place, so `cairn
-  <new-verb>` says `invalid choice` on a build you just installed. Do
-  `uv build --wheel -o /tmp/cairn-wheel && uv tool install --force
-  /tmp/cairn-wheel/cairn-0.1.0-py3-none-any.whl`.
-- **A running hub does not pick up `store.py` or `hub.py` edits.** Obvious, and
-  it still cost a session an hour of believing a new query was broken. Restart
-  the hub after touching either.
-- **`pkill -f "cairn hub --port 7801"` kills your own shell**, because the tool's
-  command line contains that string. Match on something the pattern cannot see
-  itself in.
-
-**Archive the hub database when the run is over.** A live run is where most of
-`docs/design.md`'s reasoning comes from, and a scratch hub lives in `/tmp`, which
-means the evidence behind a paragraph evaporates on the next reboot while the
-paragraph stays. `sqlite3.backup()` from the stdlib copies it WAL-safely while
-the hub is still up. `handoffs/` is gitignored, so it holds the copy without
-putting a run's raw prose into a public repository — and the handoff should point
-at it, because a claim in `design.md` whose evidence nobody can re-read is a
-claim that gets re-argued.
+- `uv tool install --force .` **does not rebuild when the version is unchanged**
+  — it reports success and keeps the old wheel. Build first:
+  `uv build --wheel -o /tmp/w && uv tool install --force /tmp/w/cairn-*.whl`.
+- **A running hub ignores `store.py` and `hub.py` edits.** Restart it.
+- `pkill -f "cairn hub --port 7801"` **kills the shell issuing it**, because the
+  pattern matches its own command line.
 
 ```bash
 just check      # lint + format check + the vendor guard + pytest — the whole CI gate
