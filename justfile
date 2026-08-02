@@ -70,3 +70,17 @@ hub port="7777" host="0.0.0.0":
 # Run a throwaway hub for local experiments. Nothing here is meant to survive.
 hub-dev port="7778":
     uv run cairn hub --port {{port}} --db /tmp/cairn-dev.db
+
+# The same hub in a container, on a named volume that outlives it.
+#
+# --build every time on purpose: with the version unchanged between releases,
+# which it is on every iteration, `up -d` alone happily starts the image you
+# built before your edit — the same trap `just install` documents for wheels.
+# docs/deployment.md has the network and database decisions this makes for you.
+hub-up:
+    docker compose up -d --build
+
+# Stops the container and leaves the database. `down -v` takes the database too,
+# which is why that one is not a recipe.
+hub-down:
+    docker compose down

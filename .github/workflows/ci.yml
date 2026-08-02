@@ -53,3 +53,31 @@ jobs:
       # loopback port and nothing reaches the network.
       - name: Test
         run: uv run pytest
+
+  # A deployment artefact nobody builds is one that rots quietly, and this one
+  # would be discovered broken by whoever is standing up a second machine. Kept
+  # out of `check` — the required status — so the gate on every PR stays fast.
+  #
+  # It runs the image rather than only building it: a Dockerfile that builds and
+  # then exits on start looks identical to a working one in a build log.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the hub image
+        run: docker build -t cairn-hub:ci .
+
+      - name: It starts, answers, and stops cleanly
+        run: |
+          docker run -d --name hub -p 7777:7777 cairn-hub:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7777/v1/health; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "${ok:-}" ]; then docker logs hub; exit 1; fi
+          # SIGTERM, which is what `docker stop` sends. Without hub.stop_on_terminate
+          # this is exit 143 and every open bell stream is dropped with no close.
+          docker stop hub
+          code=$(docker inspect hub --format '{{.State.ExitCode}}')
+          if [ "$code" != "0" ]; then echo "::error::hub exited $code on SIGTERM"; exit 1; fi

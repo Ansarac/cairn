@@ -1,0 +1,14 @@
+# Deny everything, then name what the wheel is built from. An allowlist rather
+# than a list of exclusions, because the things that must never enter a build
+# context here — hub databases, session handoffs, the raw research note — are
+# also the things a future addition is most likely to forget to exclude.
+*
+
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!skills/
+
+**/__pycache__/
+**/*.py[cod]

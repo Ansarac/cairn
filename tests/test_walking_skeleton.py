@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -1257,6 +1258,42 @@ def test_a_backlog_past_the_bell_s_limit_does_not_take_the_bell_off_the_air(hub,
 
     assert _cli(hub, "bell", "--limit", "3") == 0
     assert capsys.readouterr().out.strip() == "{}", "the latch stopped latching"
+
+
+def test_a_terminate_signal_closes_the_hub_instead_of_killing_it():
+    """`docker stop` and `systemctl stop` send SIGTERM, whose default action is to kill.
+
+    Killed, the process never reaches `close_all()` or `server_close()`: every
+    open bell stream is dropped with no close frame and the exit code is 143.
+    SQLite's WAL survives it and nothing else about it is tidy — and a container
+    that reports 143 every time it is asked to stop trains whoever runs it to
+    ignore the exit code.
+
+    The handler shuts down on a thread of its own. That is load-bearing in
+    production and invisible here: a signal handler runs on the main thread,
+    which in a real hub is the thread sitting inside `serve_forever`, and
+    `shutdown()` blocks until `serve_forever` has returned. Called directly it
+    deadlocks the process it is trying to stop. This test runs the server off the
+    main thread so a regression shows up as a failure rather than as a hang, so
+    read the reason in `hub.stop_on_terminate` rather than looking for it here.
+    """
+    from cairn import hub as hub_module
+
+    server = hub_module.make_server(SqliteStore(":memory:"), host="127.0.0.1", port=0)
+    previous = signal.getsignal(signal.SIGTERM)
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    try:
+        hub_module.stop_on_terminate(server)
+        assert signal.getsignal(signal.SIGTERM) is not previous, "nothing installed a handler"
+        serving.start()
+        time.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+        serving.join(timeout=5)
+        assert not serving.is_alive(), "SIGTERM did not bring serve_forever down"
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        server.notifier.close_all()
+        server.server_close()
 
 
 def _as_hook(monkeypatch, event: str) -> None:
