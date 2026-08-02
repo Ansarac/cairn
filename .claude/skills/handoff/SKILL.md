@@ -2,7 +2,8 @@
 name: handoff
 description: >-
   Close out a work session on cairn: verify state from the repo rather than from
-  memory, promote durable content into CLAUDE.md and docs/design.md, and rewrite the
+  memory, promote durable content into docs/design.md and the docstrings it belongs at,
+  and rewrite the
   single handoffs/HANDOFF.md. Use when the user says they are done, asks to wrap up or
   write the handoff, or invokes /handoff.
 ---
@@ -56,43 +57,52 @@ clean tree or a green suite you did not just observe.
 
 ## 2. Triage — three homes, and only one of them is transient
 
-> **A rule that changes what a session does** → `CLAUDE.md`
 > **Why something is the way it is, and what it cost to find out** → `docs/design.md`
+> **A hazard with somewhere to live** → the docstring at its point of use
 > **This handover only** → `handoffs/HANDOFF.md`
 
-### `CLAUDE.md` is the expensive one, and the default answer is no
+### This skill does not edit `CLAUDE.md`
 
-**§3's anti-bloat rules apply here first and harder**, which is the opposite of what
-the table above suggests. `HANDOFF.md` is read once and overwritten. `CLAUDE.md` is
-loaded in full into **every session, forever**, before anyone knows the task — so a line
-that changes nobody's behaviour still costs attention on every unrelated task. Cheap to
-add, paid for indefinitely. Hence one constraint the handoff does not have: **it should
-rarely change.** A session that edits it is unusual; one that adds three sections has
-misfiled something.
+**Do not change `CLAUDE.md` as part of closing a session.** Not a line, not a
+correction, not "while I was in there". If the work of the session genuinely produced
+a rule that belongs there, **propose it in the handoff** — the words you would add and
+where — and leave the decision to the maintainer.
 
-Three exits, in order, before it is even a candidate:
+The reason is that the repository is public. `CLAUDE.md` is the file that governs how
+every future session behaves, and a contribution should not be able to rewrite the
+instructions the next contributor works under as a side effect of landing something
+else. Every other target here is inspectable as content: a paragraph in `docs/design.md`
+is read as an argument and can be disagreed with. A line in `CLAUDE.md` is read as an
+instruction and is obeyed. Those deserve different thresholds, and the second one is not
+a threshold a session should clear on its own authority.
+
+The bar is unchanged and worth keeping in front of you, because it is what makes a
+*proposal* worth writing rather than noise: **likely, damaging, and invisible where the
+mistake is made** — all three at once. Not "would a session do something wrong", which
+everything passes.
+
+Before it is even a candidate, three exits, in order:
 
 1. **A point of use** — a docstring on the constant, function or test somebody must be
-   editing anyway. Read exactly when relevant, free otherwise. Most "hazards" are this.
+   editing anyway. Read exactly when relevant, free otherwise. Most "hazards" are this,
+   and this is the answer that needs no permission from anybody.
 2. **Reasoning** → `docs/design.md`, however painful it was to learn.
 3. **This user, or how to run the loop** → memory.
 
-Then the bar, all three at once: **likely, damaging, and invisible where the mistake is
-made.** Not "would a session do something wrong" — everything passes that.
+**Carry the rule, not its evidence**, if you do end up proposing one. The bloat arrives
+as a real one-line rule wearing the whole incident that produced it, when the incident
+is already in `docs/design.md`. Imperative plus pointer. A paragraph that persuades
+rather than instructs is in the wrong file.
 
-**Carry the rule, not its evidence.** The bloat arrives as a real one-line rule wearing
-the whole incident that produced it, when the incident is already in `docs/design.md`.
-Imperative plus pointer. A paragraph that persuades rather than instructs is in the
-wrong file.
-
-**Report the delta**, `git show <base>:CLAUDE.md | wc -l` against now. Growth is a claim
-to be defended line by line, in public. Across this project's history the file has only
-ever gone up, and the largest jumps came from the sessions most pleased with themselves.
+`CLAUDE.md` is loaded in full into **every session, forever**, before anyone knows the
+task, so a line that changes nobody's behaviour still costs attention on every unrelated
+one. Cheap to add, paid for indefinitely. Across this project's history it has only ever
+gone up, and the largest jumps came from the sessions most pleased with themselves.
 
 | The item is… | it goes to |
 |:--|:--|
-| a hazard that is likely, damaging, **and** invisible at the point of use | **`CLAUDE.md`** — one line, then link out. Read the section above first |
-| a hazard with a natural point of use | the docstring there, not `CLAUDE.md` |
+| a hazard that is likely, damaging, **and** invisible at the point of use | a **proposal in the handoff**, quoting the line you would add. Never an edit |
+| a hazard with a natural point of use | the docstring there |
 | an architectural decision, or an option considered and **rejected** | `docs/design.md`, in the relevant §, **with the reasoning** |
 | a measurement | the measurements table in the `docs/design.md` appendix |
 | a change to what cairn is or is not | `README.md` "What it is not", and `docs/design.md` §1 |
@@ -148,8 +158,8 @@ Then the boundary test, both directions:
 > **Does HANDOFF repeat anything `CLAUDE.md` or `docs/` already say?**
 > Yes → it is overfilled. Cut it.
 
-**Keep it under roughly 60 lines, and treat growth the way §2 treats `CLAUDE.md`
-growth: a claim to be defended, not a defect on its own.** An earlier version of this
+**Keep it under roughly 60 lines, and treat growth as a claim to be defended rather
+than a defect on its own.** An earlier version of this
 skill demanded the file get shorter every session. That is not a property a handoff
 can have — its size is set by how much irreducible transient state the session leaves,
 and a session that lands two workstreams and a new deployment path genuinely has more
@@ -157,8 +167,8 @@ to hand over than one that fixes a typo.
 
 Worse, the metric bought its own failure. There are exactly two ways to hit it: drop
 machine state, which is the non-recoverable content the file exists for; or push
-transient items up into `CLAUDE.md` and `docs/design.md`, which is the bloat §2 works
-hardest to prevent. A rule whose cheapest satisfaction is the thing it was written to
+transient items up into `docs/design.md`, where they read as durable reasoning and
+nobody removes them. A rule whose cheapest satisfaction is the thing it was written to
 stop is worse than no rule. If the file is over the ceiling, cut it and say what you
 cut; if it grew and every line earns its place, say that instead of apologising for
 arithmetic.
@@ -221,7 +231,9 @@ skill exists to prevent. These are about **reporting**, which is a different act
 - **If the session drifted toward starting, resuming or driving a session, say so
   plainly.** That is out of scope by design, and it is the failure mode that killed the
   closest comparable project — a drift nobody names is a drift that continues.
-- **Name every file you changed that changes future behaviour**: `CLAUDE.md` (with its
-  line delta), `skills/cairn/SKILL.md`, this file. All three are easy to leave
-  unmentioned and all three outlive the session.
+- **Name every file you changed that changes future behaviour**: `skills/cairn/SKILL.md`
+  and this file. Both are easy to leave unmentioned and both outlive the session.
+- **If you are proposing a `CLAUDE.md` line, say so under its own heading** with the
+  words you would add. It is a request, not a change, and burying it in prose is how it
+  gets read as one — or missed entirely.
 - Cite `file:line` for anything a reader will need to act on.
