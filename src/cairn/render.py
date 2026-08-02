@@ -583,9 +583,18 @@ def bell_reason(count: int) -> str:
     mail contains: text arriving through a hook has no verifiable author, so
     carrying the message here would be indistinguishable from an injection.
     See invariant I1 and `cli.cmd_bell`.
+
+    The pronoun agrees with the count because a reader quoted this line back
+    verbatim to settle whether the count was right, and reported the noun's
+    number as a fact about the string. `1 unread message … read them` is the
+    one sentence every hooked session sees, and it was ungrammatical from the
+    day the line was written through every cut that touched the bell after it —
+    including two that changed what the count means. `CLAIM_CLAUSE` is left
+    alone: "peer claims" there is a genre label, not a count of anything.
     """
     plural = "message" if count == 1 else "messages"
-    return f"cairn: {count} unread {plural} from peer agents. Run `cairn inbox` to read them — {CLAIM_CLAUSE}."
+    pronoun = "it" if count == 1 else "them"
+    return f"cairn: {count} unread {plural} from peer agents. Run `cairn inbox` to read {pronoun} — {CLAIM_CLAUSE}."
 
 
 def arrival_note(registration: Registration) -> str:

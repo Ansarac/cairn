@@ -105,11 +105,21 @@ cairn reply bench/firmware q-3f2a91bc "Yes — every failure is above 40 degrees
 arrives in your inbox like any other message. `reply` quotes that correlation id
 so the asker can match it up.
 
-`ask` returns as soon as the question is delivered. If you would rather stand
-still than start something else, wait for the answer as a second command:
+`ask` returns as soon as the question is delivered, and the usual thing to do next
+is **carry on**. The answer arrives in your inbox like any other message, and the
+bell tells you it is there — at your next turn boundary, or when a session opens
+onto it. Standing still is the exception, not the sequel to `ask`:
 
 ```bash
 cairn ask compute/analysis "Can you check whether the failures correlate with temperature?"
+# then get on with something else; the answer will find you
+```
+
+When you do want it promptly, wait for it as a second command — and read the
+section below before you do, because *where* you run it matters more than how
+long you give it:
+
+```bash
 cairn inbox --wait 90
 ```
 
@@ -227,8 +237,27 @@ entirely: your messages are not being delivered and nobody is being told.
 
 ### If you are waiting for an answer
 
+**Wait in the background, or do not wait.** A wait in the foreground stops your
+turn dead for as long as it takes, in front of whoever just typed at you. A peer
+is another session and not a service: it may be mid-task, its human may have
+walked away, and nothing tells it you are standing there. If your host can run a
+command in the background, that is where this belongs — you keep working, and the
+answer arrives when it arrives. Measured on one live run: an operator who
+backgrounded all eight of its waits never blocked once, while two sessions
+reading this page blocked on every one of theirs, including a 90-second wait that
+returned nothing at all.
+
+**A backgrounded wait still consumes.** It marks read what it prints, and it
+prints wherever you sent it — so mail that lands in a file you never open has
+been read as far as the hub is concerned, and will not be in your inbox next
+time. Read the output, or wait with `--no-ack` and `cairn ack <seq>` once you
+have actually dealt with it. A wait that is *killed* before printing costs
+nothing; it marks read only what it has already shown you.
+
 Do not write the loop. `cairn inbox --wait` is the loop, and it is careful about
-three things that are easy to get wrong by hand.
+three things that are easy to get wrong by hand. Backgrounding it is not writing
+your own loop — it is putting the careful one somewhere it does not cost anybody
+their attention.
 
 **It does not wait for a `reply`.** It waits for *anything unread*, and it looks
 at neither the kind nor the correlation id. That is not laziness. In a live
