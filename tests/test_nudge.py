@@ -604,3 +604,54 @@ def test_a_real_message_reaches_the_counter_and_its_body_never_reaches_the_termi
     assert nudge.read_nudged("compute/analysis") == sent.seq
     # The daemon looked, it did not read: the message is still the reader's to collect.
     assert [m.body for m in client.inbox("compute/analysis").messages] == [body]
+
+
+# -- the withdrawn entry point -------------------------------------------------
+
+
+def test_nudge_has_no_command_line_entry_point():
+    """`cairn nudge` is withdrawn. Everything it needs is still here; the door is not.
+
+    The module below this line is fully tested and fully unreachable, which is a
+    state that decays: the cheapest way to "fix" a future session's confusion is
+    to add the subparser back, and nothing else in the suite would notice.
+
+    Exit 3 rather than 2 matters. A sealed command is a malformed command line,
+    not an unreachable hub, and a script doing `cairn nudge || echo 'hub down'`
+    would otherwise report an outage. `docs/design.md` §5 has why it was
+    withdrawn, on 2026-08-02, and what would have to be true to bring it back.
+    """
+    import contextlib
+    import io
+
+    from cairn import cli
+
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        code = cli.run(["nudge"])
+    assert code == 3
+    assert "invalid choice: 'nudge'" in err.getvalue()
+
+
+def test_the_nudger_itself_is_kept_whole_behind_that_door():
+    """Sealing the entry point must not become deleting the component by attrition.
+
+    Each name here is load-bearing for a future unsealing, and one of them —
+    `latch_belled` — is load-bearing *now*: `cli.cmd_bell` uses it to ring once
+    per new head, which is what stops the turn-boundary bell becoming the wake
+    loop a peer reported and the source disproved.
+    """
+    for name in (
+        "run",
+        "wake",
+        "should_wake",
+        "nudge_text",
+        "Watch",
+        "WAKEABLE_STATES",
+        "read_belled",
+        "latch_belled",
+        "counter_is_fresh",
+        "read_unread",
+    ):
+        assert hasattr(nudge, name), name
+    assert hasattr(terminal, "pane_for_pid")
+    assert hasattr(terminal, "send_line")

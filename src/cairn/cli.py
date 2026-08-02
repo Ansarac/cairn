@@ -905,16 +905,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("--limit", type=int, default=50)
     p.set_defaults(func=cmd_bell)
 
-    p = sub.add_parser("nudge", help="run the optional nudger: keep the local counter warm, wake idle sessions")
-    p.add_argument(
-        "--watch",
-        action="append",
-        default=[],
-        metavar="AGENT:PATH",
-        help="repeatable; defaults to this directory's registered identity",
-    )
-    p.add_argument("--poll-interval", type=float, default=30.0)
-    p.set_defaults(func=cmd_nudge)
+    # `nudge` is **withdrawn**: no subparser, so there is no way to start the
+    # daemon. `nudge.py`, `terminal.py` and the adapter's session lookup are all
+    # still here and still tested, because the measurements that killed this are
+    # worth more than the keystrokes to delete it and a future cut may want the
+    # SSE half back. `docs/design.md` §5 has the reasoning and the date.
+    #
+    # To unseal: restore this subparser. Nothing else was removed. Read §5 first
+    # — two defects found on the day it was withdrawn are still in the code,
+    # `cli._watches` resolving a pid exactly once and `_usability` ranking
+    # candidates without asking whether they have a pane.
 
     p = sub.add_parser("hub", help="run the hub in the foreground")
     p.add_argument("--host", default="127.0.0.1")

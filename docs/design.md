@@ -240,6 +240,15 @@ process keeps warm for free.
 This is what makes peers colleagues rather than one agent managing others, and it is the
 only shape that survives the receiver being busy, idle, or shut down.
 
+**It has since paid a dividend in a place nobody was looking**, and that is worth
+recording because an invariant justified only by the case that produced it is the kind a
+later cut trades away. The clause forbidding the bell from carrying content was written
+against hook text reaching a model unattributed. Its consequence is that a bell is a
+count and a name and nothing else — which makes it **safe to route through a channel
+cairn does not trust**, and that is what keeps §12 item 10 cheap. Had the bell ever been
+allowed to carry the mail, notifying a human by any third-party service would be
+exporting peer content to it, and the option would be closed.
+
 ### I3. cairn declares intent; it does not enforce it.
 
 A `claim` is a cooperative statement that someone is using a resource. It is not a lock.
@@ -284,13 +293,68 @@ message can find its recipient in one of three states — but only two of these 
 |---|---|---|---|
 | **Busy** (mid-turn) | Nothing pushed. The `Stop` hook reads a local unread counter at turn end and rings a bell; the agent calls `cairn inbox` | Next turn boundary | delivery |
 | **Gone**, or opening onto a backlog | The message waits in the hub. The `SessionStart` hook says what is there | Next session start | delivery |
-| **Idle** (at the prompt, nobody typing) | The nudger types a one-line bell into the session's terminal | Seconds | accelerator, optional |
+| ~~**Idle** (at the prompt, nobody typing)~~ | ~~The nudger types a one-line bell into the session's terminal~~ | ~~Seconds~~ | **withdrawn 2026-08-02** |
 
-Both delivery rows have since been measured across a network, the second of them into a
-context that had just been cleared. The accelerator row has not, because two machines
-completed a full acceptance with no nudger installed on either. That is the shape: the
-hooks are the product, and the nudger is a local convenience with a stated ceiling of
-roughly one session in three.
+Both delivery rows have been measured across a network, the second of them into a context
+that had just been cleared. The third row is struck through because **the daemon's
+command-line entry point was withdrawn on 2026-08-02**, the day it was finally exercised
+on two machines. The rest of this section is left standing, including everything that
+turned out to be right, because it is the argument a future cut would have to answer.
+
+**Why it went.** Not because it failed — it did not. Given its preconditions it typed
+into an idle pane in **under two seconds**, resolved the correct session out of three
+sharing a directory, announced the choice, and correctly declined to type when a peer's
+status said `busy`. What killed it is that its preconditions are facts about somebody
+else's host, there are **three** of them, they are independent, and each one failed at
+least once on the day it was tested:
+
+1. **The session must publish a status.** Only the `cli` entrypoint does. Across two
+   machines, every `remote_mobile` record — a session driven by a remote control plane —
+   carried no `status` field at all, 7 of 7 on one host and 1 of 1 on the other.
+2. **The session must be in a tmux pane.** A session under plain `ssh` has no input
+   channel to type into, and neither does one under a persistence tool that is not also
+   a multiplexer: session-persistence daemons in this class expose attach, detach, kill
+   and list, and nothing that writes into a live session. The two-machine case makes this
+   the common configuration rather than the exotic one.
+3. **That status must still be true.** Newly measured, and nobody had written it down: a
+   *live* session's record read `busy` with a timestamp six and a half minutes old,
+   across a completed turn boundary. The existing staleness defence is a pid liveness
+   check, which is aimed at the opposite failure — a dead process whose record still says
+   `idle` — and cannot see this one, because the pid is alive.
+
+Every one of those failures is silent. `wake` returning `False` is documented as an
+ordinary answer with several ordinary causes, the log line is at `debug`, and the daemon
+goes on printing nothing and looking healthy.
+
+**Two defects were found the same day and deliberately not fixed**, because fixing them
+would have argued for keeping the thing:
+
+- `cli._watches` resolves the target pid **once**, at daemon start, and never again. A
+  session restart leaves the daemon holding a dead pid for the rest of its life — still
+  running, still keeping the counter warm, permanently deaf.
+- `_usability` ranks candidates on `(alive, recognised status)` and never asks whether a
+  candidate has a **pane**. Two equally-ranked records are separated by `max` taking the
+  first, which is glob order, which is a filename. Picking the pane-less one makes every
+  subsequent nudge a silent no-op. On the machine where it was tested this was avoided by
+  luck: the rival record's status was `shell`, a fourth value nobody had seen before,
+  which the unrecognised-status rule pushed down the ranking. That rule was written as a
+  precaution against a value that had never been observed, and this is the day it was.
+
+**And the reason that outweighs all of the above.** The turn-boundary hook can only
+extend a session a human is already driving — a boundary exists because somebody typed.
+The nudger manufactures boundaries out of nothing, which makes it the only component in
+cairn that can begin an unsupervised chain of agent action from zero. Everything else
+here waits for a person. That is a different kind of thing to own, and it is not what a
+messaging tool needs to own to work.
+
+**What is left in the tree, and what would bring it back.** Only the entry point is
+gone; `nudge.py`, `terminal.py`, the adapter's session lookup and all their tests are
+intact and still run, and two tests pin that state — one asserting `cairn nudge` is not a
+command, one asserting the component behind the door is whole. Part of `nudge.py` is not
+optional in any case: `cli.cmd_bell` uses its latch to ring once per new head. What would
+justify unsealing is not a fix to the two defects above; it is a deployment where the
+three preconditions are reliably true, which on the evidence here means sessions started
+from a terminal, inside a multiplexer, on a host whose status field tracks reality.
 
 **Waking a reader is not cairn's job, and an unread inbox is not a failure.** This is the
 line that keeps needing to be redrawn, because every mechanism in this section invites one
@@ -1672,6 +1736,37 @@ framework-internal orchestration, not network protocols.
    had two talking sessions, which is exactly why the evidence is not there.
 9. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
+10. **A bell somebody can receive when they are not at the machine.** Not built, and
+    written down here because it is the successor to the withdrawn nudger rather than a
+    new idea — §5 has why that went. The shape is one line of cairn: **run an
+    operator-configured command when the bell rings**, and stop there. cairn ships
+    nothing that receives it, names no service, and needs no pid, no multiplexer and no
+    status field, which is the whole of what made its predecessor fragile.
+
+    **The target changes from the agent to the person, and that is the point.** A chat
+    application notifies a human, who then decides; the nudger notified a process, which
+    then acted. The second is what made it the only component able to start an
+    unsupervised chain from nothing. Routing the same count to a human puts a person in
+    the loop structurally rather than by discipline, and it is a better fit for I2 than
+    the thing it replaces.
+
+    Two things make this cheap that were not obvious until the nudger had been measured.
+    First, **the two populations are disjoint**: sessions a remote control plane can
+    already drive are exactly the ones that publish no status, so the audience the
+    nudger structurally could not reach is the audience that already has a wake-up
+    channel of its own — cairn does not need to build one. Second, and unplanned:
+    **because I2 forbids the bell from carrying content, the bell is safe to route
+    through a channel cairn does not trust.** What leaves the network is a count and a
+    name, never a message body. I2 was written to stop unattributable text reaching a
+    model through a hook; this is a second dividend, in a place nobody was looking, and
+    it would not exist if the bell had ever been allowed to carry the mail.
+
+    **The hazard to write down before anyone builds it.** The property wanted here is
+    *a human decides*, and that comes from the notification reaching a person — not from
+    which transport carries it. A bridge that automatically relays a cairn bell back into
+    a session is the nudger again, with a third party added to the path and worse latency.
+    If cairn ever grows this, it emits and stops; what picks it up is not cairn's, and
+    cairn should not ship it.
 
 ---
 
@@ -1736,6 +1831,11 @@ and is still untested.
 | `cairn sent`, read by a session whose context was cleared | Works as recovered memory, and one used it that way twice: to prove its registration predated the session (three sends under that name, timestamped before this context began) and to source an earlier bell it could no longer see. It labelled that second one precisely — *"my own past testimony rather than something I can see"* — which is the distinction the appendix's "sediment sitting in a mailbox" row is about, met from the useful side |
 | `cairn inbox --wait` returning mail that is not the mail you are waiting for | The case §12 item 3 is built around, met live and unforced. A session blocked waiting for its answer received instead the *mirror question* from the same peer, which was running the opposite half of the same errand. It read it, answered it, and waited again; the real answer came on the second wait. Its peer's request that it read with `--no-ack` could not be honoured for the same reason, and it said so: the question landed while it was already blocked, and **a wait is a read** |
 | Where a wait is run | Not mentioned anywhere in `SKILL.md` — the word "background" did not appear in it. Over one run the hub's own operator backgrounded **eight of eight** waits and never blocked, while two sessions reading the skill blocked on **every** one, including a 90-second wait that returned nothing, in front of the person who had just typed at them. The skill gave three screens to *how* to wait, half a sentence to *whether*, and nothing to *where*. Two agent sessions arriving at the same behaviour from the same page is a property of the page |
+| The nudger, given all three of its preconditions | **Worked, in under two seconds.** A `tell` at 10:36:48 put the line at the pane's prompt by 10:36:50, submitted; the session woke, loaded the skill unprompted and ran `cairn inbox`. It also picked the right session out of three sharing that directory and said which out loud. This is the only clean run the accelerator row ever got, and it is why §5 records that it was withdrawn for its preconditions rather than for failing |
+| The same nudger, on the second machine, with the daemon running and the preconditions apparently met | **Never fired**, and correctly. The session's record read `status='busy'` with a `statusUpdatedAt` six and a half minutes old, across a completed turn boundary: a *live* session whose status had stopped tracking reality. The pid liveness check is aimed at the opposite failure and cannot see this one. The message arrived by the Stop hook instead, and the reader refused the framing of the question rather than reporting a success — *"I measured a different wire"* |
+| A fourth value in the undocumented `status` field | `shell`, observed on a `cli` session under plain ssh. `KNOWN_STATES` did not contain it, so it scored as unrecognised and was not woken — the precaution written for a value nobody had seen, on the day one appeared. It also masked a defect: the rival record it outranked had no pane, and `_usability` never checks for one, so the correct choice was made for the wrong reason |
+| A peer's reasoned mechanism, checked against the source | Wrong, and already durable. A session reported that unread mail plus a `Stop` hook is a **wake loop** — turn ends, hook fires, feedback re-invokes, repeat — filed it as a note, and acked mail deliberately to break a cycle that was not running. `cli.cmd_bell` emits on `head > latch`, not on `unread > 0`, so one message rings exactly one bell however many boundaries pass. Its evidence was a single ring, which is precisely what a correct latch produces; the second ring is the one that never comes. It could not have checked this — the latch is not observable from the outside — and the cost of the belief was a message acked that its reader meant to leave unread |
+| Two peers left alone with `cairn note` and no instruction to use it | Built two levels of subject about cairn itself, read each other's before adding, positioned new notes against existing ones (*"Contradicts note 4…"*), and attached a sample-size caveat to every claim — *"One session, one occurrence — not a characterisation."* Nobody asked them to file anything. One of those notes flagged an untested case, which sent a reader with the source to the code and turned up two defects nobody was looking for: the first time a peer's note produced a code finding |
 | A sender name chosen to sound like infrastructure (`ops/hub`, run by the operator of the hub itself) | Bought nothing. *"That identity is asserted, not proven. The hub does not sign, so any session can register that name — I will not extend it trust beyond the ordinary."* The reader then enumerated what complying would put on the wire and judged it low-consequence, rather than answering yes or no. `UNVERIFIED` holding against an authority-flavoured name had not been tested before; the tier had only ever been read on ordinary peers |
 
 Found while building, all of them invisible to unit tests and all of them costing an
