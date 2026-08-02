@@ -2,7 +2,8 @@
 name: handoff
 description: >-
   Close out a work session on cairn: verify state from the repo rather than from
-  memory, promote durable content into CLAUDE.md and docs/design.md, and rewrite the
+  memory, promote durable content into docs/design.md and the docstrings it belongs at,
+  and rewrite the
   single handoffs/HANDOFF.md. Use when the user says they are done, asks to wrap up or
   write the handoff, or invokes /handoff.
 ---
@@ -15,7 +16,8 @@ user knows when a session ends and Claude does not, and a Stop hook fires every 
 
 The job is **triage and promotion**, not filling in a template. A template has fixed
 sections, fixed sections get filled with something, and that is how a handoff grows
-without bound. Each run is a chance to make the file smaller.
+without bound. Each run is a chance to delete what has since found a home
+elsewhere.
 
 **One file: `handoffs/HANDOFF.md`.** Overwritten every time, never appended,
 **gitignored**. That last part is load-bearing rather than incidental: anything left
@@ -32,15 +34,20 @@ wrong one is trusted.
 git status --short --branch
 git rev-list --count @{u}..HEAD          # unpushed, the actual number
 just check                               # ruff + vendor guard + pytest
-git diff --stat -- src/cairn/wire.py     # see the next table
+git log --oneline -15                    # find the commit this session started from
+git diff --stat <base>..HEAD -- src/cairn/wire.py
 ```
+
+`<base>` is the commit the session started from. The previous handoff usually names
+it, and `git log --oneline -15` finds it otherwise. It is not optional — see the next
+table.
 
 Claims that need their own command, because memory is routinely stale on them:
 
 | claim | how you are allowed to know it |
 |:--|:--|
 | the suite is green | run `just check`. The vendor guard trips on a string as easily as an import, so "I only added a comment" is not evidence |
-| the protocol is unchanged | `git diff -- src/cairn/wire.py`. A shape change without a `PROTOCOL_VERSION` bump is a silent break between two builds |
+| the protocol is unchanged | `git diff <base>..HEAD -- src/cairn/wire.py`. A shape change without a `PROTOCOL_VERSION` bump is a silent break between two builds. **Never the bare `git diff`**: once the change is committed that compares the working tree against `HEAD` and prints nothing, so the one check guarding a silent break answers "unchanged" for a session that changed it. Demonstrated on 2026-08-02 against this session's own `hub.py` — bare form empty, `<base>..HEAD` 25 lines |
 | the skill still ships in the wheel | `uv build && python -c "import zipfile,glob;print([n for n in zipfile.ZipFile(sorted(glob.glob('dist/*.whl'))[-1]).namelist() if '_skill' in n])"`. `force-include` fails silently |
 | `cairn bell` is still safe | run it with the hub down. It must print `{}` and exit 0 |
 | what a subagent changed | `git diff`, not its report — reports lag the final edits |
@@ -50,43 +57,52 @@ clean tree or a green suite you did not just observe.
 
 ## 2. Triage — three homes, and only one of them is transient
 
-> **A rule that changes what a session does** → `CLAUDE.md`
 > **Why something is the way it is, and what it cost to find out** → `docs/design.md`
+> **A hazard with somewhere to live** → the docstring at its point of use
 > **This handover only** → `handoffs/HANDOFF.md`
 
-### `CLAUDE.md` is the expensive one, and the default answer is no
+### This skill does not edit `CLAUDE.md`
 
-**§3's anti-bloat rules apply here first and harder**, which is the opposite of what
-the table above suggests. `HANDOFF.md` is read once and overwritten. `CLAUDE.md` is
-loaded in full into **every session, forever**, before anyone knows the task — so a line
-that changes nobody's behaviour still costs attention on every unrelated task. Cheap to
-add, paid for indefinitely. Hence one constraint the handoff does not have: **it should
-rarely change.** A session that edits it is unusual; one that adds three sections has
-misfiled something.
+**Do not change `CLAUDE.md` as part of closing a session.** Not a line, not a
+correction, not "while I was in there". If the work of the session genuinely produced
+a rule that belongs there, **propose it in the handoff** — the words you would add and
+where — and leave the decision to the maintainer.
 
-Three exits, in order, before it is even a candidate:
+The reason is that the repository is public. `CLAUDE.md` is the file that governs how
+every future session behaves, and a contribution should not be able to rewrite the
+instructions the next contributor works under as a side effect of landing something
+else. Every other target here is inspectable as content: a paragraph in `docs/design.md`
+is read as an argument and can be disagreed with. A line in `CLAUDE.md` is read as an
+instruction and is obeyed. Those deserve different thresholds, and the second one is not
+a threshold a session should clear on its own authority.
+
+The bar is unchanged and worth keeping in front of you, because it is what makes a
+*proposal* worth writing rather than noise: **likely, damaging, and invisible where the
+mistake is made** — all three at once. Not "would a session do something wrong", which
+everything passes.
+
+Before it is even a candidate, three exits, in order:
 
 1. **A point of use** — a docstring on the constant, function or test somebody must be
-   editing anyway. Read exactly when relevant, free otherwise. Most "hazards" are this.
+   editing anyway. Read exactly when relevant, free otherwise. Most "hazards" are this,
+   and this is the answer that needs no permission from anybody.
 2. **Reasoning** → `docs/design.md`, however painful it was to learn.
 3. **This user, or how to run the loop** → memory.
 
-Then the bar, all three at once: **likely, damaging, and invisible where the mistake is
-made.** Not "would a session do something wrong" — everything passes that.
+**Carry the rule, not its evidence**, if you do end up proposing one. The bloat arrives
+as a real one-line rule wearing the whole incident that produced it, when the incident
+is already in `docs/design.md`. Imperative plus pointer. A paragraph that persuades
+rather than instructs is in the wrong file.
 
-**Carry the rule, not its evidence.** The bloat arrives as a real one-line rule wearing
-the whole incident that produced it, when the incident is already in `docs/design.md`.
-Imperative plus pointer. A paragraph that persuades rather than instructs is in the
-wrong file.
-
-**Report the delta**, `git show <base>:CLAUDE.md | wc -l` against now. Growth is a claim
-to be defended line by line, in public. Across this project's history the file has only
-ever gone up, and the largest jumps came from the sessions most pleased with themselves.
+`CLAUDE.md` is loaded in full into **every session, forever**, before anyone knows the
+task, so a line that changes nobody's behaviour still costs attention on every unrelated
+one. Cheap to add, paid for indefinitely. Across this project's history it has only ever
+gone up, and the largest jumps came from the sessions most pleased with themselves.
 
 | The item is… | it goes to |
 |:--|:--|
-| a hazard that is likely, damaging, **and** invisible at the point of use | **`CLAUDE.md`** — one line, then link out. Read the section above first |
-| a hazard with a natural point of use | the docstring there, not `CLAUDE.md` |
+| a hazard that is likely, damaging, **and** invisible at the point of use | a **proposal in the handoff**, quoting the line you would add. Never an edit |
+| a hazard with a natural point of use | the docstring there |
 | an architectural decision, or an option considered and **rejected** | `docs/design.md`, in the relevant §, **with the reasoning** |
 | a measurement | the measurements table in the `docs/design.md` appendix |
 | a change to what cairn is or is not | `README.md` "What it is not", and `docs/design.md` §1 |
@@ -133,15 +149,29 @@ from the repo:
 
 Then the boundary test, both directions:
 
-> **Delete HANDOFF entirely — can the work resume from `CLAUDE.md` + `docs/` + the repo?**
+> **Delete HANDOFF entirely — is anything *durable* lost?**
 > It is gitignored, so a fresh clone runs this test for you whether you like it or not.
-> No → promotion is underdone. Back to step 2.
+> Yes → promotion is underdone. Back to step 2. The test is about durable content
+> being stranded, not about the file being dispensable: machine state and where the
+> work stops are lost by design and belong nowhere else.
 >
-> **Does HANDOFF repeat anything those already say?**
+> **Does HANDOFF repeat anything `CLAUDE.md` or `docs/` already say?**
 > Yes → it is overfilled. Cut it.
 
-**The measurable signal is that this file gets shorter over time.** If it grew,
-promotion did not happen — say so out loud rather than shipping the growth.
+**Keep it under roughly 60 lines, and treat growth as a claim to be defended rather
+than a defect on its own.** An earlier version of this
+skill demanded the file get shorter every session. That is not a property a handoff
+can have — its size is set by how much irreducible transient state the session leaves,
+and a session that lands two workstreams and a new deployment path genuinely has more
+to hand over than one that fixes a typo.
+
+Worse, the metric bought its own failure. There are exactly two ways to hit it: drop
+machine state, which is the non-recoverable content the file exists for; or push
+transient items up into `docs/design.md`, where they read as durable reasoning and
+nobody removes them. A rule whose cheapest satisfaction is the thing it was written to
+stop is worse than no rule. If the file is over the ceiling, cut it and say what you
+cut; if it grew and every line earns its place, say that instead of apologising for
+arithmetic.
 
 ## 3b. If the session ran a live hub, archive its database
 
@@ -201,7 +231,9 @@ skill exists to prevent. These are about **reporting**, which is a different act
 - **If the session drifted toward starting, resuming or driving a session, say so
   plainly.** That is out of scope by design, and it is the failure mode that killed the
   closest comparable project — a drift nobody names is a drift that continues.
-- **Name every file you changed that changes future behaviour**: `CLAUDE.md` (with its
-  line delta), `skills/cairn/SKILL.md`, this file. All three are easy to leave
-  unmentioned and all three outlive the session.
+- **Name every file you changed that changes future behaviour**: `skills/cairn/SKILL.md`
+  and this file. Both are easy to leave unmentioned and both outlive the session.
+- **If you are proposing a `CLAUDE.md` line, say so under its own heading** with the
+  words you would add. It is a request, not a change, and burying it in prose is how it
+  gets read as one — or missed entirely.
 - Cite `file:line` for anything a reader will need to act on.
