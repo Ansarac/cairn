@@ -2,6 +2,13 @@
 
 Guidance for Claude Code when working in this repository.
 
+**Sessions propose changes to this file; they do not make them.** A line here is
+read as an instruction and obeyed, unlike a paragraph in `docs/design.md`, which
+is read as an argument and can be disagreed with. Put the proposed wording in the
+handoff and leave the decision to the maintainer. A hazard with a natural point of
+use — a docstring, a test that fails — belongs there instead and needs nobody's
+permission.
+
 ## What this is
 
 `cairn` lets coding agent sessions that a human **already started**, on different
@@ -167,16 +174,6 @@ again. `nudge`'s counter had the same shape, so the wake path went quiet with it
 The hub now returns the true `COUNT` and `MAX(seq)` alongside the page and both
 callers read them. `docs/design.md` §12 item 6 has the reasoning; there is an
 end-to-end test that drains a truncated backlog and rings again.
-
-**The bell's envelope is per-event, the adapter owns it, and the wrong one fails
-silently.** A hook payload the host accepts but never shows the reader looks
-identical to a delivered one from cairn's side — and because the latch advances
-on the ring rather than on the reading, the channel that delivered nothing also
-ate the next one that would have. That is how a session opening onto 63 unread
-was told nothing at all, on either event, for three cuts. Adding a third hook
-event means measuring its envelope first; a test in
-`tests/test_packaging_and_adapter.py` fails until you do. `docs/design.md` §12
-item 7, found by cut 6's acceptance interview and by nothing else.
 
 **A paged surface ships its total, and `inbox` is the one that had to learn it
 twice.** `notes` and `sent` carried a truncation line from the cut that
