@@ -475,6 +475,19 @@ class Note:
     therefore **derived** — it is open while no note points at it — rather than a
     column somebody has to remember to update. Deriving it is what stops it
     drifting; append-only is what keeps the record of who thought what, when.
+
+    `supersedes` is the same shape for statements that `settles` is for questions:
+    a later note saying *this replaced that*. Whether a note has been superseded is
+    derived too, and for the same reason. It is a second relation rather than a
+    reuse of `settles`, because settling closes a loop and superseding replaces a
+    fact — folding them would make `open` mean two things on the one field whose
+    entire value is that it means one.
+
+    `deleted_at` is the exception to append-only, and it is bounded rather than
+    general. The row survives, keeping its id so that anything pointing at it still
+    resolves; the body does not, because the reason to reach for this is sometimes
+    that the body should never have been written down. What replaces it is why it
+    went and who took it out. See `store.delete_note`.
     """
 
     id: int
@@ -483,8 +496,16 @@ class Note:
     body: str
     question: bool = False
     settles: int | None = None
+    supersedes: int | None = None
     artifacts: tuple[Artifact, ...] = ()
     created_at: str = field(default_factory=now)
+    deleted_at: str = ""
+    deleted_by: str = ""
+
+    @property
+    def deleted(self) -> bool:
+        """Return whether the body is gone and this is a tombstone."""
+        return bool(self.deleted_at)
 
     def to_json(self) -> dict[str, Any]:
         """Return the wire form."""
@@ -495,8 +516,11 @@ class Note:
             "body": self.body,
             "question": self.question,
             "settles": self.settles,
+            "supersedes": self.supersedes,
             "artifacts": [a.to_json() for a in self.artifacts],
             "created_at": self.created_at,
+            "deleted_at": self.deleted_at,
+            "deleted_by": self.deleted_by,
         }
 
     @classmethod
@@ -507,6 +531,7 @@ class Note:
             msg = f"note body is {len(body)} chars, limit is {MAX_BODY_CHARS}; reference an artifact instead"
             raise WireError(msg)
         settles = obj.get("settles")
+        supersedes = obj.get("supersedes")
         return cls(
             id=int(obj.get("id") or 0),
             subject=normalize_subject(_require(obj, "subject", str)),
@@ -514,8 +539,11 @@ class Note:
             body=body,
             question=bool(obj.get("question")),
             settles=int(settles) if settles is not None else None,
+            supersedes=int(supersedes) if supersedes is not None else None,
             artifacts=tuple(Artifact.from_json(a) for a in obj.get("artifacts") or ()),
             created_at=obj.get("created_at") or now(),
+            deleted_at=str(obj.get("deleted_at") or ""),
+            deleted_by=str(obj.get("deleted_by") or ""),
         )
 
 
@@ -539,12 +567,18 @@ class NoteEntry:
 
     note: Note
     settled_by: int | None = None
+    superseded_by: int | None = None
     provenance: Provenance = field(default_factory=Provenance.unverified)
 
     @property
     def is_open(self) -> bool:
         """Return whether this is a question nobody has answered yet."""
         return self.note.question and self.settled_by is None
+
+    @property
+    def is_current(self) -> bool:
+        """Return whether this note is still what the subject says, as far as anyone has said otherwise."""
+        return self.superseded_by is None and not self.note.deleted
 
     def checked(self, provenance: Provenance) -> Self:
         """Return a copy carrying the verdict of a check that actually ran."""
@@ -560,7 +594,9 @@ class NoteEntry:
         return {
             **self.note.to_json(),
             "settled_by": self.settled_by,
+            "superseded_by": self.superseded_by,
             "open": self.is_open,
+            "current": self.is_current,
             "provenance": {
                 "verified": self.provenance.verified,
                 "method": self.provenance.method,
@@ -572,9 +608,11 @@ class NoteEntry:
     def from_json(cls, obj: dict[str, Any]) -> Self:
         """Parse what the hub sends, deliberately dropping any asserted provenance."""
         settled_by = obj.get("settled_by")
+        superseded_by = obj.get("superseded_by")
         return cls(
             note=Note.from_json(_require(obj, "note", dict)),
             settled_by=int(settled_by) if settled_by is not None else None,
+            superseded_by=int(superseded_by) if superseded_by is not None else None,
         )
 
 

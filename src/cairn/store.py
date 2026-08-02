@@ -27,6 +27,7 @@ is a bug users will feel immediately.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import json
 import sqlite3
@@ -88,11 +89,15 @@ CREATE TABLE IF NOT EXISTS notes (
     body       TEXT NOT NULL,
     question   INTEGER NOT NULL DEFAULT 0,
     settles    INTEGER REFERENCES notes (id),
+    supersedes INTEGER REFERENCES notes (id),
     artifacts  TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    deleted_at TEXT,
+    deleted_by TEXT
 );
 CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
 CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
+CREATE INDEX IF NOT EXISTS notes_by_supersedes ON notes (supersedes);
 CREATE TABLE IF NOT EXISTS subjects (
     name        TEXT PRIMARY KEY,
     description TEXT NOT NULL,
@@ -120,6 +125,21 @@ first note landed and dating it to the upgrade would make every existing subject
 look new on the one reading where age is the point. The description says outright
 that nobody wrote one; inventing a plausible sentence here would be worse than
 admitting the gap, and it is the one nudge that gets these subjects described.
+"""
+
+_MIGRATIONS = (
+    "ALTER TABLE notes ADD COLUMN supersedes INTEGER REFERENCES notes (id)",
+    "ALTER TABLE notes ADD COLUMN deleted_at TEXT",
+    "ALTER TABLE notes ADD COLUMN deleted_by TEXT",
+)
+"""Columns added to a table that already exists, on the same terms as `_BACKFILL`.
+
+`CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there, so a
+schema change to `notes` reaches an existing database only through `ALTER TABLE`.
+Each of these runs at open and each is expected to fail once the column is there;
+the duplicate-column error is the success case on every run after the first. That
+is uglier than a version table and it is the shape that cannot get out of step
+with the hub in the container, which nobody is going to run a migration against.
 """
 
 BACKFILLED_DESCRIPTION = "(no description — this subject predates `cairn subject`)"
@@ -172,6 +192,7 @@ class Store(Protocol):
         subject: str | None = None,
         question: bool = False,  # noqa: FBT001, FBT002 - mirrors `Note.question`; keyword-only here would not match the wire
         settles: int | None = None,
+        supersedes: int | None = None,
         artifacts: Sequence[Artifact] = (),
     ) -> Note:
         """Durably record a note and return it with its assigned id."""
@@ -181,10 +202,20 @@ class Store(Protocol):
         """Return one note, or None."""
         ...
 
+    def delete_note(self, note_id: int, author: str, reason: str) -> Note:
+        """Take a note's body out, leaving a tombstone that says who and why."""
+        ...
+
     def notes(
-        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
-    ) -> tuple[list[NoteEntry], int]:
-        """Return a page of notes, oldest first, and the total the filter matched."""
+        self,
+        subject: str | None = None,
+        *,
+        open_only: bool = False,
+        find: str | None = None,
+        limit: int = 50,
+        deleted: bool = False,
+    ) -> tuple[list[NoteEntry], int, int]:
+        """Return a page of notes, the total the filter matched, and how many are tombstones."""
         ...
 
     def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
@@ -216,6 +247,9 @@ class SqliteStore:
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.executescript(_SCHEMA)
+        for statement in _MIGRATIONS:
+            with contextlib.suppress(sqlite3.OperationalError):
+                self._db.execute(statement)
         self._db.execute(_BACKFILL, (BACKFILLED_DESCRIPTION, BACKFILLED_AUTHOR))
 
     def close(self) -> None:
@@ -521,9 +555,10 @@ class SqliteStore:
         subject: str | None = None,
         question: bool = False,  # noqa: FBT001, FBT002 - mirrors `Note.question`; keyword-only here would not match the wire
         settles: int | None = None,
+        supersedes: int | None = None,
         artifacts: Sequence[Artifact] = (),
     ) -> Note:
-        """Insert a note, deriving the subject when this one settles a question.
+        """Insert a note, deriving the subject when this one settles or supersedes another.
 
         Three refusals, each closing a way for sediment to become useless.
 
@@ -547,19 +582,19 @@ class SqliteStore:
         question is a second note on the same subject; folding both into one row
         would make "is this open" ambiguous for the one field whose whole value
         is that it is not.
+
+        **`supersedes` is the same machinery pointed at statements**, and it
+        inherits the subject for the same reason: a correction filed away from the
+        thing it corrects is a correction nobody finds. It refuses to point at a
+        question, because a question is not a claim that can be replaced — that is
+        what `settles` is for, and allowing both would give `open` two meanings.
+        Unlike `settles` it may point at something already superseded: corrections
+        get corrected, and `notes` resolves a chain to its most recent end.
         """
         if self.get_agent(author) is None:
             msg = f"unknown author {author!r}; register before writing a note"
             raise UsageError(msg)
-        if settles is not None:
-            target = self.get_note(settles)
-            if target is None:
-                msg = f"no note {settles} to settle"
-                raise UsageError(msg)
-            if not target.question:
-                msg = f"note {settles} is not a question, so there is nothing to settle; add a note to its subject"
-                raise UsageError(msg)
-            subject, question = target.subject, False
+        subject, question = self._related(subject, question=question, settles=settles, supersedes=supersedes)
         if subject is None:
             msg = "a note needs a subject: the rig, run or board it is about"
             raise UsageError(msg)
@@ -586,9 +621,18 @@ class SqliteStore:
         self._touch(author)
         created = now()
         cursor = self._db.execute(
-            """INSERT INTO notes (subject, author, body, question, settles, artifacts, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (subject, author, text, int(question), settles, json.dumps([a.to_json() for a in artifacts]), created),
+            """INSERT INTO notes (subject, author, body, question, settles, supersedes, artifacts, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                subject,
+                author,
+                text,
+                int(question),
+                settles,
+                supersedes,
+                json.dumps([a.to_json() for a in artifacts]),
+                created,
+            ),
         )
         return Note(
             id=int(cursor.lastrowid or 0),
@@ -597,19 +641,130 @@ class SqliteStore:
             body=text,
             question=question,
             settles=settles,
+            supersedes=supersedes,
             artifacts=tuple(artifacts),
             created_at=created,
         )
+
+    def _related(
+        self,
+        subject: str | None,
+        *,
+        question: bool,
+        settles: int | None,
+        supersedes: int | None,
+    ) -> tuple[str | None, bool]:
+        """Resolve the subject and questionhood a note inherits from the note it points at.
+
+        Both relations take their subject from their target rather than from an
+        argument, and that is what removes an entire class of mistake: an answer
+        filed away from its question, or a correction filed away from the claim it
+        corrects, is one nobody finds. It is also why neither `cairn settle` nor
+        `cairn supersede` takes a subject.
+
+        The two refusals point at each other on purpose. Somebody who reaches for
+        the wrong verb has correctly identified that a note needs replacing or
+        answering and picked the other one, so the message names the right command
+        with the id already in it.
+        """
+        if settles is not None and supersedes is not None:
+            msg = "a note either settles a question or supersedes a statement, not both"
+            raise UsageError(msg)
+        if settles is not None:
+            target = self._target(settles, "settle")
+            if not target.question:
+                msg = (
+                    f"note {settles} is not a question, so there is nothing to settle; "
+                    f'to replace what it says: cairn supersede {settles} "<what is true now>"'
+                )
+                raise UsageError(msg)
+            return target.subject, False
+        if supersedes is not None:
+            replaced = self._target(supersedes, "supersede")
+            if replaced.question:
+                msg = (
+                    f"note {supersedes} is a question, and a question is not a claim to be replaced; "
+                    f'to answer it: cairn settle {supersedes} "<what you found>"'
+                )
+                raise UsageError(msg)
+            return replaced.subject, question
+        return subject, question
+
+    def _target(self, note_id: int, verb: str) -> Note:
+        found = self.get_note(note_id)
+        if found is None:
+            msg = f"no note {note_id} to {verb}"
+            raise UsageError(msg)
+        if found.deleted:
+            msg = f"note {note_id} was deleted on {found.deleted_at}; there is nothing left to {verb}"
+            raise UsageError(msg)
+        return found
 
     def get_note(self, note_id: int) -> Note | None:
         """Look one note up by id."""
         row = self._db.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         return _note_from_row(row) if row else None
 
+    def delete_note(self, note_id: int, author: str, reason: str) -> Note:
+        """Take a note's body out and leave a tombstone in its place.
+
+        **The body genuinely goes, and that is the point rather than a side
+        effect.** Tidying a noisy pile could be done by hiding; the other reason
+        anyone reaches for this is that the body should never have been written
+        down — a credential, an internal hostname, a path under somebody's home
+        directory — and a note that is merely hidden is still sitting in the
+        database being handed to whoever runs a search. So the text is replaced.
+
+        **The row survives, keeping its id.** Anything pointing at this note — a
+        settling answer, a superseding correction — still resolves rather than
+        dangling, and the pile can still say that something was here and who took
+        it out. Deleting the row instead would make cairn the thing docs/design.md
+        §10 criticises other systems for: a loss with nothing to show for it.
+
+        The reason replaces the body rather than living in a column of its own,
+        because it is what a reader of this pile now needs to see in the place
+        they would have read the note. Say why it went, not what it said.
+
+        No ownership check, on the same reasoning as `settle` and
+        `archive_subject`: cairn does not authenticate, so a check would be a
+        pretence — I3 — and the tombstone names who did it, which is the
+        accountability that actually exists.
+        """
+        if self.get_agent(author) is None:
+            msg = f"unknown author {author!r}; register before deleting a note"
+            raise UsageError(msg)
+        note = self.get_note(note_id)
+        if note is None:
+            msg = f"no note {note_id} to delete"
+            raise UsageError(msg)
+        if note.deleted:
+            msg = f"note {note_id} was already deleted on {note.deleted_at} by {note.deleted_by}"
+            raise UsageError(msg)
+        text = " ".join(reason.split()).strip()
+        if not text:
+            msg = (
+                f'deleting note {note_id} needs a reason: cairn delete {note_id} "<why it went>".\n'
+                f"  it replaces the body, so it is what the next reader sees where the note was"
+            )
+            raise UsageError(msg)
+        self._touch(author)
+        when = now()
+        self._db.execute(
+            "UPDATE notes SET body = ?, deleted_at = ?, deleted_by = ? WHERE id = ?",
+            (text, when, author, note_id),
+        )
+        return _note_from_row(self._db.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone())
+
     def notes(
-        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
-    ) -> tuple[list[NoteEntry], int]:
-        """Return a page of notes and the total the same filter matched.
+        self,
+        subject: str | None = None,
+        *,
+        open_only: bool = False,
+        find: str | None = None,
+        limit: int = 50,
+        deleted: bool = False,
+    ) -> tuple[list[NoteEntry], int, int]:
+        """Return a page of notes, the total the filter matched, and how many are tombstones.
 
         The total is returned rather than inferred, and that is the fix for a
         defect this project already has elsewhere: `cairn inbox` truncates at
@@ -631,8 +786,27 @@ class SqliteStore:
         clause below. The index does not roll up, deliberately: it lists the
         piles that exist, while a read answers "what is known about this thing",
         and those are different questions.
+
+        **Tombstones are out of the page and into a count**, because a pile that
+        has been tidied should read as tidy while still saying that tidying
+        happened. A reading that silently omitted them would be the quiet loss
+        this project keeps finding elsewhere; one full of them would defeat the
+        reason anybody deleted anything. The count is over the same filter, and
+        `deleted=True` lists them.
+
+        **A deleted note stops settling and stops superseding.** Both derived
+        pointers ignore tombstones, so removing a wrong answer reopens its
+        question and removing a wrong correction restores what it replaced. The
+        alternative — a question closed forever by a note that no longer says
+        anything — is the shape `open` exists to prevent.
+
+        `superseded_by` is the **latest** note pointing here, and that is the
+        deliberate opposite of `settled_by`, which is the first. An answer of
+        record is the first one and a later opinion does not displace it; a
+        correction of record is the most recent, because that is what a chain of
+        corrections means.
         """
-        where = ["1 = 1"]
+        where = ["n.deleted_at IS NOT NULL" if deleted else "n.deleted_at IS NULL"]
         params: list[object] = []
         if subject is not None:
             # Reading a subject includes everything under it. `/` is a legal
@@ -649,23 +823,36 @@ class SqliteStore:
             where.append("(n.subject = ? OR n.subject LIKE ? ESCAPE '\\')")
             params += [root, f"{_like_escape(root)}/%"]
         if open_only:
-            where.append("n.question = 1 AND NOT EXISTS (SELECT 1 FROM notes s WHERE s.settles = n.id)")
+            where.append(
+                "n.question = 1 AND NOT EXISTS (SELECT 1 FROM notes s WHERE s.settles = n.id AND s.deleted_at IS NULL)"
+            )
         if find:
             where.append("(n.body LIKE ? ESCAPE '\\' OR n.subject LIKE ? ESCAPE '\\')")
             pattern = f"%{_like_escape(find)}%"
             params += [pattern, pattern]
         clause = " AND ".join(where)
         total = int(self._db.execute(f"SELECT COUNT(*) AS c FROM notes n WHERE {clause}", params).fetchone()["c"])  # noqa: S608 - `clause` is built from literals above; every value is a bound parameter
+        # The tombstone count is the same filter with the liveness clause flipped,
+        # so it can never disagree with the page about what was being looked at.
+        buried = clause.replace(where[0], "n.deleted_at IS NOT NULL" if not deleted else "n.deleted_at IS NULL", 1)
+        removed = int(self._db.execute(f"SELECT COUNT(*) AS c FROM notes n WHERE {buried}", params).fetchone()["c"])  # noqa: S608 - ditto
         rows = self._db.execute(
-            f"""SELECT n.*, (SELECT MIN(s.id) FROM notes s WHERE s.settles = n.id) AS settled_by
+            f"""SELECT n.*,
+                       (SELECT MIN(s.id) FROM notes s WHERE s.settles = n.id AND s.deleted_at IS NULL) AS settled_by,
+                       (SELECT MAX(s.id) FROM notes s WHERE s.supersedes = n.id AND s.deleted_at IS NULL)
+                           AS superseded_by
                 FROM notes n WHERE {clause} ORDER BY n.id DESC LIMIT ?""",  # noqa: S608 - ditto
             [*params, limit],
         ).fetchall()
         entries = [
-            NoteEntry(note=_note_from_row(r), settled_by=int(r["settled_by"]) if r["settled_by"] is not None else None)
+            NoteEntry(
+                note=_note_from_row(r),
+                settled_by=int(r["settled_by"]) if r["settled_by"] is not None else None,
+                superseded_by=int(r["superseded_by"]) if r["superseded_by"] is not None else None,
+            )
             for r in reversed(rows)
         ]
-        return entries, total
+        return entries, total, removed
 
     def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
         """Return every subject, most in need of attention first.
@@ -690,9 +877,10 @@ class SqliteStore:
         rows = self._db.execute(
             f"""SELECT s.name AS subject, s.description AS description, s.created_by AS created_by,
                        s.created_at AS created_at, s.archived_at AS archived_at,
-                       COUNT(n.id) AS notes,
-                       COALESCE(SUM(CASE WHEN n.question = 1
-                                          AND NOT EXISTS (SELECT 1 FROM notes x WHERE x.settles = n.id)
+                       COUNT(CASE WHEN n.deleted_at IS NULL THEN n.id END) AS notes,
+                       COALESCE(SUM(CASE WHEN n.question = 1 AND n.deleted_at IS NULL
+                                          AND NOT EXISTS (SELECT 1 FROM notes x
+                                                          WHERE x.settles = n.id AND x.deleted_at IS NULL)
                                          THEN 1 ELSE 0 END), 0) AS open_questions,
                        COALESCE(MAX(n.created_at), s.created_at) AS last_at
                 FROM subjects s LEFT JOIN notes n ON n.subject = s.name
@@ -931,8 +1119,11 @@ def _note_from_row(row: sqlite3.Row) -> Note:
         body=row["body"],
         question=bool(row["question"]),
         settles=int(row["settles"]) if row["settles"] is not None else None,
+        supersedes=int(row["supersedes"]) if row["supersedes"] is not None else None,
         artifacts=tuple(Artifact.from_json(a) for a in json.loads(row["artifacts"])),
         created_at=row["created_at"],
+        deleted_at=row["deleted_at"] or "",
+        deleted_by=row["deleted_by"] or "",
     )
 
 

@@ -237,14 +237,21 @@ class HubClient:
         subject: str | None = None,
         question: bool = False,  # noqa: FBT001, FBT002 - mirrors the wire field
         settles: int | None = None,
+        supersedes: int | None = None,
         artifacts: Sequence[Artifact] = (),
     ) -> Note:
         """Leave a note on a subject, or settle a question, and return what was stored.
 
         The returned note carries the subject the hub actually filed it under,
         which is not always the one passed in: subjects are case-folded, and a
-        settling note inherits its target's. Callers print what came back rather
-        than what they sent.
+        settling or superseding note inherits its target's. Callers print what
+        came back rather than what they sent.
+
+        **A hub that dropped `supersedes` is refused rather than believed**, on
+        `inbox`'s reasoning and with a sharper consequence. An older hub does not
+        reject the field, it ignores it — so the correction is stored, the command
+        reports success, and the one thing that made it a correction is silently
+        gone. What comes back is the row as stored, so the check is the row.
         """
         payload = {
             "author": author,
@@ -252,15 +259,36 @@ class HubClient:
             "subject": subject,
             "question": question,
             "settles": settles,
+            "supersedes": supersedes,
             "artifacts": [a.to_json() for a in artifacts],
         }
         answer = self._call("POST", "/v1/notes", payload)
         with self._readable():
+            stored = Note.from_json(answer["note"])
+        if supersedes is not None and stored.supersedes != supersedes:
+            msg = (
+                f"this hub does not support supersede (it stored note {stored.id} without the link to "
+                f"{supersedes}), so the correction would sit on the pile as an unrelated note; "
+                f"upgrade the hub, or say in the body which note this replaces"
+            )
+            raise UsageError(msg)
+        return stored
+
+    def delete_note(self, note_id: int, author: str, reason: str) -> Note:
+        """Take a note's body out, leaving a tombstone, and return what is left."""
+        answer = self._call("POST", "/v1/notes/delete", {"id": note_id, "author": author, "reason": reason})
+        with self._readable():
             return Note.from_json(answer["note"])
 
     def notes(
-        self, subject: str | None = None, *, open_only: bool = False, find: str | None = None, limit: int = 50
-    ) -> tuple[list[NoteEntry], int]:
+        self,
+        subject: str | None = None,
+        *,
+        open_only: bool = False,
+        find: str | None = None,
+        limit: int = 50,
+        deleted: bool = False,
+    ) -> tuple[list[NoteEntry], int, int]:
         """Fetch a page of notes and the total matching the same filter.
 
         The total is what makes a truncated page distinguishable from a complete
@@ -273,9 +301,11 @@ class HubClient:
             open="1" if open_only else None,
             find=find,
             limit=limit,
+            deleted="1" if deleted else None,
         )
         with self._readable():
-            return [NoteEntry.from_json(n) for n in payload["notes"]], int(payload.get("total") or 0)
+            entries = [NoteEntry.from_json(n) for n in payload["notes"]]
+        return entries, int(payload.get("total") or 0), int(payload.get("removed") or 0)
 
     def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
         """List every subject, with counts. Archived piles only when asked for."""

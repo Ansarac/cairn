@@ -760,7 +760,7 @@ def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatc
     assert "unanswered question" in handover, "the same arrival that reported the loss said nothing about the question"
     assert hub.inbox("bench/firmware").messages == (), "the takeover was a no-op; nothing was actually left behind"
 
-    kept, total = hub.notes("rig-a")
+    kept, total, _removed = hub.notes("rig-a")
     assert total == 2, "the session ended and took its sediment with it"
     assert [entry.is_open for entry in kept] == [False, True]
 
@@ -790,7 +790,7 @@ def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatc
     assert _cli(hub, "notes", "--open") == 1, "the settled question is still being offered as unanswered"
     assert "no open questions" in capsys.readouterr().out
 
-    pile, total = hub.notes("rig-a")
+    pile, total, _removed = hub.notes("rig-a")
     assert total == 3, "settling replaced the record instead of adding to it"
     assert [entry.is_open for entry in pile] == [False, False, False]
     assert pile[1].settled_by == pile[2].note.id

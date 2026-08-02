@@ -449,6 +449,53 @@ def _notes_empty(subject: str | None, *, open_only: bool, find: str | None, hub:
     return f"cairn notes: {what}{where}{matching}{tail}{_asked(hub)}.\n"
 
 
+def _marks(entry: NoteEntry) -> str:
+    """Return what this note's header says about it beyond who wrote it and when.
+
+    Ordered by what changes how the rest of the line should be read. A tombstone
+    comes first because everything after it describes a note whose body the reader
+    is not going to get; `SUPERSEDED` second because it says the body is no longer
+    what the subject claims. Both are shouted for the same reason `UNVERIFIED` is:
+    they are the marks a reader must not skim past, and the lower-case ones —
+    `settles`, `supersedes` — are pointers rather than warnings.
+    """
+    marks = []
+    if entry.note.deleted:
+        marks.append(f"DELETED by {oneline(entry.note.deleted_by)} on {oneline(entry.note.deleted_at)}")
+    if entry.superseded_by is not None:
+        marks.append(f"SUPERSEDED by {entry.superseded_by}")
+    if entry.note.question:
+        marks.append("question · OPEN" if entry.is_open else f"question · settled by {entry.settled_by}")
+    if entry.note.settles is not None:
+        marks.append(f"settles {entry.note.settles}")
+    if entry.note.supersedes is not None:
+        marks.append(f"supersedes {entry.note.supersedes}")
+    return f" · {' · '.join(marks)}" if marks else ""
+
+
+def _removed_note(removed: int, subject: str | None) -> list[str]:
+    """Say that this pile has been tidied, without filling it with tombstones.
+
+    A reading that silently omitted deleted notes would be the quiet loss this
+    project keeps finding in other systems; one that listed them all would defeat
+    the reason anybody deleted anything. So the page is clean and the fact is one
+    line, with the flag that shows them.
+    """
+    if not removed:
+        return []
+    scope = f" {subject}" if subject else ""
+    # Noun, verb and pronoun all agree with the count. `bell_reason` carries the
+    # reason that is worth a line of code: a reader quoted that sentence back
+    # verbatim to settle a question about the count, and it had been ungrammatical
+    # at 1 for four cuts because nobody ever read it at 1.
+    subj, verb, pronoun = ("note", "has", "it") if removed == 1 else ("notes", "have", "them")
+    line = (
+        f"— {removed} {subj} {verb} been deleted here; "
+        f"`cairn notes{scope} --deleted` says who took {pronoun} out and why"
+    )
+    return [line]
+
+
 def _notes_counts(entries: list[NoteEntry]) -> str:
     """Say how much is on the page and how much of it is unanswered."""
     shown = len(entries)
@@ -483,7 +530,7 @@ def _truncation(shown: int, total: int, end: str = "newest") -> list[str]:
     return [f"— showing the {end} {shown} of {total}; raise --limit for the rest", ""]
 
 
-def notes_json(  # noqa: PLR0913 - four of these are the filter the reader asked for; hiding them in an object would hide the scope
+def notes_json(  # noqa: PLR0913 - the filter the reader asked for; hiding it in an object would hide the scope
     entries: list[NoteEntry],
     total: int,
     subject: str | None = None,
@@ -491,6 +538,7 @@ def notes_json(  # noqa: PLR0913 - four of these are the filter the reader asked
     open_only: bool = False,
     find: str | None = None,
     now: str = "",
+    removed: int = 0,
 ) -> str:
     """Render a pile of notes as JSON, framing first and always.
 
@@ -506,6 +554,8 @@ def notes_json(  # noqa: PLR0913 - four of these are the filter the reader asked
         "showing": len(entries),
         "total": total,
         "open_questions": sum(1 for e in entries if e.is_open),
+        "superseded": sum(1 for e in entries if e.superseded_by is not None),
+        "removed": removed,
         "framing": {"source": "peer-agents", "authority": "none", "notice": NOTES_NOTICE},
         "notes": [e.to_json() for e in entries],
     }
@@ -521,6 +571,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
     find: str | None = None,
     hub: str = "",
     now: str = "",
+    removed: int = 0,
 ) -> str:
     """Render a pile of notes for reading.
 
@@ -549,12 +600,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
     # seq from the same line, but a wrong ack is undone by `--rewind`.
     for entry in entries:
         note = entry.note
-        marks = []
-        if note.question:
-            marks.append("question · OPEN" if entry.is_open else f"question · settled by {entry.settled_by}")
-        if note.settles is not None:
-            marks.append(f"settles {note.settles}")
-        marked = f" · {' · '.join(marks)}" if marks else ""
+        marked = _marks(entry)
         # Named whenever it is not the subject that was asked for — which covers
         # both an unscoped search and a note filed *under* the requested subject,
         # since a subject read rolls up everything below it.
@@ -578,6 +624,11 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
         lines.append(f"— includes notes filed under {subject}/")
     if any(e.is_open for e in entries):
         lines.append('— an open question is anyone\'s to settle: `cairn settle <id> "<what you found>"`')
+    if any(e.superseded_by is not None for e in entries):
+        lines.append(
+            "— a superseded note is kept, not hidden: read both, and take the later one as what the subject says now"
+        )
+    lines.extend(_removed_note(removed, subject))
     # Last, and after the staleness clause rather than beside it: the clause says
     # what a date means and this says what to measure it against, which is the
     # order a reader needs them in. See `_clock_notes` for why `inbox` has none.

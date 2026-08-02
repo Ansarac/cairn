@@ -116,6 +116,8 @@ cairn subject rig-a/chamber "thermal chamber on rig A, 40C target"
 cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
 cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
 cairn settle 2 "measured the spare 2026-08-01: 2.1C at a 40C target, one run"
+cairn supersede 1 "4471 is withdrawn — do not flash it. Use 4468."
+cairn delete 7 "contained a credential"
 cairn notes rig-a                                  # what is known about a thing
 ```
 
