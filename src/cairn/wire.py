@@ -580,17 +580,36 @@ class NoteEntry:
 
 @dataclass(frozen=True, slots=True)
 class SubjectSummary:
-    """How much sediment has collected on one subject, and how much of it is unanswered.
+    """One pile: what it is for, how much has collected on it, how much is unanswered.
 
-    Counts only. This is what `cairn notes` prints with no subject named, and it
-    is the answer to the question the evidence in docs/design.md §12 item 4 was
-    really asking: *is there anything here I should read before I start?*
+    This is what `cairn notes` prints with no subject named, and it is the answer
+    to the question the evidence in docs/design.md §12 item 4 was really asking:
+    *is there anything here I should read before I start?*
+
+    **`description` is what turned a subject from a string into a thing.** It used
+    to be counts only, over a key that came into existence the moment somebody
+    typed it, so the index could list `soak-441`, `eval-441` and `run-441` and give
+    a reader no way to tell whether any of them was the pile they meant. A sentence
+    per pile is the difference between an index you scan before writing and one you
+    only understand after opening all three.
+
+    `archived_at` is a string rather than a flag so that the reading can say when
+    and the row can say who — a pile that vanished from the index with no date on
+    it is the silent-loss shape this project keeps finding in other systems.
     """
 
     subject: str
     notes: int
     open_questions: int
     last_at: str
+    description: str = ""
+    created_by: str = ""
+    archived_at: str = ""
+
+    @property
+    def archived(self) -> bool:
+        """Return whether this pile is closed to new notes."""
+        return bool(self.archived_at)
 
     def to_json(self) -> dict[str, Any]:
         """Return the wire form."""
@@ -599,16 +618,28 @@ class SubjectSummary:
             "notes": self.notes,
             "open_questions": self.open_questions,
             "last_at": self.last_at,
+            "description": self.description,
+            "created_by": self.created_by,
+            "archived_at": self.archived_at,
         }
 
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> Self:
-        """Parse the wire form."""
+        """Parse the wire form, tolerating a hub that predates the subject table.
+
+        The three new keys default to empty, which renders as a pile nobody has
+        described — true of an older hub, where nobody could have. Unlike a
+        window, nothing here is answered wrongly by their absence: the counts, the
+        name and the date all still mean what they meant.
+        """
         return cls(
             subject=normalize_subject(_require(obj, "subject", str)),
             notes=int(obj.get("notes") or 0),
             open_questions=int(obj.get("open_questions") or 0),
             last_at=str(obj.get("last_at") or ""),
+            description=str(obj.get("description") or ""),
+            created_by=str(obj.get("created_by") or ""),
+            archived_at=str(obj.get("archived_at") or ""),
         )
 
 

@@ -21,6 +21,7 @@ and ringing everyone would turn sediment into mail.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -91,9 +92,42 @@ def hub(hub_server: ThreadingHTTPServer) -> HubClient:
     return HubClient(f"http://{host}:{port}", timeout=5.0)
 
 
+def _pile(store, author: str, subject: str) -> None:
+    """Open the subject a test is about to write to, if it is not open already.
+
+    Subjects are opened deliberately now — `store.create_subject` carries the
+    measured reason — so every write needs one. Almost every test in this file is
+    about what happens to notes *once a pile exists*: settling, deriving `open`,
+    prefix rollup, search escaping. Carrying that setup in one helper keeps those
+    tests about the thing they are testing; the refusal itself is pinned in
+    `tests/test_subjects.py`, where it is the subject rather than the scaffolding.
+    """
+    from cairn.errors import CairnError
+    from cairn.wire import WireError
+
+    with contextlib.suppress(CairnError, WireError):
+        # A malformed subject raises here and would otherwise replace the error
+        # the test is actually asserting on. Let the write produce it.
+        if store.get_subject(subject) is None:
+            store.create_subject(subject, f"opened so a test could write to {subject}", author)
+
+
+def _write(store, author: str, body: str, subject: str | None = None, **kwargs):
+    """Write a note, opening its pile first. See `_pile`."""
+    if subject is not None:
+        _pile(store, author, subject)
+    return store.write_note(author, body, subject=subject, **kwargs)
+
+
 def _join(hub: HubClient, name: str, machine: str = "bench", cwd: str = "/w/fw") -> str:
     hub.register(Agent(name=name, machine=machine, cwd=cwd))
     return name
+
+
+def _wire_pile(hub: HubClient, author: str, *subjects: str) -> None:
+    """Open piles over the wire, so a client or CLI test can write to them. See `_pile`."""
+    for subject in subjects:
+        hub.create_subject(subject, f"opened so a test could write to {subject}", author)
 
 
 def _cli(hub: HubClient, *argv: str) -> int:
@@ -165,8 +199,8 @@ def test_two_spellings_leave_notes_in_one_pile(store, scribe):
     the second pile is created, which is exactly why the fold has to be in the
     wire rather than in whoever remembers to type it consistently.
     """
-    store.write_note(scribe, "clamp is loose", subject="Rig-A")
-    store.write_note(scribe, "and the fan is louder than last week", subject="rig-a")
+    _write(store, scribe, "clamp is loose", subject="Rig-A")
+    _write(store, scribe, "and the fan is louder than last week", subject="rig-a")
     entries, total = store.notes("RIG-A")
     assert [e.note.body for e in entries] == ["clamp is loose", "and the fan is louder than last week"]
     assert total == 2
@@ -273,11 +307,11 @@ def test_a_settle_aimed_at_something_that_is_not_an_id_is_exit_three(monkeypatch
 
 def test_a_question_is_open_until_some_note_points_at_it(store, scribe):
     """The whole of `--open`, asked of the notes themselves rather than of a stored flag."""
-    question = store.write_note(scribe, "why does it reset above 40 degrees?", subject="rig-a", question=True)
+    question = _write(store, scribe, "why does it reset above 40 degrees?", subject="rig-a", question=True)
     open_now, _ = store.notes("rig-a", open_only=True)
     assert [e.note.id for e in open_now] == [question.id]
 
-    store.write_note(scribe, "brownout on the 5V rail under fan load", settles=question.id)
+    _write(store, scribe, "brownout on the 5V rail under fan load", settles=question.id)
     assert store.notes("rig-a", open_only=True) == ([], 0)
 
 
@@ -301,8 +335,8 @@ def test_settling_a_question_updates_no_row_and_deletes_none(store, scribe):
     likely cause is an "optimisation" that stamps the question as answered — at
     which point the history stops being a history.
     """
-    question = store.write_note(scribe, "why does it reset above 40 degrees?", subject="rig-a", question=True)
-    answer = store.write_note(scribe, "brownout on the 5V rail", settles=question.id)
+    question = _write(store, scribe, "why does it reset above 40 degrees?", subject="rig-a", question=True)
+    answer = _write(store, scribe, "brownout on the 5V rail", settles=question.id)
 
     row = store._db.execute("SELECT * FROM notes WHERE id = ?", (question.id,)).fetchone()
     assert row["question"] == 1
@@ -317,7 +351,7 @@ def test_settling_a_question_updates_no_row_and_deletes_none(store, scribe):
 
 def test_an_ordinary_note_is_never_open(store, scribe):
     """Only a question can be open, so a statement is never something to chase."""
-    store.write_note(scribe, "clamp torqued to 4Nm", subject="rig-a")
+    _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
     (entry,), _ = store.notes("rig-a")
     assert entry.is_open is False
     assert store.notes("rig-a", open_only=True) == ([], 0)
@@ -330,9 +364,9 @@ def test_the_first_answer_is_the_answer_of_record(store, scribe):
     there first. The alternative — the newest answer wins — means a passing
     remark months later silently displaces the answer somebody acted on.
     """
-    question = store.write_note(scribe, "which rail browns out?", subject="rig-a", question=True)
-    first = store.write_note(scribe, "the 5V rail, under fan load", settles=question.id)
-    second = store.write_note(scribe, "also the 3V3 rail on a cold start", settles=question.id)
+    question = _write(store, scribe, "which rail browns out?", subject="rig-a", question=True)
+    first = _write(store, scribe, "the 5V rail, under fan load", settles=question.id)
+    second = _write(store, scribe, "also the 3V3 rail on a cold start", settles=question.id)
 
     entries, _ = store.notes("rig-a")
     by_id = {e.note.id: e for e in entries}
@@ -350,16 +384,16 @@ def test_a_settling_note_is_filed_with_the_question_it_answers(store, scribe):
     The subject is inherited rather than accepted, which is why `cairn settle`
     takes an id and no subject at all — there is no way to spell the mistake.
     """
-    question = store.write_note(scribe, "which rail browns out?", subject="rig-a", question=True)
-    answer = store.write_note(scribe, "the 5V rail", subject="somewhere-else", settles=question.id)
+    question = _write(store, scribe, "which rail browns out?", subject="rig-a", question=True)
+    answer = _write(store, scribe, "the 5V rail", subject="somewhere-else", settles=question.id)
     assert answer.subject == "rig-a"
     assert [e.note.id for e in store.notes("rig-a")[0]] == [question.id, answer.id]
 
 
 def test_a_settling_note_is_never_itself_a_question(store, scribe):
     """An answer that raises a new question is a second note, not one ambiguous row."""
-    question = store.write_note(scribe, "which rail browns out?", subject="rig-a", question=True)
-    answer = store.write_note(scribe, "the 5V rail — but why only above 40?", settles=question.id, question=True)
+    question = _write(store, scribe, "which rail browns out?", subject="rig-a", question=True)
+    answer = _write(store, scribe, "the 5V rail — but why only above 40?", settles=question.id, question=True)
     assert answer.question is False
     assert store.notes("rig-a", open_only=True) == ([], 0)
 
@@ -369,21 +403,21 @@ def test_a_settling_note_is_never_itself_a_question(store, scribe):
 
 def test_settling_something_that_is_not_a_question_is_refused(store, scribe):
     """`--settles` closes a loop. Pointed at a statement, `open` would mean whatever the last caller felt like."""
-    statement = store.write_note(scribe, "clamp torqued to 4Nm", subject="rig-a")
+    statement = _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
     with pytest.raises(UsageError, match="not a question"):
-        store.write_note(scribe, "agreed", settles=statement.id)
+        _write(store, scribe, "agreed", settles=statement.id)
 
 
 def test_settling_a_note_that_does_not_exist_is_refused(store, scribe):
     """A settling note aimed at nothing would inherit no subject and answer nobody."""
     with pytest.raises(UsageError, match="no note 999"):
-        store.write_note(scribe, "found it", settles=999)
+        _write(store, scribe, "found it", settles=999)
 
 
 def test_an_unregistered_author_cannot_leave_a_note(store):
     """A name nobody can look up is not attribution, and attribution is most of a note's value."""
     with pytest.raises(UsageError, match="unknown author"):
-        store.write_note("passer-by", "trust me on this", subject="rig-a")
+        _write(store, "passer-by", "trust me on this", subject="rig-a")
 
 
 @pytest.mark.parametrize("body", ["", "   ", "\n\t\n"])
@@ -394,20 +428,20 @@ def test_a_note_with_no_body_is_refused(store, scribe, body):
     than the note not existing, because the count promised there was something.
     """
     with pytest.raises(UsageError, match="not sediment"):
-        store.write_note(scribe, body, subject="rig-a")
+        _write(store, scribe, body, subject="rig-a")
 
 
 def test_a_body_past_the_limit_points_at_an_artifact_instead(store, scribe):
     """Sediment is prose. Anything bigger is a file, and the refusal says where to put it."""
-    assert store.write_note(scribe, "x" * MAX_BODY_CHARS, subject="rig-a").id > 0
+    assert _write(store, scribe, "x" * MAX_BODY_CHARS, subject="rig-a").id > 0
     with pytest.raises(UsageError, match="artifact"):
-        store.write_note(scribe, "x" * (MAX_BODY_CHARS + 1), subject="rig-a")
+        _write(store, scribe, "x" * (MAX_BODY_CHARS + 1), subject="rig-a")
 
 
 def test_a_note_with_no_subject_and_nothing_to_settle_is_refused(store, scribe):
     """There are two ways to name the pile a note lands in, and giving neither is not one of them."""
     with pytest.raises(UsageError, match="needs a subject"):
-        store.write_note(scribe, "worth knowing, filed nowhere")
+        _write(store, scribe, "worth knowing, filed nowhere")
 
 
 def test_a_refusal_crossing_the_wire_stays_a_refusal(hub):
@@ -435,7 +469,7 @@ def test_the_page_is_the_newest_matches_handed_back_oldest_first(store, scribe):
     still read forwards, because a note answers the one before it.
     """
     for i in range(1, 6):
-        store.write_note(scribe, f"finding {i}", subject="rig-a")
+        _write(store, scribe, f"finding {i}", subject="rig-a")
     page, total = store.notes("rig-a", limit=2)
     assert [e.note.body for e in page] == ["finding 4", "finding 5"]
     assert total == 5
@@ -444,7 +478,7 @@ def test_the_page_is_the_newest_matches_handed_back_oldest_first(store, scribe):
 def test_a_complete_page_reports_a_total_equal_to_itself(store, scribe):
     """A caller compares the two, so they have to agree when nothing was dropped."""
     for i in range(3):
-        store.write_note(scribe, f"finding {i}", subject="rig-a")
+        _write(store, scribe, f"finding {i}", subject="rig-a")
     page, total = store.notes("rig-a", limit=50)
     assert (len(page), total) == (3, 3)
 
@@ -452,14 +486,15 @@ def test_a_complete_page_reports_a_total_equal_to_itself(store, scribe):
 def test_the_total_counts_what_the_same_filter_matched_not_the_whole_table(store, scribe):
     """A total counted before the filter would report notes as hidden that were never asked for."""
     for i in range(4):
-        store.write_note(scribe, f"finding {i}", subject="rig-a")
-    store.write_note(scribe, "unrelated", subject="rig-b")
+        _write(store, scribe, f"finding {i}", subject="rig-a")
+    _write(store, scribe, "unrelated", subject="rig-b")
     assert store.notes("rig-a", limit=1)[1] == 4
 
 
 def test_the_total_survives_the_wire(hub):
     """`client.notes` returns the pair, or a caller silently reports a page as the pile."""
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a")
     for i in range(5):
         hub.write_note("bench/firmware", f"finding {i}", subject="rig-a")
     page, total = hub.notes("rig-a", limit=2)
@@ -475,8 +510,8 @@ def test_a_search_for_a_literal_percent_finds_only_that(store, scribe):
     That reads as a broken index rather than as a quoting rule, which is the
     kind of failure nobody reports and everybody works around.
     """
-    store.write_note(scribe, "yield is 100% on the second pass", subject="rig-a")
-    store.write_note(scribe, "clamp torqued to 4Nm", subject="rig-a")
+    _write(store, scribe, "yield is 100% on the second pass", subject="rig-a")
+    _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
     page, total = store.notes(find="%")
     assert total == 1
     assert "100%" in page[0].note.body
@@ -484,8 +519,8 @@ def test_a_search_for_a_literal_percent_finds_only_that(store, scribe):
 
 def test_a_search_for_a_literal_underscore_finds_only_that(store, scribe):
     """`_` is "any one character" to `LIKE`, so unescaped it matches every note with two characters in it."""
-    store.write_note(scribe, "the capture is at hil_soak.bin", subject="rig-a")
-    store.write_note(scribe, "clamp torqued to 4Nm", subject="rig-a")
+    _write(store, scribe, "the capture is at hil_soak.bin", subject="rig-a")
+    _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
     page, total = store.notes(find="_")
     assert total == 1
     assert "hil_soak.bin" in page[0].note.body
@@ -501,8 +536,8 @@ def test_escaping_leaves_ordinary_text_alone_and_neutralises_the_rest():
 
 def test_a_search_covers_subjects_as_well_as_bodies(store, scribe):
     """The subject is where the thing is named, so a reader searching for the rig means the pile too."""
-    store.write_note(scribe, "clamp torqued to 4Nm", subject="rig-a")
-    store.write_note(scribe, "unrelated", subject="compute-b")
+    _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
+    _write(store, scribe, "unrelated", subject="compute-b")
     page, total = store.notes(find="rig")
     assert total == 1
     assert page[0].note.subject == "rig-a"
@@ -557,6 +592,7 @@ def test_the_hub_never_sends_a_provenance_key_at_all(hub):
     that the word does not appear.
     """
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a")
     hub.write_note("bench/firmware", BODY, subject="rig-a")
     hub.write_note("bench/firmware", "why does it reset above 40 degrees?", subject="rig-a", question=True)
 
@@ -580,6 +616,7 @@ def test_the_verdict_a_reader_sees_was_computed_where_the_reader_is(hub, capsys)
     printed as if this build had earned it.
     """
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a")
     hub.write_note("bench/firmware", BODY, subject="rig-a")
 
     assert _cli(hub, "notes", "rig-a", "--json") == 0
@@ -943,8 +980,8 @@ def test_the_index_shows_how_much_is_there_and_how_much_is_unanswered():
 
 def test_the_index_orders_the_subjects_that_need_attention_first(store, scribe):
     """Alphabetical would make the reader do this sort themselves, every single time."""
-    store.write_note(scribe, "settled fact", subject="quiet-rig")
-    store.write_note(scribe, "why does it reset?", subject="loud-rig", question=True)
+    _write(store, scribe, "settled fact", subject="quiet-rig")
+    _write(store, scribe, "why does it reset?", subject="loud-rig", question=True)
     assert [s.subject for s in store.subjects()] == ["loud-rig", "quiet-rig"]
 
 
@@ -1006,10 +1043,10 @@ def test_a_subject_read_includes_everything_filed_under_it(store, scribe):
     rig-a` to find it. Without the prefix clause it does not, and the note is
     invisible from the only place anybody would look.
     """
-    store.write_note(scribe, "the parent pile", subject="rig-a")
-    store.write_note(scribe, "the chamber pile", subject="rig-a/chamber")
-    store.write_note(scribe, "two deep", subject="rig-a/chamber/door")
-    store.write_note(scribe, "a different rig entirely", subject="rig-b")
+    _write(store, scribe, "the parent pile", subject="rig-a")
+    _write(store, scribe, "the chamber pile", subject="rig-a/chamber")
+    _write(store, scribe, "two deep", subject="rig-a/chamber/door")
+    _write(store, scribe, "a different rig entirely", subject="rig-b")
 
     page, total = store.notes("rig-a")
     assert [e.note.body for e in page] == ["the parent pile", "the chamber pile", "two deep"]
@@ -1024,8 +1061,8 @@ def test_the_rollup_does_not_treat_a_subject_character_as_a_wildcard(store, scri
     — a pile the reader has never heard of, arriving under a heading that says
     it belongs to theirs.
     """
-    store.write_note(scribe, "mine", subject="hil_soak/rig-a")
-    store.write_note(scribe, "not mine", subject="hilxsoak/rig-a")
+    _write(store, scribe, "mine", subject="hil_soak/rig-a")
+    _write(store, scribe, "not mine", subject="hilxsoak/rig-a")
     page, total = store.notes("hil_soak")
     assert [e.note.body for e in page] == ["mine"]
     assert total == 1
@@ -1037,8 +1074,8 @@ def test_the_index_does_not_roll_up_even_though_a_read_does(store, scribe):
     A rolled-up index would hide `rig-a/chamber` behind `rig-a` and there would
     be no way to learn the name of the pile you were being shown a summary of.
     """
-    store.write_note(scribe, "the parent pile", subject="rig-a")
-    store.write_note(scribe, "the chamber pile", subject="rig-a/chamber")
+    _write(store, scribe, "the parent pile", subject="rig-a")
+    _write(store, scribe, "the chamber pile", subject="rig-a/chamber")
     assert sorted(s.subject for s in store.subjects()) == ["rig-a", "rig-a/chamber"]
     assert [s.notes for s in store.subjects() if s.subject == "rig-a"] == [1]
 
@@ -1079,6 +1116,7 @@ def test_the_hint_counts_what_the_hub_actually_holds(hub):
     session that asked it has ended and taken the knowledge with it.
     """
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a")
     hub.write_note("bench/firmware", "why does it reset above 40?", subject="rig-a", question=True)
     hub.write_note("bench/firmware", "clamp torqued to 4Nm", subject="rig-a")
     assert "1 unanswered question on 1 subject" in render.open_questions_hint(hub.subjects())
@@ -1112,6 +1150,8 @@ def test_the_first_note_on_a_subject_says_the_subject_is_new(hub, monkeypatch, c
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
 
+    assert _cli(hub, "subject", "soak-441", "overnight soak of build 441") == 0
+    capsys.readouterr()
     assert _cli(hub, "note", "soak-441", "3 of 40 iterations failed") == 0
     printed = capsys.readouterr().out
     assert "new subject" in printed
@@ -1123,6 +1163,7 @@ def test_a_later_note_says_how_much_is_on_the_pile_now(hub, monkeypatch, capsys)
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
 
+    assert _cli(hub, "subject", "soak-441", "overnight soak of build 441") == 0
     assert _cli(hub, "note", "soak-441", "3 of 40 iterations failed") == 0
     capsys.readouterr()
     assert _cli(hub, "note", "soak-441", "all three were above 40 degrees") == 0
@@ -1141,6 +1182,7 @@ def test_a_first_note_on_a_parent_still_reads_as_new_though_its_child_has_notes(
     """
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a", "rig-a/chamber")
     hub.write_note("bench/firmware", "the door seal is perished", subject="rig-a/chamber")
     hub.write_note("bench/firmware", "and the gasket is on order", subject="rig-a/chamber")
 
@@ -1169,6 +1211,7 @@ def test_a_hub_with_no_subject_index_costs_the_marker_and_stores_the_note_anyway
 
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "soak-441")
     monkeypatch.setattr(hub_server.RequestHandlerClass, "do_GET", read_routes_without_the_subject_index)
 
     assert _cli(hub, "note", "soak-441", "3 of 40 iterations failed") == 0, "an old hub read as a failed write"
@@ -1264,6 +1307,7 @@ def test_a_note_carrying_a_relative_path_is_still_written_and_still_exit_zero(hu
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
 
+    _wire_pile(hub, "bench/firmware", "rig-a")
     assert _cli(hub, "note", "rig-a", "the capture is on the bench", "-a", "bench:capture.bin") == 0
     printed = capsys.readouterr()
     assert "is not absolute" in printed.err
@@ -1290,6 +1334,7 @@ def test_a_malformed_artifact_on_the_command_line_is_exit_three(hub, monkeypatch
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
 
+    _wire_pile(hub, "bench/firmware", "rig-a")
     assert _cli(hub, "note", "rig-a", "the capture is on the bench", "-a", "capture.bin") == 3
     assert capsys.readouterr().err.startswith("cairn: ")
     assert hub.notes("rig-a")[1] == 0
@@ -1311,6 +1356,7 @@ def test_a_note_rings_no_bell(hub, hub_server):
     _join(hub, "bench/firmware")
     _join(hub, "compute/analysis", machine="compute", cwd="/w/an")
 
+    _wire_pile(hub, "compute/analysis", "rig-a")
     with hub_server.notifier.subscribe("bench/firmware") as sub:
         hub.write_note("compute/analysis", "the clamp is loose", subject="rig-a")
         asked = hub.write_note("compute/analysis", "why does it reset above 40?", subject="rig-a", question=True)
@@ -1337,6 +1383,7 @@ def test_reading_notes_moves_no_cursor_and_leaves_the_pile_for_the_next_reader(h
     _join(hub, "bench/firmware")
     _join(hub, "compute/analysis", machine="compute", cwd="/w/an")
     hub.send("tell", "compute/analysis", "bench/firmware", "unrelated mail, still unread")
+    _wire_pile(hub, "compute/analysis", "rig-a")
     hub.write_note("compute/analysis", BODY, subject="rig-a")
     hub.write_note("compute/analysis", "why does it reset above 40?", subject="rig-a", question=True)
 
@@ -1351,6 +1398,7 @@ def test_reading_notes_moves_no_cursor_and_leaves_the_pile_for_the_next_reader(h
 def test_reading_the_same_pile_twice_from_the_command_line_prints_the_same_thing(hub, capsys):
     """No cursor, no ack, no read state anywhere — the second reader sees exactly what the first did."""
     _join(hub, "bench/firmware")
+    _wire_pile(hub, "bench/firmware", "rig-a")
     hub.write_note("bench/firmware", BODY, subject="rig-a")
 
     assert _cli(hub, "notes", "rig-a") == 0
@@ -1394,6 +1442,7 @@ def test_nothing_to_report_is_one_and_a_reading_is_zero(hub, monkeypatch, capsys
     assert _cli(hub, "notes", "--find", "knee") == 1
     assert 'nothing matching "knee"' in capsys.readouterr().out
 
+    assert _cli(hub, "subject", "rig-a", "thermal chamber A") == 0
     assert _cli(hub, "note", "rig-a", "the clamp is loose") == 0
     capsys.readouterr()
 
@@ -1426,6 +1475,8 @@ def test_a_question_left_on_a_subject_is_answered_by_whoever_turns_up(hub, monke
     _join(hub, "compute/analysis", machine="compute", cwd="/w/an")
 
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
+    assert _cli(hub, "subject", "Rig-A", "thermal chamber A, 40C target") == 0
+    capsys.readouterr()
     assert _cli(hub, "note", "Rig-A", "why does it reset above 40 degrees?", "--question") == 0
     asked = capsys.readouterr().out
     assert "question 1 on rig-a" in asked

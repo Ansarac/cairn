@@ -27,6 +27,7 @@ is a bug users will feel immediately.
 
 from __future__ import annotations
 
+import difflib
 import json
 import sqlite3
 from pathlib import Path
@@ -92,7 +93,37 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
 CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
+CREATE TABLE IF NOT EXISTS subjects (
+    name        TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    created_by  TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    archived_at TEXT,
+    archived_by TEXT
+);
 """
+
+_BACKFILL = """
+INSERT OR IGNORE INTO subjects (name, description, created_by, created_at)
+SELECT n.subject, ?, ?, MIN(n.created_at) FROM notes n GROUP BY n.subject
+"""
+"""Give every subject that already has notes a row, once, at open.
+
+A subject used to be a string in the `notes` table and nothing else, so there is
+no upgrade step that could have created these rows and no operator who knows they
+are needed — including on the hub that is running in a container right now, with
+real sediment on it. Making the schema self-repairing is the only version of this
+that does not require somebody to be told something.
+
+`MIN(created_at)` rather than `now()`, because the pile genuinely started when its
+first note landed and dating it to the upgrade would make every existing subject
+look new on the one reading where age is the point. The description says outright
+that nobody wrote one; inventing a plausible sentence here would be worse than
+admitting the gap, and it is the one nudge that gets these subjects described.
+"""
+
+BACKFILLED_DESCRIPTION = "(no description — this subject predates `cairn subject`)"
+BACKFILLED_AUTHOR = "unknown"
 
 
 class Store(Protocol):
@@ -156,8 +187,16 @@ class Store(Protocol):
         """Return a page of notes, oldest first, and the total the filter matched."""
         ...
 
-    def subjects(self) -> list[SubjectSummary]:
-        """Return every subject that has notes, with counts."""
+    def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
+        """Return every subject, with counts. Archived ones only when asked for."""
+        ...
+
+    def create_subject(self, name: str, description: str, author: str) -> SubjectSummary:
+        """Open a new pile deliberately, and return it."""
+        ...
+
+    def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
+        """Close a subject to new notes, or open it again. Reading is unaffected."""
         ...
 
 
@@ -177,6 +216,7 @@ class SqliteStore:
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.executescript(_SCHEMA)
+        self._db.execute(_BACKFILL, (BACKFILLED_DESCRIPTION, BACKFILLED_AUTHOR))
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -524,6 +564,18 @@ class SqliteStore:
             msg = "a note needs a subject: the rig, run or board it is about"
             raise UsageError(msg)
         subject = normalize_subject(subject)
+        # The pile has to exist, and this refusal is where subject sprawl is
+        # actually stopped — `_no_such_subject` carries the argument. A settling
+        # note reaches here with its target's subject, which exists by
+        # construction, so it pays the lookup and never the refusal.
+        pile = self._require_subject(subject)
+        if pile.archived:
+            msg = (
+                f"subject {subject!r} was archived on {pile.archived_at} and takes no new notes.\n"
+                f"  reading it still works: cairn notes {subject}\n"
+                f"  if this pile is live again, say so first: cairn subject {subject} --reopen"
+            )
+            raise UsageError(msg)
         text = body.strip()
         if not text:
             msg = "a note with no body is not sediment; say what a reader six months from now needs to know"
@@ -615,35 +667,144 @@ class SqliteStore:
         ]
         return entries, total
 
-    def subjects(self) -> list[SubjectSummary]:
-        """Return every subject holding notes, most in need of attention first.
+    def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
+        """Return every subject, most in need of attention first.
 
         Ordered by open questions and then by recency, because the question this
         answers is "is there anything here I should read before I start" — and an
         alphabetical list makes the reader do that sort themselves, every time.
+
+        **A `LEFT JOIN` from `subjects`, not a `GROUP BY` over `notes`**, and that
+        inversion is the whole of what changed when a subject stopped being a
+        string. A pile with no notes on it yet is now a real thing — somebody
+        opened it and said what it is for, which is exactly the state a reader
+        needs to see *before* inventing a fifth spelling of the same run. Grouping
+        over notes cannot represent it: it can only report piles that already have
+        sediment, so the one moment the index could prevent a duplicate is the one
+        moment it had nothing to show.
+
+        Archived subjects are out unless asked for. Archiving says a pile is
+        finished, and an index that keeps showing finished work is the sprawl this
+        change exists to stop, arriving a second way.
         """
         rows = self._db.execute(
-            """SELECT n.subject AS subject,
-                      COUNT(*) AS notes,
-                      SUM(CASE WHEN n.question = 1
-                                AND NOT EXISTS (SELECT 1 FROM notes s WHERE s.settles = n.id)
-                               THEN 1 ELSE 0 END) AS open_questions,
-                      MAX(n.created_at) AS last_at
-               FROM notes n
-               GROUP BY n.subject
-               ORDER BY open_questions DESC, last_at DESC"""
+            f"""SELECT s.name AS subject, s.description AS description, s.created_by AS created_by,
+                       s.created_at AS created_at, s.archived_at AS archived_at,
+                       COUNT(n.id) AS notes,
+                       COALESCE(SUM(CASE WHEN n.question = 1
+                                          AND NOT EXISTS (SELECT 1 FROM notes x WHERE x.settles = n.id)
+                                         THEN 1 ELSE 0 END), 0) AS open_questions,
+                       COALESCE(MAX(n.created_at), s.created_at) AS last_at
+                FROM subjects s LEFT JOIN notes n ON n.subject = s.name
+                {"" if archived else "WHERE s.archived_at IS NULL"}
+                GROUP BY s.name
+                ORDER BY open_questions DESC, last_at DESC"""  # noqa: S608 - the only interpolation is one of two literal clauses
         ).fetchall()
-        return [
-            SubjectSummary(
-                subject=r["subject"],
-                notes=int(r["notes"]),
-                open_questions=int(r["open_questions"]),
-                last_at=r["last_at"],
+        return [_summary_from_row(r) for r in rows]
+
+    def create_subject(self, name: str, description: str, author: str) -> SubjectSummary:
+        """Open a pile deliberately, refusing a name that is already open.
+
+        **The description is required, and it is the point of the command.** A
+        subject used to be created as a side effect of writing the first note to
+        it, so `soak-441`, `eval-441`, `run-441` and `441` were four piles a hub
+        would happily create and creating one looked exactly like adding to one.
+        Measured: an acceptance session invented `run-442` beside existing notes
+        that talked about run 441, and said so itself afterwards — *"someone
+        searching run-441 won't roll up into it."* What stops the fifth spelling is
+        not the extra keystroke; it is that the index now says what each pile is
+        for, so the next writer can tell whether theirs already exists.
+
+        Re-creating an existing name is refused rather than treated as an update.
+        Two writers describing one pile differently is the same divergence in a
+        smaller font, and the second one is usually somebody who did not know the
+        first existed — which is precisely the reader this is trying to catch.
+        """
+        if self.get_agent(author) is None:
+            msg = f"unknown author {author!r}; register before opening a subject"
+            raise UsageError(msg)
+        subject = normalize_subject(name)
+        text = " ".join(description.split()).strip()
+        if not text:
+            msg = (
+                f"subject {subject!r} needs a description: one line saying what it is, so the next person "
+                f"can tell it apart from the pile they were about to create"
             )
-            for r in rows
-        ]
+            raise UsageError(msg)
+        if len(text) > MAX_BODY_CHARS:
+            msg = f"description is {len(text)} chars; it is a label, not a note — write the detail as a note"
+            raise UsageError(msg)
+        if self.get_subject(subject) is not None:
+            msg = (
+                f"subject {subject!r} already exists; `cairn notes {subject}` reads it, and a note is how you add to it"
+            )
+            raise UsageError(msg)
+        self._touch(author)
+        self._db.execute(
+            "INSERT INTO subjects (name, description, created_by, created_at) VALUES (?, ?, ?, ?)",
+            (subject, text, author, now()),
+        )
+        return self._require_subject(subject)
+
+    def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
+        """Close a pile to new notes, or open it again. Reading is never affected.
+
+        **Archiving hides and refuses; it never deletes and never conceals.** The
+        notes stay, `cairn notes <subject>` still reads them in full, and the pile
+        is still in the index under `--archived`. What it stops is the index
+        growing without bound as finished runs accumulate — which is the second
+        way subject sprawl arrives, after near-duplicate names.
+
+        Reversible on purpose, and that is why it refuses new notes rather than
+        merely hiding: a finished run that turns out to have one more thing to say
+        should make somebody type `--reopen` and thereby notice they are reopening
+        finished work, rather than quietly appending to it.
+
+        No ownership check. cairn has no authentication, so one would be a
+        pretence — I3 — and the row records who did it, which is the accountability
+        that is actually available.
+        """
+        if self.get_agent(author) is None:
+            msg = f"unknown author {author!r}; register before archiving a subject"
+            raise UsageError(msg)
+        subject = normalize_subject(name)
+        pile = self._require_subject(subject)
+        if not reopen and pile.open_questions:
+            # Refused rather than warned, because archiving takes the pile out of
+            # the index and the index is ordered by open questions — the one
+            # column whose whole job is to stop a loop being forgotten. Closing
+            # finished work should mean looking at what is still open on it. The
+            # escape is always available and is one command: an answer of "no
+            # longer relevant, run closed" settles a question perfectly well.
+            plural = "question" if pile.open_questions == 1 else "questions"
+            msg = (
+                f"subject {subject!r} has {pile.open_questions} open {plural}, so archiving it would hide "
+                f"them from the index.\n"
+                f"  see them: cairn notes {subject} --open\n"
+                f'  close one: cairn settle <id> "<what you found, or why it no longer matters>"'
+            )
+            raise UsageError(msg)
+        self._touch(author)
+        self._db.execute(
+            "UPDATE subjects SET archived_at = ?, archived_by = ? WHERE name = ?",
+            (None if reopen else now(), None if reopen else author, subject),
+        )
+        return self._require_subject(subject)
+
+    def get_subject(self, name: str) -> SubjectSummary | None:
+        """Return one subject with its counts, or None."""
+        return next((s for s in self.subjects(archived=True) if s.subject == normalize_subject(name)), None)
 
     # -- internals ------------------------------------------------------------
+
+    def _require_subject(self, subject: str) -> SubjectSummary:
+        found = self.get_subject(subject)
+        if found is None:
+            raise UsageError(_no_such_subject(subject, self._subject_names()))
+        return found
+
+    def _subject_names(self) -> list[str]:
+        return [r["name"] for r in self._db.execute("SELECT name FROM subjects ORDER BY name").fetchall()]
 
     def _touch(self, name: str) -> None:
         """Record that `name` was heard from just now.
@@ -683,6 +844,63 @@ def _agent_from_row(row: sqlite3.Row) -> Agent:
     )
 
 
+NEAREST_SHOWN = 3
+"""How many candidate subjects a refusal offers. Three fits on a line and reads."""
+
+SUBJECTS_SHOWN = 8
+"""How many existing subjects a refusal lists when it has no better guess."""
+
+
+def _nearest(subject: str, names: Sequence[str]) -> list[str]:
+    """Return the subjects a mistyped one most likely meant.
+
+    **Substring before edit distance, and that order is from the measured case.**
+    `difflib` scores `441` against `soak-441` at 0.55, under any cutoff loose
+    enough to be useful, because most of the candidate is the part the writer left
+    out. Yet a bare run number is exactly what somebody types when the pile is
+    filed under a longer name, and the reverse — typing `rig-a/chamber` when only
+    `rig-a` exists — is the same shape with the containment the other way round.
+    Both are substring hits, so substring goes first and `difflib` picks up the
+    genuine typos underneath it.
+    """
+    hits = [name for name in names if subject in name or name in subject]
+    for name in difflib.get_close_matches(subject, names, n=NEAREST_SHOWN, cutoff=0.6):
+        if name not in hits:
+            hits.append(name)
+    return hits[:NEAREST_SHOWN]
+
+
+def _no_such_subject(subject: str, names: Sequence[str]) -> str:
+    """Return the refusal a writer meets when the pile does not exist yet.
+
+    **This text is the feature.** Requiring subjects to be opened deliberately
+    only prevents sprawl if the refusal tells the writer what already exists —
+    otherwise it is a speed bump that ends in the same new pile one command later.
+    So it guesses, and when it cannot guess it lists, and it always prints the
+    exact command with the name already in it.
+
+    Every value here is a normalized subject, so it cannot contain whitespace and
+    cannot open a line of its own — the one place in this file where peer-authored
+    text reaches a message, and the reason `normalize_subject` refuses whitespace
+    outright rather than folding it. See `render.oneline`.
+    """
+    opening = (
+        f"no subject {subject!r}. Subjects are opened deliberately, so that four spellings of one run "
+        f"do not become four piles nobody can find."
+    )
+    lines = [opening]
+    near = _nearest(subject, names)
+    if near:
+        lines.append(f"  did you mean: {', '.join(near)}")
+    elif names:
+        shown = ", ".join(names[:SUBJECTS_SHOWN])
+        more = f" (+{len(names) - SUBJECTS_SHOWN} more)" if len(names) > SUBJECTS_SHOWN else ""
+        lines.append(f"  subjects that exist: {shown}{more}")
+    lines.append(f'  open it if it is genuinely new: cairn subject {subject} "<one line saying what it is>"')
+    lines.append("  see them all, with what each is for: cairn notes")
+    return "\n".join(lines)
+
+
 def _like_escape(text: str) -> str:
     r"""Neutralise SQL `LIKE` wildcards so a search for `100%` finds `100%`.
 
@@ -691,6 +909,18 @@ def _like_escape(text: str) -> str:
     which reads as a broken index rather than as a quoting rule.
     """
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _summary_from_row(row: sqlite3.Row) -> SubjectSummary:
+    return SubjectSummary(
+        subject=row["subject"],
+        notes=int(row["notes"]),
+        open_questions=int(row["open_questions"]),
+        last_at=row["last_at"],
+        description=row["description"],
+        created_by=row["created_by"],
+        archived_at=row["archived_at"] or "",
+    )
 
 
 def _note_from_row(row: sqlite3.Row) -> Note:
