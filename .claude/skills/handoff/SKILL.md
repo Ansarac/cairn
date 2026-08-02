@@ -157,6 +157,12 @@ dst = sqlite3.connect("handoffs/archive/<cut>.db")
 src.backup(dst)
 ```
 
+**Not `cp`, and the difference is silent.** The hub opens its database with
+`PRAGMA journal_mode=WAL`, so the rows live in the `-wal` sidecar until a checkpoint: a
+copied `hub.db` is 4 KiB, `sqlite3.connect` succeeds on it, and the first query says
+`no such table: messages`. Nothing fails at archive time. Reproduced while archiving
+cut 5.
+
 Render the companion `.md` **through the commands a reader would actually run** rather
 than as a table dump, so the I1 framing tiers survive. `handoffs/` is gitignored: the
 copy stays local, and the handoff points at it.

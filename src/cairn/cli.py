@@ -112,15 +112,20 @@ def _artifacts(specs: Sequence[str]) -> list[Artifact]:
         if not sep or not path:
             msg = f"artifact {spec!r} must look like HOST:/absolute/path — HOST is always required"
             raise UsageError(msg)
+        # Both warnings fold what they echo. `{path!r}` was already safe by
+        # accident — repr escapes a newline — and `{host}` beside it was not,
+        # which is the whole shape of this defect: safety that came from a
+        # formatting choice rather than from a rule holds until the next line.
+        shown_host, shown_path = render.oneline(host), render.oneline(path)
         if not path.startswith("/"):
             print(
-                f"cairn: warning: artifact path {path!r} is not absolute, so it names nothing on {host}",
+                f"cairn: warning: artifact path {shown_path!r} is not absolute, so it names nothing on {shown_host}",
                 file=sys.stderr,
             )
         elif not Path(path).exists():
             print(
-                f"cairn: note: {path} is not on this machine — fine if {host} is somewhere else, "
-                f"already broken if {host} is here",
+                f"cairn: note: {shown_path} is not on this machine — fine if {shown_host} is somewhere else, "
+                f"already broken if {shown_host} is here",
                 file=sys.stderr,
             )
         artifacts.append(Artifact(host=host, path=path))
@@ -146,9 +151,9 @@ def cmd_register(args: argparse.Namespace) -> int:
     registration = client.register(agent)
     joined = registration.agent
     config.remember_identity(joined.name)
-    print(f"registered as {joined.name} on {joined.machine}")
-    print(f"  cwd          {joined.cwd}")
-    print(f"  capabilities {', '.join(joined.capabilities) or '—'}")
+    print(f"registered as {render.oneline(joined.name)} on {render.oneline(joined.machine)}")
+    print(f"  cwd          {render.oneline(joined.cwd)}")
+    print(f"  capabilities {render.oneline(', '.join(joined.capabilities)) or '—'}")
     print(render.arrival_note(registration), end="")
     print(_open_questions(client), end="")
     return 0
@@ -182,7 +187,7 @@ def cmd_whoami(args: argparse.Namespace) -> int:
     if not name:
         print("not registered in this directory; run `cairn register <name>`")
         return EXIT_NOTHING
-    print(name)
+    print(render.oneline(name))
     _ = args
     return 0
 
@@ -225,7 +230,7 @@ def cmd_tell(args: argparse.Namespace) -> int:
     client = _client(args)
     _check_recipient(client, args.recipient)
     message = client.send("tell", me, args.recipient, args.body, artifacts=_artifacts(args.artifact))
-    print(f"sent seq {message.seq} to {message.recipient}{_reach(client, message.recipient, me)}")
+    print(f"sent seq {message.seq} to {render.oneline(message.recipient)}{_reach(client, message.recipient, me)}")
     return 0
 
 
@@ -259,7 +264,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     message = client.send(
         "ask", me, args.recipient, args.body, correlation_id=correlation, artifacts=_artifacts(args.artifact)
     )
-    print(f"asked seq {message.seq} of {message.recipient}, correlation {correlation}")
+    print(f"asked seq {message.seq} of {render.oneline(message.recipient)}, correlation {render.oneline(correlation)}")
     return 0
 
 
@@ -279,7 +284,7 @@ def cmd_reply(args: argparse.Namespace) -> int:
     message = client.send(
         "reply", me, args.recipient, args.body, correlation_id=args.correlation, artifacts=_artifacts(args.artifact)
     )
-    print(f"replied seq {message.seq} to {message.recipient} for {args.correlation}")
+    print(f"replied seq {message.seq} to {render.oneline(message.recipient)} for {render.oneline(args.correlation)}")
     return 0
 
 
@@ -489,9 +494,9 @@ def cmd_ack(args: argparse.Namespace) -> int:
 def cmd_forget(args: argparse.Namespace) -> int:
     """Drop this directory's pin for a name, so the next send re-learns it."""
     if config.forget_pin(args.name):
-        print(f"forgot where {args.name} was; the next send will learn it again")
+        print(f"forgot where {render.oneline(args.name)} was; the next send will learn it again")
         return 0
-    print(f"no pin recorded for {args.name} in this directory")
+    print(f"no pin recorded for {render.oneline(args.name)} in this directory")
     return EXIT_NOTHING
 
 
@@ -661,7 +666,7 @@ def cmd_config(args: argparse.Namespace) -> int:
     print(f"hub          {config.hub_url(args.hub)}")
     print(f"config file  {config.config_path()}")
     print(f"state dir    {config.state_dir()}")
-    print(f"identity     {config.current_identity() or '—'}")
+    print(f"identity     {render.oneline(config.current_identity() or '') or '—'}")
     return 0
 
 

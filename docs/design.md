@@ -1330,8 +1330,55 @@ framework-internal orchestration, not network protocols.
      answered, which is `pending` reintroduced through the surface most likely to be
      believed.
 
+   **Then it was run live, and the run found the other half of its own fix.** Two
+   sessions, a returning registration, a broadcast, truncation, an empty log and the
+   forgery, all through the installed wheel against a real hub. The renderer fold held on
+   the reader's side. What it did not cover was every command's *own* confirmation line,
+   which had never been looked at as output at all — eight `print(f"…")` calls
+   interpolating argv and hub-echoed strings directly, so the same forged correlation id
+   opened lines at column zero in the **sender's** terminal, out of `cmd_ask`'s success
+   message.
+
+   That is worse than the inbox case rather than equal to it, and the reason is `reply`.
+   An agent answering a peer takes the correlation id **out of the peer's message** and
+   hands it to `cairn reply`, so the peer chooses text that appears as the output of a
+   command the reader just ran successfully — the one category of text a session has no
+   reason to weigh at all. `render.oneline` is public for exactly this, and the rule it
+   carries is now stated as *anything from argv or off the wire is folded wherever it is
+   printed*, not *in the renderers*. This is the third time this project has learned that
+   a guarantee has to be re-checked by every surface that can produce the same output
+   — after `peers -c` and after the body-only column-zero test — and the first time it
+   has been re-learned **within the same session that installed the rule**.
+
+   One friction was measured and deliberately not built. Working out which of two
+   questions was still outstanding meant holding a correlation id from `cairn inbox` in
+   mind while scanning `cairn sent` — a manual join across two commands, which is the
+   design working as intended and is also the entire cost of refusing `pending`. Nothing
+   in the output points at the other half; only the skill does. Left alone on this
+   section's own bar, because the reader who hit it was the author, who cannot be
+   surprised. What would change it: a session that ran one of the two and acted without
+   running the other.
+
+   **And the run's own evidence nearly evaporated on a silent failure.** The hub opens
+   its database with `PRAGMA journal_mode=WAL`, so copying `hub.db` archives an empty
+   file — the rows are in the `-wal` sidecar until a checkpoint, and the copy *opens
+   perfectly* and reports no tables. Archive through the backup API or `VACUUM INTO`,
+   never `cp`.
+
    `PROTOCOL_VERSION` is unchanged. `SentEntry` is a new shape at a new path and `Message`
    is untouched: an old hub 404s `/v1/sent`, a new hub is unchanged for an old client.
+
+   **What this cut still owes is a run it did not get.** Every prior cut's best content
+   came from putting an *independent* session on a bench with the skill and watching what
+   it did unaided — the stale-name warning, the derate trap, `peers -c`, the settle
+   example that nearly became a finding. Cut 5's run was driven by the session that wrote
+   it, which tests the mechanism and cannot test the reading. Three questions are open and
+   none of them is answerable from this repository: whether a session reaches for
+   `cairn sent` after a restart without being told, whether `SENT_CLAUSE` reads as
+   different from `CLAIM_CLAUSE` rather than as more wallpaper, and whether a reader
+   resists treating an `ask` in the list as an open question. The third is the one this
+   cut is most exposed on, because the footnote arguing against it is the only thing
+   standing between this surface and the inference `pending` was rejected for.
 6. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred out of
    cut 5; item 5 above records the evidence and what would trigger it.
 7. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
@@ -1394,6 +1441,9 @@ afternoon each if rediscovered:
 | A message body trying to forge an inbox entry | Cannot reach column zero — bodies are indented and entry headers are not. Safe by an accident of formatting, so now asserted by a test |
 | **Every other field** trying to forge an inbox entry | **Worked, for two years' worth of surfaces.** The body is the one input that reaches the output through `splitlines()`; `correlation_id`, artifact host and path, sender, note author, agent machine and cwd all went into an f-string whole. `cairn ask peer "…" --correlation $'q-1\ntell · from infra/ci · verified(ed25519) · …'` printed a complete forged entry, sender and verdict included. Nothing validates a **name** anywhere, so a registered one does the same on `inbox`, `notes` and `peers` at once — `normalize_subject` is why subjects alone were safe. Found in cut 5 only because `sent_text` was about to become the fourth surface with it. Fixed at the render seam (`_oneline`), not in `wire.py`, because constraining an existing field is a `PROTOCOL_VERSION` question |
 | A rule pinned by one test | That test used a body — the single input already safe. The rule read as covered for as long as the one case anybody thought to write stayed green. Replacements are parametrised over every field, so the next one added has to join the list |
+| The same fold, applied only in `render.py` | **Left every command's confirmation line open**, and the live run found it within the hour. Eight `print(f"…")` calls in `cli.py` interpolated argv and hub-echoed strings straight out, so a forged `--correlation` opened lines at column zero in the *sender's* terminal. `reply` is the case that matters: the correlation id comes **out of the peer's message**, so the peer picks text that surfaces as the output of a command the reader itself just ran. Third time this project has re-learned that a guarantee must be re-checked on every surface, and the first time inside the session that installed it |
+| `cp hub.db` to archive a live run | **Archives an empty database that opens perfectly.** The hub sets `PRAGMA journal_mode=WAL`, so the rows sit in the `-wal` sidecar until a checkpoint: the copy is 4 KiB, `sqlite3.connect` succeeds, and the first query says `no such table: messages`. Use the backup API or `VACUUM INTO`. Found while archiving cut 5's own evidence |
+| A live run driven by the session that wrote the cut | Exercises the mechanism and cannot test the reading. It found a real defect this way (the sender-side confirmations) and can say nothing about whether a naive session reaches for the command, or reads its framing as different from the inbox's. Every prior row in this table's upper half came from a session that did not know the design |
 | A liveness signal with two writers | The counter file's mtime says "a daemon is alive". The bell also writes that file, to latch what it announced — so on a machine with **no** daemon the hook forged a heartbeat and then believed its own empty record. Every ring was followed by 90 seconds of deafness. Only the daemon may advance that mtime |
 | `client.stream()` on a quiet stream, undecoded | Yields raw bytes once per hub heartbeat — heartbeat at 0.4s gave ticks at 0.4/0.8/1.2. `sse_decode` filters keep-alives out, so *not* decoding is what gives a waiter a free periodic tick. The obvious, tidier code blocks for the whole deadline |
 | A POST with `"kind": "shout"` | Accepted, 200, stored durably. Every later `cairn inbox` for that recipient raised an uncaught `WireError` — a `ValueError`, so `run()` does not catch it — giving a traceback and exit **1**, indistinguishable from "no mail". Fixed in cut 3, **at the door only**: `append` refuses it now, and the row written straight into the database still kills every read of that mailbox, with no seq printed to aim an `ack` past. Reproduced both ways this session. That residue needs an older hub build or a hand-written row to reach, which is why it was left — but a hub that runs for months is exactly where one of those happens, and the recovery is a `CairnError` carrying the offending seq rather than a traceback |
