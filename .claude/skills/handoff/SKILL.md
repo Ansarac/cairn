@@ -163,6 +163,12 @@ copied `hub.db` is 4 KiB, `sqlite3.connect` succeeds on it, and the first query 
 `no such table: messages`. Nothing fails at archive time. Reproduced while archiving
 cut 5.
 
+**Run the scratch hub in `/tmp` and archive into `handoffs/archive/` at the end.** Never
+point a live hub at the archive path to save the copy. Doing that turns the archive step
+into snapshot-then-replace, and the replaced file's `-wal` and `-shm` sidecars stay on
+disk beside a database they no longer describe — which SQLite will try to replay. Caught
+by re-counting rows after the move; silent otherwise.
+
 Render the companion `.md` **through the commands a reader would actually run** rather
 than as a table dump, so the I1 framing tiers survive. `handoffs/` is gitignored: the
 copy stays local, and the handoff points at it.

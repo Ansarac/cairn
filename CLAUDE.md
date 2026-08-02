@@ -283,6 +283,14 @@ unit test and only appeared here.
 Every test is offline. The hub binds an ephemeral loopback port, and no test
 spawns a process, drives real tmux, or reads real `/proc`.
 
+**And a live run driven by the session that wrote the cut tests the mechanism
+but cannot test the reading.** Cut 5 shipped with three open questions for
+exactly that reason and needed a second session to close them; two of the three
+then came back *no*. Acceptance means an independent `claude -p` whose cwd is
+**outside this repository**, so only the installed skill is in context, followed
+by a blunt interview turn (`--continue`) asking what the surface did and did not
+do. `docs/design.md` §12 item 5 records what that produced.
+
 **Green tests are not the bar; a live run is.** Three things in that loop will
 silently serve you stale code, and each has cost a session real time:
 
