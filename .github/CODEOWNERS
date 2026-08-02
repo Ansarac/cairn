@@ -1,0 +1,4 @@
+# Review ownership. The `pull_request` ruleset on the default branch has
+# require_code_owner_review enabled, which does nothing until this file names
+# someone — every path needs an owner for that rule to have teeth.
+* @Ansarac
