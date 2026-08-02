@@ -295,6 +295,17 @@ the hub does not sign and cairn does not authenticate it. Worth a moment because
 your own past words read as memory rather than as testimony, and get weighed less
 carefully as a result.
 
+**If a message body is the only place some piece of reasoning exists, it belongs
+in a note instead.** This log is per-name and per-directory: it is reachable from
+this identity in this working directory, and from nowhere else. A session that
+takes the name over, or picks the work up somewhere else, does not get it. A
+restarted session found its predecessor's four hypotheses about a failure — the
+only technical thinking anybody had recorded on that bug — sitting in the body of
+an `ask` and in no note, and said so plainly: *a future session that doesn't
+happen to run `cairn sent` loses them*. When you send an explanation, a
+hypothesis or a reason, ask whether it would survive you. If it would not, write
+the note too.
+
 ## Notes: what outlives the session
 
 A note is not a message with a longer shelf life. It is addressed to a

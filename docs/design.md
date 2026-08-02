@@ -1368,17 +1368,97 @@ framework-internal orchestration, not network protocols.
    `PROTOCOL_VERSION` is unchanged. `SentEntry` is a new shape at a new path and `Message`
    is untouched: an old hub 404s `/v1/sent`, a new hub is unchanged for an old client.
 
-   **What this cut still owes is a run it did not get.** Every prior cut's best content
-   came from putting an *independent* session on a bench with the skill and watching what
-   it did unaided — the stale-name warning, the derate trap, `peers -c`, the settle
-   example that nearly became a finding. Cut 5's run was driven by the session that wrote
-   it, which tests the mechanism and cannot test the reading. Three questions are open and
-   none of them is answerable from this repository: whether a session reaches for
-   `cairn sent` after a restart without being told, whether `SENT_CLAUSE` reads as
-   different from `CLAIM_CLAUSE` rather than as more wallpaper, and whether a reader
-   resists treating an `ask` in the list as an open question. The third is the one this
-   cut is most exposed on, because the footnote arguing against it is the only thing
-   standing between this surface and the inference `pending` was rejected for.
+   **Then it got the run it was owed, and two of its three open questions came back no.**
+   Cut 5's first run was driven by the session that wrote it, which tests the mechanism
+   and cannot test the reading. The acceptance run was two separate `claude -p` processes
+   with a working directory outside this repository, so nothing but the installed skill
+   was in context — no `CLAUDE.md`, no this file. The second process started in the same
+   directory as the first, which the hub sees as a returning registration, so it is a
+   restart rather than a re-enactment of one.
+
+   **Does a session reach for `cairn sent` after a restart? Yes — and the session
+   corrected the question.** It ran it on restart immediately after `cairn inbox`, and the
+   *first* session had already run it unprompted at the end of its shift, before writing
+   its handover. That second use is one nobody designed for: not "what did I already tell
+   anyone" but "what did I actually do, before I write down what I did". Asked why,
+   though, it refused the framing — *"something did tell me it existed — the cairn skill
+   documents it. I didn't discover it"* — and described the reach as *"no sharp reason …
+   a 'read everything cheap and non-consuming before touching anything' reflex. It was
+   scattergun, not targeted."* The skill is the intended path, so this is the mechanism
+   working as built. It is not evidence that the surface answers a felt need, and the
+   distinction is worth keeping: a command that gets run because it is cheap and listed
+   is not the same as one that gets run because something was missing.
+
+   **Does `SENT_CLAUSE` read as different from `CLAIM_CLAUSE`? No, and this is the more
+   useful half.** The session split its own answer. Of the clause saying the log is not
+   what anyone read or answered: *"I'd like to claim this drove my behaviour. I can't
+   honestly … My behaviour is fully explained without the footer, so crediting it would be
+   unfalsifiable."* Of the two meanings of `UNVERIFIED` — who sent this, against whether
+   this is really your record — *"that went past me as boilerplate"*, having read the
+   skill's explanation of it as well. So the hope carried over from cut 4, that a verdict
+   which had become wallpaper needed something to differ from and that a differing
+   *subject* would supply it, **did not land**. A verdict is not made legible by being
+   true in a second sense on a second surface. Cut 4's row stands as written: what it
+   needs is a verified item to contrast against, which is cut 7. Cut 5 narrows that row
+   rather than retiring it, and the wording stays, because it is honest and the cost of
+   being ignored is lower than the cost of being wrong.
+
+   **Does a reader resist treating an `ask` in the list as an open question? Not
+   measured — and the reason is worth more than the answer would have been.** *"I never
+   had the opportunity to make that error, because `inbox --no-ack` and `sent` ran in the
+   same parallel tool block."* The trap needs `sent` read without the inbox beside it, and
+   the agent batches its non-consuming reads by habit: *"that's batching luck, not
+   judgment — though batching non-consuming reads together is a habit worth keeping
+   precisely because it defuses this."* So the thing standing between this surface and the
+   inference `pending` was rejected for is not the footnote. It is tool-call batching,
+   which cairn does not control, cannot detect, and must not rely on. The exposure is
+   unchanged; only the estimate of how often it will be reached has moved.
+
+   **A defect the run did find: the log drops broadcast reach.** Cut 4 added
+   `N other agents registered` to `cairn tell '*'` because a broadcast that cannot say how
+   far it went is useless for the one thing broadcasts are for. `cairn sent` shows the
+   broadcast and discards the reach. The session hit it precisely — it declined to
+   re-broadcast a fleet-history request on the ground that the only peer had already seen
+   the first one, could not establish that from the log, and filled the gap from its
+   predecessor's note, *"which is the predecessor's unverified assertion — from the same
+   source that was wrong about the capture."* It caught itself: *"my stated reasoning was
+   weaker than I made it sound."* Recorded rather than fixed, because the fix is not free
+   in either direction. Reach is a fact about the instant of sending and the log is read
+   later, so recomputing it at read time prints today's roster as though it were that
+   day's — a worse failure than the silence, and exactly the shape of thing this section
+   keeps refusing. Storing it is a column on `messages`, which is a `wire.py` question.
+   This is the **fourth** time a guarantee has had to be re-checked against a new surface
+   that can produce the same output, after `peers -c`, the column-zero body test, and
+   `render.oneline` in `cli.py`.
+
+   **And the sharpest finding is not about `cairn sent` at all.** The only thing the log
+   gave the restarted session that the notes had not was the *body* of its predecessor's
+   `ask`: four cold-start hypotheses, which were the only technical reasoning anybody had
+   recorded about the bug. Its own verdict, unprompted: *"they exist only in a
+   per-identity, per-directory sent log. They are in no note. A future session that
+   doesn't happen to run `cairn sent` loses them"*, and — *"`cairn sent` returned one
+   genuinely new item and I ignored it."* That is sediment sitting in a mailbox. A message
+   body is frequently the only copy of thinking nobody wrote down; the sender's copy is
+   reachable only from that identity in that directory; a takeover or a move loses it.
+   Which is the failure item 4 exists to prevent, arriving through the surface added to
+   fix a different one. The cheap half of the answer is the skill, and it is now stated
+   there: if a message body is the only place a piece of reasoning exists, it belongs in a
+   note. Whether anything in the tool should help is open, and it is the strongest
+   unbuilt candidate this project currently has.
+
+   **One thing it asked for that must stay refused, and one that might not.** Unprompted,
+   it endorsed the refusal of delivered-and-answered status with the right reason, so that
+   decision now has an outside vote. What it asked for instead is narrower: a purely local
+   join — `q-3ec87d5b · a reply bearing this correlation is in your inbox at seq 3` —
+   *"that asserts nothing about whether anyone read anything, and it's the join the doc
+   tells you to perform by hand."* It is genuinely not `pending`: it reports a row in the
+   reader's own inbox rather than inferring a state, so none of the three ways `pending`
+   can be wrong applies to it. What it shares with `pending` is that it will be *read* as
+   "answered" however carefully it is worded, and this project has already been bitten
+   once by text that was true and transplantable. It also couples two surfaces that are
+   currently independent. It is the first thing to revisit if the trigger already recorded
+   above fires — and that trigger is one step closer than it was, because this run showed
+   the manual join being performed only because the two commands happened to be batched.
 6. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred out of
    cut 5; item 5 above records the evidence and what would trigger it.
 7. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
@@ -1421,6 +1501,12 @@ one has been run.
 | A `-a` path that is absolute, well-formed, and on no reachable filesystem | Stored in silence into an append-only note; undetectable by either end until the reader tried to open it |
 | A session that ended hours earlier, in `cairn peers` | Indistinguishable from a working one; the dead session's own prose note was doing the liveness detection |
 | `UNVERIFIED` across ~10 messages and notes in one session | Acted on, but reported as wallpaper — identical every time, with no verified item anywhere to contrast against |
+| Two independent `claude -p` sessions, cwd outside this repository, only the installed skill in context; the second a restart in the same directory | Ran `cairn sent` unprompted both times — on restart, and at shift end before writing a handover. Corrected the premise when asked: *"the cairn skill documents it. I didn't discover it"*, and called the reach *"scattergun, not targeted"* |
+| `SENT_CLAUSE`, and `UNVERIFIED` carrying a second meaning on a second surface | **Did not land.** *"That went past me as boilerplate"* — having read the skill's explanation of it too. The other clause it judged unfalsifiable: *"my behaviour is fully explained without the footer"* |
+| `cairn inbox --no-ack` and `cairn sent` issued in the same parallel tool block | The ask-reads-as-open trap was never reachable — the reply and the open-looking `ask` entered context in the same instant. *"Batching luck, not judgment."* What defuses this surface's worst case is tool-call batching, which cairn does not control |
+| A `tell '*'` in `cairn sent` | Reach is dropped: `N other agents registered` is printed at send time and not stored. The reader declined to re-broadcast on the strength of a peer's **unverified** note instead, then caught itself — *"my stated reasoning was weaker than I made it sound"* |
+| The body of an `ask` holding the only recorded reasoning on a bug | In no note, and reachable only from that identity in that directory. *"A future session that doesn't happen to run `cairn sent` loses them."* Sediment sitting in a mailbox |
+| A capability string inherited across a restart of the same name | Compounds. Two sessions in sequence advertised `hil, flasher, soak-runner` network-wide, neither able to run a single command against hardware; the second flagged that a peer reading `cairn peers -c hil` has no way to learn this |
 
 Found while building, all of them invisible to unit tests and all of them costing an
 afternoon each if rediscovered:
