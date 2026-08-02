@@ -11,6 +11,8 @@ If this file goes red, nothing else in the suite matters.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 import urllib.error
@@ -1255,6 +1257,90 @@ def test_a_backlog_past_the_bell_s_limit_does_not_take_the_bell_off_the_air(hub,
 
     assert _cli(hub, "bell", "--limit", "3") == 0
     assert capsys.readouterr().out.strip() == "{}", "the latch stopped latching"
+
+
+def _as_hook(monkeypatch, event: str) -> None:
+    """Make the next command look like `event` invoked it, through a real pipe.
+
+    A real pipe rather than a stub, because the read is half the fix: this runs
+    inside somebody else's turn, so it has to come back whether the host wrote
+    JSON, wrote nothing, or left a terminal on the other end.
+    """
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, json.dumps({"hook_event_name": event, "cwd": "/w/bench"}).encode())
+    os.close(write_fd)
+    monkeypatch.setattr(sys, "stdin", os.fdopen(read_fd, encoding="utf-8"))
+
+
+def test_the_bell_a_session_opens_onto_is_the_one_that_reaches_it(hub, tmp_path, monkeypatch, capsys):
+    """The ring that reached nobody, and then ate the ring that would have.
+
+    Found by cut 6's acceptance run, on a live session that never saw its own
+    bell. Two halves, and the second is why this is end to end rather than a
+    shape assertion in the adapter tests.
+
+    **The envelope is per-event.** `{"decision": "block"}` is a turn-boundary
+    mechanism; on `SessionStart` the host files it as a hook error, puts the text
+    on stderr, and shows the model nothing.
+
+    **And the latch advances on the ring, not on the reading.** So the
+    undelivered `SessionStart` ring latched the head, and the first `Stop`
+    boundary — the event that does deliver — compared an equal head against it
+    and said nothing. A session opening onto a backlog was told nothing at all,
+    on either event, which is strictly worse than never installing the hook.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/analysis", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+    hub.send("tell", "compute/analysis", "bench/firmware", "the chamber overshoots")
+    capsys.readouterr()
+
+    _as_hook(monkeypatch, "SessionStart")
+    assert _cli(hub, "bell") == 0
+    opening = json.loads(capsys.readouterr().out)
+    assert "decision" not in opening, "the opening bell used the turn-boundary envelope, which is dropped"
+    context = opening["hookSpecificOutput"]["additionalContext"]
+    assert "1 unread" in context
+
+    # The latch is honest now: this reader has been told, so the next boundary
+    # holds its tongue. That is the same property the turn-boundary bell has.
+    _as_hook(monkeypatch, "Stop")
+    assert _cli(hub, "bell") == 0
+    assert capsys.readouterr().out.strip() == "{}", "the bell rang twice for the same mail"
+
+    # New mail still rings, and at a turn boundary it rings in the other shape.
+    hub.send("tell", "compute/analysis", "bench/firmware", "and the cold plate is 2C high")
+    _as_hook(monkeypatch, "Stop")
+    assert _cli(hub, "bell") == 0
+    boundary = json.loads(capsys.readouterr().out)
+    assert boundary["decision"] == "block"
+    assert "2 unread" in boundary["reason"]
+
+
+def test_a_bell_with_nobody_on_stdin_still_rings(hub, tmp_path, monkeypatch, capsys):
+    """Run by hand, or by a host that announces nothing: ring, do not go quiet.
+
+    The fallback is the turn-boundary envelope rather than silence. Silence here
+    would make a hand-run `cairn bell` look broken, and would turn the next
+    change in how an event announces itself back into the defect above.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/analysis", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+    hub.send("tell", "compute/analysis", "bench/firmware", "the chamber overshoots")
+    capsys.readouterr()
+
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)  # a pipe that closes without a word
+    monkeypatch.setattr(sys, "stdin", os.fdopen(read_fd, encoding="utf-8"))
+    assert _cli(hub, "bell") == 0
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
 
 def test_a_truncated_read_acknowledges_the_page_and_never_the_backlog(hub, tmp_path, monkeypatch, capsys):

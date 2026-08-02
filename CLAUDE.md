@@ -168,6 +168,16 @@ The hub now returns the true `COUNT` and `MAX(seq)` alongside the page and both
 callers read them. `docs/design.md` §12 item 6 has the reasoning; there is an
 end-to-end test that drains a truncated backlog and rings again.
 
+**The bell's envelope is per-event, the adapter owns it, and the wrong one fails
+silently.** A hook payload the host accepts but never shows the reader looks
+identical to a delivered one from cairn's side — and because the latch advances
+on the ring rather than on the reading, the channel that delivered nothing also
+ate the next one that would have. That is how a session opening onto 63 unread
+was told nothing at all, on either event, for three cuts. Adding a third hook
+event means measuring its envelope first; a test in
+`tests/test_packaging_and_adapter.py` fails until you do. `docs/design.md` §12
+item 7, found by cut 6's acceptance interview and by nothing else.
+
 **A paged surface ships its total, and `inbox` is the one that had to learn it
 twice.** `notes` and `sent` carried a truncation line from the cut that
 introduced them; `inbox` truncated in silence, which is where the deafness came

@@ -769,7 +769,7 @@ or messaging. Not competitors; potentially complementary.
    what stayed open. The takeover report and the sender-side pin make it loud at both
    ends, which is I3 working as designed — a declaration, not enforcement — and loud is
    not access control; neither should ever be described as if it were. It is accepted on the same terms as the outage above: the network it runs on
-   is trusted, and the alternative is having no hub until §12 item 8 lands.
+   is trusted, and the alternative is having no hub until §12 item 9 lands.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
@@ -1399,7 +1399,7 @@ framework-internal orchestration, not network protocols.
    which had become wallpaper needed something to differ from and that a differing
    *subject* would supply it, **did not land**. A verdict is not made legible by being
    true in a second sense on a second surface. Cut 4's row stands as written: what it
-   needs is a verified item to contrast against, which is item 8. Cut 5 narrows that row
+   needs is a verified item to contrast against, which is item 9. Cut 5 narrows that row
    rather than retiring it, and the wording stays, because it is honest and the cost of
    being ignored is lower than the cost of being wrong.
 
@@ -1548,11 +1548,81 @@ framework-internal orchestration, not network protocols.
    discard everything between the end of the page and that head — a truncated read eating
    its own remainder, which is the one failure this command has never had. There is a
    test whose only job is to fail if somebody makes that simplification.
-7. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred twice
-   now, out of cut 5 and out of cut 6. Item 5 records the evidence and what would trigger
-   it: a live exchange where two agents **could not** negotiate. Both runs so far had two
-   talking sessions, which is exactly why the evidence is not there.
-8. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
+7. **The bell reaches the reader.** **Done.** The payload a hook prints is shaped per
+   event, `cairn bell` shapes it, and a session that opens onto a backlog is told about
+   it.
+
+   **Cut 6's acceptance run is what found this, and it could not have been found any
+   other way.** The run put 63 messages in front of an independent session and then
+   interviewed it. Asked whether anything had told it how much mail was waiting before it
+   read: *"There was no bell in my context."* The hook had fired. The count in it was
+   right — cut 6's own fix. It reached nobody.
+
+   **What it was.** `{"decision": "block", "reason": …}` is a `Stop` mechanism. On
+   `SessionStart` the host accepts the payload, files it as a hook error with the text on
+   stderr, and shows the model nothing. The envelope that arrives on that event is
+   `{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": …}}`.
+   Both measured with marker hooks that print nothing but a marker: the marker in
+   `additionalContext` came back quoted by the session, the marker in `reason` did not
+   exist as far as the session could tell.
+
+   **The second half is the one worth remembering.** The latch advances on the ring, not
+   on the reading. So the undelivered `SessionStart` ring latched the head, and the first
+   `Stop` boundary — the event that does deliver — compared an equal head against it and
+   said nothing. A session opening onto a backlog was told nothing at all, on either
+   event, which is **strictly worse than never installing the hook**: the broken channel
+   ate the working one. Two independent sessions this run show exactly that pair of
+   records, and it also falsified a row of the README's own delivery table.
+
+   Same family as the defect item 6 fixed, with the trigger moved from "the backlog passed
+   the page" to "the session started". Both were the bell going deaf; both ran backwards
+   from intuition — that one got quieter the busier the mailbox, this one was silent
+   precisely at the moment the reader most needed telling.
+
+   **The knowledge is a fact about one product, so it lives in the adapter**, which is
+   what the structural rule is for. The event names itself in the JSON the host writes to
+   the hook's stdin, so the parse belongs there too; `cli.cmd_bell` reads bytes and asks
+   the adapter what to print. Three decisions inside that are not obvious:
+
+   - **Reading stdin cannot block.** This runs inside somebody else's turn, and a `read()`
+     on a pipe nobody closes does not fail, it hangs, with the turn behind it. A hung hook
+     is worse than the loud failure `cairn bell` already refuses to be. Hence a tty check,
+     a 0.2 s wait, and one capped read.
+   - **An unnamed event falls back to the turn-boundary envelope, never to silence.** Run
+     by hand there is no host and no event; going quiet there would make a working bell
+     look broken, and would turn the next change in how events announce themselves back
+     into this exact defect.
+   - **The latch was not touched.** It was honest all along; delivery was the lie. What
+     the fix adds instead is a test that fails if a third event is ever installed without
+     a measured envelope — because the failure is silent, and the thing that made it
+     expensive was not that the shape was wrong but that nothing could notice.
+
+   `PROTOCOL_VERSION` is not involved: `wire.py` is untouched. This is a fix between cairn
+   and one host, not between two builds of cairn.
+
+   **What else that run produced, and deliberately did not build.** All three come from
+   the same session, in its own order of severity, and are recorded here so the next cut
+   inherits the evidence rather than the opinion:
+
+   - **No clock anywhere in the output.** `peers` prints relative ages computed against a
+     clock the reader cannot see, and nothing prints the hub's own time. The session could
+     not answer "is the overnight window still open" — the most decision-relevant fact in
+     a shift handover — and had to hedge it.
+   - **No offset, no `--since`, no filter on `inbox`.** The only control is a limit from
+     the oldest end. So it fetched the same 50 rows three times, and used `tail -c` as the
+     offset the tool does not have — which cut one record in half and cost a fourth round
+     trip to recover. That is a live exchange producing the need, which is this section's
+     bar, and it is the strongest candidate here.
+   - **No supersession.** *"4471 is the build to use"* and *"4471 is withdrawn, do not
+     flash it"* are stored as two unrelated claims four hours apart; nothing links them and
+     nothing marks the first stale. Notes have `-q` and `settle`; messages have nothing.
+     In its words: *"when the correction lands thirty messages after the instruction,
+     that's a safety gap, not a UX gap."*
+8. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred three
+   times now, out of cut 5, cut 6 and cut 7. Item 5 records the evidence and what would
+   trigger it: a live exchange where two agents **could not** negotiate. Every run so far
+   had two talking sessions, which is exactly why the evidence is not there.
+9. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
 
 ---

@@ -49,6 +49,52 @@ def test_install_skill_writes_where_it_is_told(tmp_path):
     assert "cairn inbox" in target.read_text(encoding="utf-8")
 
 
+def _hook_input(event: str) -> str:
+    return json.dumps({"hook_event_name": event, "session_id": "abc", "cwd": "/w/bench"})
+
+
+def test_the_turn_boundary_bell_asks_for_another_turn():
+    payload = claude_code.bell_payload(_hook_input(claude_code.TURN_BOUNDARY), "9 unread")
+    assert payload == {"decision": "block", "reason": "9 unread"}
+
+
+def test_the_session_start_bell_speaks_the_other_envelope():
+    """The same sentence, and it reaches nobody in the other shape.
+
+    `decision` is a turn-boundary mechanism. On `SessionStart` the host takes the
+    payload, records it as a hook error with the text on stderr, and shows the
+    model nothing — measured with marker hooks on 2.1.220, and measured again
+    with a live session that was asked, tools forbidden, what was in its context
+    at startup: *"No such thing is in my context."*
+    """
+    payload = claude_code.bell_payload(_hook_input(claude_code.SESSION_START), "9 unread")
+    assert payload == {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "9 unread"}}
+
+
+@pytest.mark.parametrize("said", ["", "not json", "[]", "null", '{"hook_event_name": 7}', "{}"])
+def test_a_host_that_names_no_event_gets_the_turn_boundary_shape(said):
+    """Silence is the one answer this must not give.
+
+    Run by hand there is no host and no event. Falling back to no bell at all
+    would make a hand-run `cairn bell` look broken, and would turn any future
+    change in how the event is announced into the exact failure this envelope
+    split exists to fix.
+    """
+    assert claude_code.bell_payload(said, "9 unread") == {"decision": "block", "reason": "9 unread"}
+
+
+def test_every_installed_event_has_an_envelope_that_was_measured():
+    """A third hook must not be installed on an unmeasured shape.
+
+    This is the whole lesson of the defect, as a test: the payload the host
+    accepts is per-event, a wrong one fails silently, and `cli.cmd_bell` latches
+    on the ring rather than on the reading — so an event installed without a
+    measured envelope does not merely lose its own bell, it eats the next one
+    from an event that works.
+    """
+    assert set(claude_code.hook_config()) == {claude_code.TURN_BOUNDARY, claude_code.SESSION_START}
+
+
 def test_merging_hooks_twice_produces_one_bell():
     once = claude_code.merge_hooks({})
     twice = claude_code.merge_hooks(once)

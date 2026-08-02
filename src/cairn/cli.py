@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import select
 import socket
 import sys
 import uuid
@@ -516,10 +518,42 @@ def cmd_forget(args: argparse.Namespace) -> int:
     return EXIT_NOTHING
 
 
-def cmd_bell(args: argparse.Namespace) -> int:
-    """Emit a turn-boundary bell for whichever agent product invoked us.
+HOOK_INPUT_WAIT_SECONDS = 0.2
+"""How long the bell will wait for the host to say which event this is.
 
-    Three properties matter more than anything this function does.
+Short on purpose, and a wait rather than a read: this runs at every turn
+boundary, and a `read()` on a stdin nobody closes does not fail, it hangs — with
+the turn behind it. A missed event name costs the wrong envelope on one bell; a
+hung hook costs the session.
+"""
+
+HOOK_INPUT_MAX_BYTES = 65536
+"""One read, capped. The event name is in the first few dozen bytes."""
+
+
+def _hook_input() -> str:
+    """Return what the host wrote to our stdin, or empty if it wrote nothing.
+
+    Every failure mode answers "nothing", including the interesting one: run by
+    hand at a terminal there is no host and no event, and waiting on a keyboard
+    would be a hang with a friendly face.
+    """
+    try:
+        fd = sys.stdin.fileno()
+        if os.isatty(fd):
+            return ""
+        ready, _, _ = select.select([fd], [], [], HOOK_INPUT_WAIT_SECONDS)
+        if not ready:
+            return ""
+        return os.read(fd, HOOK_INPUT_MAX_BYTES).decode("utf-8", "replace")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def cmd_bell(args: argparse.Namespace) -> int:
+    """Emit a bell for whichever agent product invoked us, in that event's shape.
+
+    Four properties matter more than anything this function does.
 
     **It never carries content.** The bell says how many messages are waiting
     and how to read them. Peer text in a hook is unattributable and gets treated
@@ -532,12 +566,21 @@ def cmd_bell(args: argparse.Namespace) -> int:
     **It never fails loudly.** A hook that errors degrades the session it is
     attached to, so an unreachable hub means an empty response and exit 0.
 
+    **It speaks the shape the invoking event expects**, which the adapter owns
+    because the shape is a fact about one product. The latch below advances on
+    the ring, not on the reading, and that is only safe while every event cairn
+    installs on actually delivers — for three cuts one of them did not, so the
+    ring that reached nobody also silenced the one that would have. The
+    adapter's `bell_payload` carries the measurement.
+
     It reads a local counter when a nudger is maintaining one, and asks the hub
     only when nobody is. This runs at every single turn boundary, so the common
     case has to cost a `stat` and a small read rather than a round trip — but
     "the counter says zero" is only worth believing while something is still
     writing it, which is what the freshness check is for.
     """
+    from cairn.adapters import default
+
     try:
         me = config.current_identity()
         if not me:
@@ -557,10 +600,11 @@ def cmd_bell(args: argparse.Namespace) -> int:
         if not count or head <= nudge.read_belled(me):
             print("{}")
             return 0
+        payload = default().bell_payload(_hook_input(), render.bell_reason(count))
         nudge.latch_belled(me, head)
         # ensure_ascii=False so the reason reads as itself in the hook log rather
         # than as \uXXXX escapes; hook stdout is UTF-8 and render owns the wording.
-        print(json.dumps({"decision": "block", "reason": render.bell_reason(count)}, ensure_ascii=False))
+        print(json.dumps(payload, ensure_ascii=False))
     except (CairnError, OSError, ValueError):
         print("{}")
     return 0
