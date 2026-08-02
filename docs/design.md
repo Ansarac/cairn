@@ -1958,6 +1958,82 @@ framework-internal orchestration, not network protocols.
     rule with that shape. It is the weakest part of this item. The thing that would settle
     it is the thing this section always wants: a live reading where an inbox reader gets an
     age wrong.
+13. **A subject is a thing somebody opened, not a string somebody typed.** **Done.**
+    `cairn subject <name> "<what it is>"` opens a pile, `cairn note` refuses one that is
+    not open, and `--archive` closes a finished one without deleting anything.
+
+    **The evidence is three spellings deep.** §12 item 4 already recorded that `soak-441`,
+    `eval-441`, `run-441` and `441` are four subjects cairn would happily create, and that
+    creating one looked exactly like adding to one; the only guard was a post-hoc
+    `· new subject` line. Item 11's acceptance run then did it: a session invented
+    `run-442` beside existing notes about run 441 and diagnosed itself unprompted —
+    *"someone searching run-441 won't roll up into it. I created exactly the fragmentation
+    the tool warns about."* A warning the writer reads *after* the pile exists is a warning
+    about a thing that has already happened.
+
+    **The refusal is the feature, not the ceremony.** Making writers open a subject only
+    beats letting them invent one if the refusal tells them what already exists —
+    otherwise it is a speed bump that ends in the same new pile one command later. So it
+    guesses, and when it cannot guess it lists, and it always prints the command with the
+    name already in it. The guess puts substring matching *before* edit distance, which is
+    from the measured case rather than from taste: `difflib` scores `441` against
+    `soak-441` at 0.55, under any cutoff loose enough to be useful, because most of the
+    candidate is the part the writer left out — and a bare run number is exactly what
+    somebody types when the pile is filed under a longer name. The reverse, typing
+    `rig-a/chamber` when only `rig-a` exists, is the same shape with the containment the
+    other way round.
+
+    **The description is what turns an index into something you consult before writing.**
+    Counts say how much is on a pile; only a sentence says whether it is the pile you
+    meant. It is required for that reason, and re-opening an existing name is refused
+    rather than treated as an update — two writers describing one pile differently is the
+    same divergence in a smaller font, and the second one is usually somebody who did not
+    know the first existed.
+
+    **A pile with no notes on it is now representable, and that is the point of the
+    inversion.** `subjects()` reads the subject table and joins the counts, where it used
+    to `GROUP BY` over notes. Grouping can only report piles that already have sediment,
+    so the one moment the index could have prevented a duplicate — somebody has opened
+    tonight's run and said what it is, nobody has written to it yet — was the one moment
+    it had nothing to show.
+
+    **Archiving hides and refuses; it never deletes and never conceals.** The notes stay,
+    the read still works in full, and `--archived` still lists the pile. It refuses new
+    notes rather than merely hiding, so that appending to finished work costs a
+    `--reopen` and thereby a moment's notice. And it refuses outright while the pile has
+    an open question, because the index is ordered by exactly that column: archiving would
+    take the loops out of the one listing whose job is to surface them. The escape is one
+    command — *"no longer relevant, run closed"* settles a question perfectly well.
+
+    **Three decisions taken deliberately, each of which could reasonably have gone the
+    other way.**
+
+    - **A child subject is its own pile.** `rig-a/chamber` needs opening even when `rig-a`
+      exists. The measured sprawl was entirely in *roots*, so letting a child through on
+      its parent's authority was defensible; one rule is easier to state and to trust, and
+      relaxing a refusal later is backwards-compatible where tightening one is not.
+    - **No ownership check on archiving.** cairn has no authentication, so one would be a
+      pretence — I3 — and the row records who did it, which is the accountability actually
+      available. Same reasoning as `settle`.
+    - **The friction objection was dropped rather than answered.** Requiring a second
+      command looked like it cut against item 4's evidence, where a session about to end
+      needed to leave knowledge cheaply. The maintainer pointed out what that evidence
+      actually says: the problem was that there was *nowhere to leave it*, not that it
+      cost a command. An agent that has not stopped can run another command.
+
+    **The upgrade repairs itself.** A subject was a string in the `notes` table and
+    nothing else, so no migration could exist and no operator knows one is needed —
+    including on the hub running in a container right now with real sediment on it. The
+    schema backfills a row per distinct subject at open, dated to that pile's *first note*
+    rather than to the upgrade, and says in the description that nobody wrote one. An
+    invented description would be worse than an admitted gap, and the admission is the one
+    thing likely to get these piles described.
+
+    `PROTOCOL_VERSION` does not move: three additive keys on `SubjectSummary` and two new
+    routes, which is cut 4's rule applied twice. Unlike a window, nothing is answered
+    *wrongly* by their absence — an older hub cannot enforce deliberate subjects, but it
+    stores and reads notes exactly as it did, so the client says the hub is too old for
+    `cairn subject` and leaves everything else working.
 
 ---
 

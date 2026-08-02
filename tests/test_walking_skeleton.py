@@ -10,6 +10,7 @@ If this file goes red, nothing else in the suite matters.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -51,6 +52,20 @@ def hub(hub_server: ThreadingHTTPServer) -> HubClient:
     """Return a client pointed at the running hub."""
     host, port = hub_server.server_address[:2]
     return HubClient(f"http://{host}:{port}", timeout=5.0)
+
+
+def _pile(hub: HubClient, author: str, subject: str = "rig-a") -> None:
+    """Open a pile so a note can be written to it.
+
+    Subjects are opened deliberately — `store.create_subject` has the measured
+    reason — so a note needs one first. These tests are about what crosses the
+    wire once a pile exists; `tests/test_subjects.py` is where the refusal itself
+    is the subject.
+    """
+    with contextlib.suppress(UsageError):
+        # Idempotent: several of these tests build the same pile more than once,
+        # and "already exists" is the setup succeeding rather than failing.
+        hub.create_subject(subject, f"opened so a test could write to {subject}", author)
 
 
 def _register(hub: HubClient, name: str, **kwargs) -> None:
@@ -691,8 +706,12 @@ def _cli(hub: HubClient, *argv: str) -> int:
     return cli.run(["--hub", hub.base_url, *argv])
 
 
-def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatch, capsys):
+def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatch, capsys):  # noqa: PLR0915 - see the docstring
     """The exchange this cut exists for: the session goes, its open loop does not.
+
+    One statement over ruff's limit since subjects have to be opened before they
+    can be written to, and splitting the walk of a whole cut into two tests would
+    cost the thing this file is for — the seam, end to end, in one place.
 
     Cut 3's live run produced it unprompted and docs/design.md §12 item 4 records
     it. One of the two sessions was on a machine being handed to another team,
@@ -727,6 +746,7 @@ def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatc
     # The bench session writes down what it knows and what it does not, and never
     # reads the mail it was sent.
     monkeypatch.chdir(bench)
+    assert _cli(hub, "subject", "rig-a", "the flash jig and its soak runs") == 0
     assert _cli(hub, "note", "rig-a", "the flash jig needs the 3v3 rail jumpered before a soak run") == 0
     assert _cli(hub, "note", "rig-a", "does the iteration-12 failure survive the older bootloader?", "-q") == 0
     capsys.readouterr()
@@ -808,6 +828,7 @@ def test_a_note_rings_no_bell_though_a_message_still_does(hub):
         listener.start()
     time.sleep(0.4)  # let both subscriptions land before anything is written
 
+    _pile(hub, "bench/firmware")
     hub.write_note("bench/firmware", "the flash jig needs the 3v3 rail jumpered", subject="rig-a", question=True)
     time.sleep(0.4)  # a bell for that note would be on both streams by now
     sent = hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
@@ -845,7 +866,9 @@ def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path,
     hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
     waiting_mail = {name: [m.seq for m in hub.inbox(name).messages] for name in ("bench/firmware", "compute/analysis")}
     assert [len(seqs) for seqs in waiting_mail.values()] == [1, 1], "nothing was pending, so nothing could be lost"
+    _pile(hub, "bench/firmware")
     hub.write_note("bench/firmware", "the flash jig needs the 3v3 rail jumpered", subject="rig-a")
+    _pile(hub, "bench/firmware")
     hub.write_note("bench/firmware", "does iteration 12 survive the older bootloader?", subject="rig-a", question=True)
 
     monkeypatch.chdir(compute)
@@ -896,6 +919,7 @@ def test_a_hub_that_predates_notes_still_registers_and_says_nothing_about_them(
     monkeypatch.delenv("CAIRN_AGENT", raising=False)
     monkeypatch.chdir(tmp_path)
     _register(hub, "bench/firmware", machine="bench")
+    _pile(hub, "bench/firmware")
     hub.write_note("bench/firmware", "does iteration 12 survive the older bootloader?", subject="rig-a", question=True)
 
     assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0
@@ -929,6 +953,7 @@ def test_the_json_pile_says_how_much_it_is_not_showing(hub, capsys):
     of that backwards is invisible to a count.
     """
     _register(hub, "bench/firmware", machine="bench")
+    _pile(hub, "bench/firmware")
     for iteration in range(5):
         hub.write_note("bench/firmware", f"soak iteration {iteration} logged", subject="rig-a")
 

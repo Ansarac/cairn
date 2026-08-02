@@ -124,6 +124,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch(
             {
                 "/v1/register": self._register,
+                "/v1/subjects": self._open_subject,
+                "/v1/subjects/archive": self._archive_subject,
                 "/v1/messages": self._send,
                 "/v1/ack": self._ack,
                 "/v1/notes": self._write_note,
@@ -283,7 +285,29 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def _subjects(self) -> None:
-        self._reply(200, {"subjects": [s.to_json() for s in self.store.subjects()]})
+        archived = self._query().get("archived") == "1"
+        self._reply(200, {"subjects": [s.to_json() for s in self.store.subjects(archived=archived)]})
+
+    def _open_subject(self) -> None:
+        obj = self._read()
+        summary = self.store.create_subject(
+            name=str(obj.get("name", "")),
+            description=str(obj.get("description", "")),
+            author=str(obj.get("author", "")),
+        )
+        self._reply(200, {"subject": summary.to_json()})
+        # No `notifier.publish`, for the same reason `_write_note` sends none: a
+        # subject has no recipient, and ringing everyone because somebody opened a
+        # pile would turn sediment into mail. Invariant I2.
+
+    def _archive_subject(self) -> None:
+        obj = self._read()
+        summary = self.store.archive_subject(
+            name=str(obj.get("name", "")),
+            author=str(obj.get("author", "")),
+            reopen=bool(obj.get("reopen")),
+        )
+        self._reply(200, {"subject": summary.to_json()})
 
 
 def make_server(

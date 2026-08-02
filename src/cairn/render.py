@@ -668,7 +668,16 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "")
     for summary in summaries:
         count = f"{summary.notes} note{'' if summary.notes == 1 else 's'}"
         unanswered = f"{summary.open_questions} open" if summary.open_questions else "—"
-        lines.append(f"  {summary.subject:<{width}}  {count:<9} {unanswered:<8} last {summary.last_at}")
+        closed = " · archived" if summary.archived else ""
+        lines.append(f"  {summary.subject:<{width}}  {count:<9} {unanswered:<8} last {summary.last_at}{closed}")
+        # The description on its own indented line, and this is what the index is
+        # for now. Counts tell a reader how much is on a pile; only this tells them
+        # whether it is the pile they meant — which is the difference between an
+        # index you consult before opening a fifth spelling of one run and one you
+        # can only interpret after reading all four. Indented because it is
+        # peer-authored prose in a column-zero listing; folded for the same reason.
+        if summary.description:
+            lines.append(f"  {'':<{width}}  {oneline(summary.description)}")
     lines.append("")
     lines.append("— read one with `cairn notes <subject>`")
     nested = next((s.subject.split("/")[0] for s in summaries if "/" in s.subject), "")

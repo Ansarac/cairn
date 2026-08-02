@@ -485,6 +485,73 @@ def _pile(client: HubClient, subject: str) -> str:
     return f" · {match.notes} notes there now"
 
 
+def cmd_subject(args: argparse.Namespace) -> int:
+    """Open a pile deliberately, or close one that is finished.
+
+    The one command that exists because of what happens without it. A subject used
+    to come into being as a side effect of writing the first note to it, so
+    `soak-441`, `eval-441`, `run-441` and `441` were four piles cairn would create
+    without comment, and creating one looked exactly like adding to one. An
+    acceptance session did precisely that and said so afterwards.
+
+    The description is what does the work, not the ceremony. It is the line the
+    next writer reads in the index before deciding whether their pile already
+    exists — which is why `store.create_subject` requires one.
+    """
+    me = config.require_identity()
+    client = _client(args)
+    name = _subject(args.name)
+    if args.archive or args.reopen:
+        if args.description:
+            msg = "--archive and --reopen close or open a pile; they take no description"
+            raise UsageError(msg)
+        pile = _older_hub(lambda: client.archive_subject(name, me, reopen=args.reopen))
+        verb = "reopened" if args.reopen else "archived"
+        # The verb agrees with the count, on `render.bell_reason`'s recorded
+        # lesson: the one sentence a reader sees at a decision point was
+        # ungrammatical for four cuts because nobody read it at count 1.
+        kept = "1 note stays" if pile.notes == 1 else f"{pile.notes} notes stay"
+        print(f"{verb} {pile.subject} · {kept} readable")
+        if not args.reopen:
+            print(f"  it takes no new notes until `cairn subject {pile.subject} --reopen`")
+        return 0
+    if not args.description:
+        msg = (
+            f'a subject needs a description: cairn subject {name} "<one line saying what it is>".\n'
+            f"  it is what the next person reads before deciding whether their pile already exists"
+        )
+        raise UsageError(msg)
+    pile = _older_hub(lambda: client.create_subject(name, args.description, me))
+    print(f"opened {pile.subject} · {render.oneline(pile.description)}")
+    if pile.subject != args.name:
+        print(f"  subject folded from {args.name!r}")
+    print(f'  leave the first note: cairn note {pile.subject} "<what you know>"')
+    return 0
+
+
+def _older_hub(call):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it would be longer than it is
+    """Turn "this hub has no such route" into a sentence about the hub's age.
+
+    `client._call` maps a 404 to `Unreachable`, which is right for a garnish —
+    `_open_questions` and `_pile` swallow it and carry on. It is wrong here,
+    because the route *is* the command: "cannot reach hub" on a hub that just
+    answered `cairn notes` sends the reader to check the network, which is the
+    one place the fault is not.
+    """
+    from cairn.errors import Unreachable
+
+    try:
+        return call()
+    except Unreachable as exc:
+        if "404" not in str(exc):
+            raise
+        msg = (
+            "this hub predates `cairn subject`, so it has no subject table and creates piles implicitly.\n"
+            "  upgrade the hub to get deliberate subjects; until then `cairn note <subject>` still works"
+        )
+        raise UsageError(msg) from exc
+
+
 def cmd_settle(args: argparse.Namespace) -> int:
     """Answer an open question, whoever asked it.
 
@@ -527,7 +594,7 @@ def cmd_notes(args: argparse.Namespace) -> int:
     client = _client(args)
     subject = _subject(args.subject) if args.subject is not None else None
     if subject is None and not args.open and not args.find:
-        summaries = client.subjects()
+        summaries = client.subjects(archived=args.archived)
         clock = client.hub_time
         text = render.subjects_text(summaries, _hub(args), clock)
         print(render.subjects_json(summaries, clock) if args.json else text, end="")
@@ -931,6 +998,22 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
     p.set_defaults(func=cmd_note)
 
+    p = sub.add_parser(
+        "subject",
+        help="open a pile deliberately, or close one that is finished",
+        description=(
+            "Open a subject before writing notes to it. A subject is a rig, a run or a board, and it is "
+            "opened deliberately so that four spellings of one thing do not become four piles nobody can "
+            "find. The description is the line the next person reads in `cairn notes` before deciding "
+            "whether the pile they were about to create already exists."
+        ),
+    )
+    p.add_argument("name", help="the thing this is about, e.g. rig-a or eval-441")
+    p.add_argument("description", nargs="?", help="one line saying what it is")
+    p.add_argument("--archive", action="store_true", help="close it to new notes; reading is unaffected")
+    p.add_argument("--reopen", action="store_true", help="undo an archive")
+    p.set_defaults(func=cmd_subject)
+
     p = sub.add_parser("settle", help="answer an open question, whoever asked it")
     p.add_argument("id", type=int, help="the note id printed by `cairn notes`")
     p.add_argument("body")
@@ -949,6 +1032,7 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("subject", nargs="?", help="omit to see the index of subjects")
     p.add_argument("--open", action="store_true", help="only questions nobody has settled")
     p.add_argument("--find", metavar="TEXT", help="substring search across bodies and subjects")
+    p.add_argument("--archived", action="store_true", help="include piles that have been closed")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_notes)

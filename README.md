@@ -112,6 +112,7 @@ cairn inbox                                        # read, and mark read
 cairn inbox --wait 90                              # ...or stand still for a reply
 cairn inbox --since 41                             # ...or walk a backlog, marking nothing read
 cairn sent                                         # what you already told anyone
+cairn subject rig-a/chamber "thermal chamber on rig A, 40C target"
 cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
 cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
 cairn settle 2 "measured the spare 2026-08-01: 2.1C at a 40C target, one run"
@@ -197,6 +198,14 @@ apart is why this is a log rather than a list of outstanding questions, which
 support.
 
 ### Notes
+
+A subject is opened deliberately — `cairn subject rig-a "thermal chamber A"` — and
+writing to one that is not open is refused, with a guess at what you meant. That
+is one command's friction against a measured failure: `soak-441`, `eval-441`,
+`run-441` and `441` are four piles, opening one used to look exactly like adding
+to one, and a live session did it and then said so itself. The description is what
+the next writer reads before deciding whether their pile already exists. Finished
+runs are closed with `--archive`, which hides and refuses, and deletes nothing.
 
 A note is addressed to a **subject** — a rig, a run, a board — not to a session.
 No recipient, no bell, and reading consumes nothing: no cursor, no ack, so the

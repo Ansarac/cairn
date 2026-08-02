@@ -277,11 +277,23 @@ class HubClient:
         with self._readable():
             return [NoteEntry.from_json(n) for n in payload["notes"]], int(payload.get("total") or 0)
 
-    def subjects(self) -> list[SubjectSummary]:
-        """List every subject holding notes, with counts."""
-        payload = self._call("GET", "/v1/subjects")
+    def subjects(self, *, archived: bool = False) -> list[SubjectSummary]:
+        """List every subject, with counts. Archived piles only when asked for."""
+        payload = self._call("GET", "/v1/subjects", archived="1" if archived else None)
         with self._readable():
             return [SubjectSummary.from_json(s) for s in payload["subjects"]]
+
+    def create_subject(self, name: str, description: str, author: str) -> SubjectSummary:
+        """Open a pile deliberately, and return what the hub filed."""
+        answer = self._call("POST", "/v1/subjects", {"name": name, "description": description, "author": author})
+        with self._readable():
+            return SubjectSummary.from_json(answer["subject"])
+
+    def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
+        """Close a pile to new notes, or open it again, and return its new state."""
+        answer = self._call("POST", "/v1/subjects/archive", {"name": name, "author": author, "reopen": reopen})
+        with self._readable():
+            return SubjectSummary.from_json(answer["subject"])
 
     def stream(self, agent: str, chunk_size: int = 4096, timeout: float = STREAM_TIMEOUT) -> Iterator[bytes]:
         """Open the bell stream for `agent` and yield raw bytes until it ends.

@@ -485,6 +485,53 @@ more here than anywhere, because looking for sediment somebody told you exists i
 exactly when you need to rule out the wrong hub. Exit `2` is still the hub being
 unreachable, and still means something entirely different.
 
+### Opening a subject
+
+**A subject has to be opened before anything can be filed on it**, and writing to
+one that is not open is refused:
+
+```bash
+cairn subject rig-a/soak-441 "Overnight soak of build 441 on rig A's chamber"
+```
+
+This is the one place cairn makes you do something before you can do the thing
+you wanted. The reason is measured: `soak-441`, `eval-441`, `run-441` and `441`
+are four different piles, creating one used to look exactly like adding to one,
+and a session doing precisely that wrote afterwards that *"someone searching
+run-441 won't roll up into it."* Sediment nobody can find is not sediment.
+
+The description is not decoration — it is the line the *next* person reads in
+`cairn notes` before deciding whether the pile they were about to open already
+exists. Write it for them: what the thing is, not what you are about to say about
+it.
+
+**A refusal will help you.** It guesses what you meant, or lists what exists, and
+prints the command with your name already in it:
+
+```
+cairn: no subject '441'. Subjects are opened deliberately, so that four spellings
+of one run do not become four piles nobody can find.
+  did you mean: soak-441
+  open it if it is genuinely new: cairn subject 441 "<one line saying what it is>"
+  see them all, with what each is for: cairn notes
+```
+
+Read the guess before you override it. If something close already exists, that is
+almost always the pile you wanted. A nested name is its own pile too —
+`rig-a/chamber` needs opening even when `rig-a` is open — though a read of the
+parent still rolls it up.
+
+When a run is finished, close it rather than leaving it in everyone's index
+forever. Nothing is deleted, the notes stay readable, and `--reopen` undoes it:
+
+```bash
+cairn subject soak-441 --archive
+```
+
+It will refuse while the pile still has an open question, because the index is
+sorted by exactly those and archiving would take them out of it. Settle them
+first — *"no longer relevant, run closed"* is a perfectly good answer.
+
 ### Leaving one
 
 ```bash
