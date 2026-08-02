@@ -91,6 +91,15 @@ place to put that, and the date on every line is what makes it actionable.
 """
 NOTES_NOTICE = f"{NOTICE} Also: {STALENESS_CLAUSE}."
 
+STALENESS_TAIL = "the dates above are on the same clock, so this is how old they are"
+"""What the clock anchor is *for* on a pile of notes, said in the anchor itself.
+
+`STALENESS_CLAUSE` tells the reader that a note is what somebody believed at the
+time shown. Until this landed the reading then declined to say what time it is
+now, so the clause asked for a judgement and withheld the second operand — on the
+one surface where the gap is measured in months rather than minutes.
+"""
+
 SENT_CLAUSE = "your own sends, as this hub recorded them"
 RECORD_CLAUSE = "cairn does not sign, so this is the hub's account of what you sent rather than proof you sent it"
 UNANSWERED_CLAUSE = "this is what you sent, not what anyone read and not what anyone answered"
@@ -474,13 +483,14 @@ def _truncation(shown: int, total: int, end: str = "newest") -> list[str]:
     return [f"— showing the {end} {shown} of {total}; raise --limit for the rest", ""]
 
 
-def notes_json(
+def notes_json(  # noqa: PLR0913 - four of these are the filter the reader asked for; hiding them in an object would hide the scope
     entries: list[NoteEntry],
     total: int,
     subject: str | None = None,
     *,
     open_only: bool = False,
     find: str | None = None,
+    now: str = "",
 ) -> str:
     """Render a pile of notes as JSON, framing first and always.
 
@@ -492,6 +502,7 @@ def notes_json(
     payload = {
         "scope": _notes_scope(subject, open_only=open_only, find=find),
         "subject": subject,
+        "now": now or wire_now(),
         "showing": len(entries),
         "total": total,
         "open_questions": sum(1 for e in entries if e.is_open),
@@ -509,6 +520,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
     open_only: bool = False,
     find: str | None = None,
     hub: str = "",
+    now: str = "",
 ) -> str:
     """Render a pile of notes for reading.
 
@@ -566,6 +578,10 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
         lines.append(f"— includes notes filed under {subject}/")
     if any(e.is_open for e in entries):
         lines.append('— an open question is anyone\'s to settle: `cairn settle <id> "<what you found>"`')
+    # Last, and after the staleness clause rather than beside it: the clause says
+    # what a date means and this says what to measure it against, which is the
+    # order a reader needs them in. See `_clock_notes` for why `inbox` has none.
+    lines.extend(_clock_notes(now, STALENESS_TAIL)[1:])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -625,10 +641,11 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def subjects_json(summaries: list[SubjectSummary]) -> str:
+def subjects_json(summaries: list[SubjectSummary], now: str = "") -> str:
     """Render the subject index as JSON."""
     payload = {
         "count": len(summaries),
+        "now": now or wire_now(),
         "open_questions": sum(s.open_questions for s in summaries),
         "framing": {"source": "peer-agents", "authority": "none", "notice": NOTES_NOTICE},
         "subjects": [s.to_json() for s in summaries],
@@ -636,7 +653,7 @@ def subjects_json(summaries: list[SubjectSummary]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
-def subjects_text(summaries: list[SubjectSummary], hub: str = "") -> str:
+def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "") -> str:
     """Render the subject index for reading.
 
     Counts only, no bodies — but the subject strings themselves are peer-authored,
@@ -664,6 +681,9 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "") -> str:
         lines.append(f"— a read includes what is under it: `cairn notes {nested}` covers everything in {nested}/")
     if any(s.open_questions for s in summaries):
         lines.append("— see only what is unanswered with `cairn notes --open`")
+    # The index prints a `last` date per row and is read to decide what is worth
+    # opening, so it needs the anchor for the same reason a read of one pile does.
+    lines.extend(_clock_notes(now, "the `last` dates above are on the same clock")[1:])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -912,11 +932,23 @@ def peers_text(
     return "\n".join(lines) + "\n"
 
 
-def _clock_notes(now: str) -> list[str]:
-    """Return the anchor every age on the page is measured from, and a skew warning.
+def _clock_notes(now: str, tail: str = "the ages above are measured against it") -> list[str]:
+    """Return the anchor the times on the page are read against, and a skew warning.
+
+    **Where this goes and where it does not.** A reading gets it when it asks the
+    reader to judge *elapsed* time: `peers`, whose ages are arithmetic and whose
+    whole question is whether a peer is still there, and `notes`, which ships
+    `STALENESS_CLAUSE` and then prints a date the reader has nothing to subtract
+    it from. `inbox` and `sent` print times too and do not get it — they ask the
+    reader to act on content rather than to weigh its age, and everything in an
+    inbox is by construction newer than a cursor the reader has just moved. That
+    line is stated rather than felt because "a rule applied to three surfaces out
+    of four is one a reader stops trusting" is `_asked`'s lesson, and this is the
+    second rule in this file with that shape. It is also the weakest part of this
+    change; docs/design.md §12 item 12 names it as the thing to watch.
 
     **A footnote rather than the header, and rather than a stamp on each row.**
-    The rows keep showing the age alone: that decision has its own argument —
+    `peers` keeps showing the age alone: that decision has its own argument —
     absolute-only made two live sessions do the subtraction in their heads and one
     of them nearly handed a job to a dead session — and the question this is
     answering is not "when exactly was that peer last seen" but *"what time is it
@@ -939,15 +971,13 @@ def _clock_notes(now: str) -> list[str]:
     It says which way round and it does not say which machine is wrong. cairn has
     no standing to know that: I3, with a clock attached.
     """
-    notes = ["", f"— hub clock {now}; the ages above are measured against it"]
-    if not now:
-        notes = ["", f"— this machine's clock {wire_now()}; the ages above are measured against it"]
+    notes = ["", f"— hub clock {now}; {tail}" if now else f"— this machine's clock {wire_now()}; {tail}"]
     gap = _clock_gap(now)
     if abs(gap) >= CLOCK_SKEW_SECONDS:
         direction = "ahead of" if gap > 0 else "behind"
         notes.append(
             f"— this machine's clock is {_span(abs(gap))} {direction} the hub's, so anything you work out "
-            f"from your own will not line up with the ages above"
+            f"from your own will not line up with what is above"
         )
     return notes
 

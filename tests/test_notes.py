@@ -887,6 +887,7 @@ def test_notes_json_puts_the_framing_before_the_notes():
     assert list(json.loads(render.notes_json([_entry()], 1))) == [
         "scope",
         "subject",
+        "now",
         "showing",
         "total",
         "open_questions",

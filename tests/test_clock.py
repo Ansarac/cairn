@@ -214,6 +214,57 @@ def test_the_json_carries_the_clock_its_ages_were_measured_against():
     assert render._instant(json.loads(render.peers_json([]))["now"]) is not None, "the key must never be absent"
 
 
+def test_a_pile_of_notes_says_what_its_dates_are_old_relative_to():
+    """`STALENESS_CLAUSE` asks for a judgement and used to withhold half of it.
+
+    Notes are the surface where the gap is months rather than minutes: a reader
+    told that a note "is what one peer believed at the time shown" cannot act on
+    that without knowing what time it is now, and nothing in the reading said.
+    """
+    from cairn.wire import Note, NoteEntry
+
+    entry = NoteEntry(note=Note(id=1, subject="rig-a", author="bench/firmware", body="chamber overshoots ~2C"))
+    lines = render.notes_text([entry], 1, "rig-a", now=now()).rstrip().splitlines()
+
+    anchor = next(i for i, line in enumerate(lines) if line.startswith("— hub clock"))
+    clause = next(i for i, line in enumerate(lines) if render.STALENESS_CLAUSE in line)
+    assert clause < anchor, "the clause asks the question; the anchor is the half it was missing"
+    assert lines[anchor] == lines[-1], "two clocks agree here, so nothing should follow the anchor"
+
+
+def test_the_subject_index_carries_the_clock_its_last_dates_are_read_against():
+    """It is read to decide what is worth opening, and `last` is the deciding column."""
+    from cairn.wire import SubjectSummary
+
+    index = [SubjectSummary(subject="rig-a", notes=3, open_questions=1, last_at="2026-06-01T00:00:00Z")]
+
+    assert "— hub clock 2026-08-02T09:00:00Z" in render.subjects_text(index, now="2026-08-02T09:00:00Z")
+
+
+def test_the_inbox_and_the_sent_log_deliberately_carry_none_of_this():
+    """The line this rule stops at, pinned, because an unstated line is one that drifts.
+
+    Both print times and neither asks the reader to weigh elapsed time: the inbox
+    asks it to act on content, and everything in it is by construction newer than
+    a cursor the reader has just moved. `_asked`'s lesson is that a rule applied to
+    three surfaces out of four is one a reader stops trusting, so where this one
+    stops is a decision rather than an omission — and docs/design.md §12 item 12
+    names it as the weakest part of the change.
+    """
+    from cairn.wire import InboxEntry, Message, SentEntry
+
+    message = Message(seq=1, kind="tell", sender="a", recipient="b", body="x")
+
+    assert "hub clock" not in render.inbox_text([InboxEntry(message=message, provenance=_unverified())], 1)
+    assert "hub clock" not in render.sent_text([SentEntry(message=message)], 1)
+
+
+def _unverified():
+    from cairn.wire import Provenance
+
+    return Provenance.unverified("nothing was checked")
+
+
 def test_peers_over_a_real_socket_reports_the_hub_s_clock(hub, monkeypatch, capsys):
     """End to end, because the anchor is only true if it survived the wire.
 

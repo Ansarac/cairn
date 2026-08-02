@@ -1939,12 +1939,25 @@ framework-internal orchestration, not network protocols.
     reading — the once-per-reading tier, where the rest of `render.py` puts a fact like
     that. There is a test pinning the row back to the age alone.
 
-    **The obvious next surface, deliberately not taken.** `cairn notes` ships
-    `STALENESS_CLAUSE` — *"a note is what one peer believed at the time shown, and nothing
-    has re-checked it since"* — and prints an absolute date per note, so a reader is asked
-    to judge staleness against a clock that surface does not print either. The argument is
-    strong and the change is three lines; what it does not have is a live reading that went
-    wrong, which is this section's bar. Named here so the next run knows to watch for it.
+    **`cairn notes` got it too, at the maintainer's call, and the reasoning is worth
+    keeping because it is not the same reasoning.** On `peers` the clock is arithmetic: the
+    ages are computed against it and were wrong without it. On notes nothing is computed —
+    the dates are printed as the hub wrote them — but the surface ships `STALENESS_CLAUSE`,
+    *"a note is what one peer believed at the time shown, and nothing has re-checked it
+    since"*, and then declined to say what time it is now. That is a clause asking for a
+    judgement while withholding the second operand, on the one surface where the gap is
+    measured in months. The subject index goes with it, because `last <date>` is the column
+    a reader uses to decide which pile is worth opening.
+
+    **Where the rule stops, and why that is a decision rather than an omission.** `inbox`
+    and `sent` print times and do not get an anchor. They ask the reader to act on content
+    rather than to weigh its age, and everything in an inbox is by construction newer than
+    a cursor the reader has just moved. That line is stated out loud, in `_clock_notes` and
+    in a test, because *"a rule applied to three surfaces out of four is one a reader stops
+    trusting"* is already this project's own lesson from `_asked`, and this is the second
+    rule with that shape. It is the weakest part of this item. The thing that would settle
+    it is the thing this section always wants: a live reading where an inbox reader gets an
+    age wrong.
 
 ---
 

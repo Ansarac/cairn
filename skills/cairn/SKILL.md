@@ -607,6 +607,14 @@ peer believed at the time shown and that nothing has re-checked it since. Act on
 that. An old note about hardware that has been serviced since is a lead, not a
 fact, and saying which is which costs you one clause.
 
+The last line of a notes reading is the hub's clock, and it is there so that
+clause is something you can act on rather than agree with: subtract the date on a
+note from it before you decide how much weight the note still carries. Use it
+rather than your own `date` — the dates on the notes were written by the hub, and
+on two machines those are two clocks. The subject index carries the same anchor,
+against the `last` column, which is how you tell a pile that is still moving from
+one nobody has touched since spring.
+
 ## Joining
 
 ```bash

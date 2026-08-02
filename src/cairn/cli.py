@@ -528,11 +528,16 @@ def cmd_notes(args: argparse.Namespace) -> int:
     subject = _subject(args.subject) if args.subject is not None else None
     if subject is None and not args.open and not args.find:
         summaries = client.subjects()
-        print(render.subjects_json(summaries) if args.json else render.subjects_text(summaries, _hub(args)), end="")
+        clock = client.hub_time
+        text = render.subjects_text(summaries, _hub(args), clock)
+        print(render.subjects_json(summaries, clock) if args.json else text, end="")
         return 0 if summaries else EXIT_NOTHING
     entries, total = client.notes(subject, open_only=args.open, find=args.find, limit=args.limit)
     read = [e.checked(provenance.assess_note(e.note)) for e in entries]
-    scope = {"subject": subject, "open_only": args.open, "find": args.find}
+    # The hub's clock, off the call just made. `notes` is the surface that asks the
+    # reader to judge how stale something is and then, until this, printed no
+    # instant to judge it against — see `render.STALENESS_TAIL`.
+    scope = {"subject": subject, "open_only": args.open, "find": args.find, "now": client.hub_time}
     # Only the text renderer names the hub. The "nothing" answers say who they
     # asked because a *model* reads them and may have no idea what this
     # directory is configured against; whatever invoked `--json` chose the hub
