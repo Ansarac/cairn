@@ -98,10 +98,14 @@ Once per machine:
 
 ```bash
 uv tool install git+https://github.com/Ansarac/cairn
-cairn config --init                    # writes the config file, then edit the hub URL
-cairn install-skill                    # the skill, where the agent will find it
-cairn install-hooks                    # the turn-boundary bell
+cairn --hub http://hub-host:7777 config --init   # writes the hub into the config file
+cairn install-skill                              # the skill, where the agent finds it
+cairn install-hooks                              # the turn-boundary bell
 ```
+
+`config --init` records whatever hub the ordinary precedence resolves to at that
+moment, which is why the flag goes on that first command rather than into an
+editor afterwards. `cairn config` prints back what it decided.
 
 `CAIRN_HUB` in the environment overrides the config file, and `--hub` overrides
 both. Any of the three works; pick one and be consistent, because a session that
