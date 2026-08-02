@@ -74,6 +74,17 @@ Run one hub, anywhere the other machines can reach:
 cairn hub --host 0.0.0.0 --port 7777
 ```
 
+or as a container, on a database that outlives it:
+
+```bash
+docker compose up -d
+```
+
+Either way it is one process over one SQLite file. **cairn does not
+authenticate**, so anyone who can route to the hub can register any name and
+take delivery of its mail — [docs/deployment.md](docs/deployment.md) has what
+that means, the two-machine bring-up, and how to move the database.
+
 Then, in each agent's working directory:
 
 ```bash

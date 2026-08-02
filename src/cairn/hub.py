@@ -15,6 +15,7 @@ where every package is one more thing that can break before a test run.
 from __future__ import annotations
 
 import contextlib
+import signal
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
@@ -296,6 +297,29 @@ def make_server(
     return server
 
 
+def stop_on_terminate(server: ThreadingHTTPServer) -> None:
+    """Make a terminate signal shut the hub down instead of killing it.
+
+    A hub that is not in a terminal is stopped by SIGTERM — `docker stop`,
+    `systemctl stop`, a supervisor. Its default action ends the process where it
+    stands, which is past `close_all()` and past `server_close()`: every open
+    bell stream is dropped with no close frame, and the exit code is 143 rather
+    than 0. SQLite's WAL survives that; nothing else about it is tidy. SIGINT
+    needs no handler because it already arrives as `KeyboardInterrupt`.
+
+    **`shutdown()` runs on a thread of its own, and that is not decoration.** It
+    blocks until `serve_forever` has returned, and a handler runs on the thread
+    that was interrupted — the same one sitting inside `serve_forever`. Calling
+    it directly deadlocks the process it is trying to stop.
+
+    Signals may only be installed from the main thread. Off it — a test, or an
+    embedder — this does nothing rather than raising, because a hub that runs is
+    worth more than a hub that exits neatly.
+    """
+    with contextlib.suppress(ValueError):
+        signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
+
+
 def serve(store: Store, host: str = "127.0.0.1", port: int = 7777) -> None:
     """Run a hub in the foreground until interrupted."""
     server = make_server(store, host, port)
@@ -305,6 +329,7 @@ def serve(store: Store, host: str = "127.0.0.1", port: int = 7777) -> None:
     # nohup or a pipe it would otherwise sit in the buffer until the process
     # exits, and be lost outright if the process is signalled.
     print(f"cairn hub on http://{bound_host}:{bound_port}", flush=True)
+    stop_on_terminate(server)
     with contextlib.suppress(KeyboardInterrupt):
         server.serve_forever()
     server.notifier.close_all()  # type: ignore[attr-defined] - unblock every open stream, or we never exit

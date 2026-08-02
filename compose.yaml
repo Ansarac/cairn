@@ -1,0 +1,48 @@
+# One service, because there is one. The hub is a single process over a single
+# SQLite file; anything here that looks like infrastructure is either the
+# database outliving the container or the port being a deliberate choice.
+name: cairn
+
+services:
+  hub:
+    build: .
+    image: cairn-hub:local
+    restart: unless-stopped
+
+    # A hub only one machine can reach is not a hub, so this publishes on every
+    # interface by default. That is a real decision, not a default worth
+    # inheriting silently: cairn does not authenticate, so anyone who can route
+    # here can register any name and take delivery of its mail. Pin it to one
+    # interface when the network is wider than the people you trust:
+    #
+    #     CAIRN_BIND=10.0.0.5 docker compose up -d
+    #
+    # docs/deployment.md has what is at stake; docs/design.md §11 item 3 has the
+    # measurement behind it.
+    ports:
+      - "${CAIRN_BIND:-0.0.0.0}:${CAIRN_PORT:-7777}:7777"
+
+    # The database is the only thing here worth keeping, and it is deliberately
+    # not a bind mount by default: a named volume inherits the image's ownership
+    # on first use, where a host directory would need its uid matched by hand.
+    # docs/deployment.md has how to get the file out, and how to bind-mount
+    # instead if you would rather scp it directly.
+    volumes:
+      - cairn-data:/var/lib/cairn
+
+    # python rather than curl: the image has no curl, and adding one to ask a
+    # stdlib HTTP server whether it is awake would be the only dependency in the
+    # whole project.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:7777/v1/health", timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  cairn-data:
