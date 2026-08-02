@@ -209,13 +209,18 @@ def cmd_peers(args: argparse.Namespace) -> int:
     not to have. I3: this narrows a list, it does not certify anyone.
     """
     hub = _hub(args)
-    everyone = HubClient(hub).peers(exclude=config.current_identity())
+    client = HubClient(hub)
+    everyone = client.peers(exclude=config.current_identity())
     agents = everyone
     if args.capability:
         wanted = set(args.capability)
         agents = [a for a in everyone if wanted <= set(a.capabilities)]
-    text = render.peers_text(agents, hub, wanted=args.capability, registered=len(everyone))
-    print(render.peers_json(agents) if args.json else text, end="")
+    # The hub's clock, read off the call that was already made rather than
+    # fetched. Every age below it was stamped by that clock, so it is the one
+    # this page's arithmetic has to be done on — see `render._ago`.
+    now = client.hub_time
+    text = render.peers_text(agents, hub, wanted=args.capability, registered=len(everyone), now=now)
+    print(render.peers_json(agents, now) if args.json else text, end="")
     return 0 if agents else EXIT_NOTHING
 
 

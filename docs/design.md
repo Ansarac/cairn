@@ -1719,7 +1719,8 @@ framework-internal orchestration, not network protocols.
    - **No clock anywhere in the output.** `peers` prints relative ages computed against a
      clock the reader cannot see, and nothing prints the hub's own time. The session could
      not answer "is the overnight window still open" — the most decision-relevant fact in
-     a shift handover — and had to hedge it.
+     a shift handover — and had to hedge it. **Built as item 12**, which also found the
+     defect underneath it.
    - **No offset, no `--since`, no filter on `inbox`.** The only control is a limit from
      the oldest end. So it fetched the same 50 rows three times, and used `tail -c` as the
      offset the tool does not have — which cut one record in half and cost a fourth round
@@ -1896,6 +1897,54 @@ framework-internal orchestration, not network protocols.
     this item; here it is again on the other end of the record, and this time the read had
     already consumed what it cut. cairn cannot stop a pipe, so this went to `SKILL.md` at
     the point of use rather than into the tool.
+12. **A clock in the output.** **Done.** The hub's own time rides the envelope of every
+    response, `cairn peers` prints it as the anchor its ages are measured from, and says
+    so when the two machines disagree by more than a minute.
+
+    **The recorded need was an anchor. Looking for where to put it turned up a defect.**
+    `last_seen` is stamped by the **hub** — it is `store._touch`'s `now()` — and `_ago`
+    subtracted it from the **reader's** `datetime.now(UTC)`. On one machine those are the
+    same clock and the arithmetic is exact, which is why eight cuts of single-host testing
+    never showed it. Two machines is the premise of the entire tool, so in the deployment
+    this is built for they are two clocks, and their difference landed in every age with
+    nothing anywhere reporting it: a peer last heard from a minute ago reads as "4m ago" to
+    a reader running fast, and — the dangerous direction — a session that died an hour back
+    reads as "just now" to a reader running slow, which is precisely the wrong answer to
+    the question `_ago` was added to answer. Ages are now computed on the hub's clock, so
+    the reader's clock is out of the arithmetic entirely.
+
+    **On the envelope, not on a route.** `wire.envelope` already wraps every payload with
+    `v`; adding `t` beside it puts the hub's clock on every response at no extra round
+    trip, and `HubClient` records it on the way past so no command has to ask. A route-level
+    key would have meant either a second call on `cairn peers` or a new field on each of
+    six responses. Additive, so `PROTOCOL_VERSION` does not move — `check_version` reads
+    `v`, and every `from_json` here has always ignored keys it does not know, which is what
+    `v` itself relies on.
+
+    Two consequences worth stating rather than discovering. A client's own POSTs carry `t`
+    as well, because this is one function and two envelopes to save four bytes is a shape
+    somebody has to remember; **the hub does not read it**, and must not — a timestamp from
+    a peer is an assertion about that peer, on the same rule that keeps `verified` off
+    `Message`. And a hub that sends no `t` is an older hub, not a synchronised one: the age
+    falls back to the local clock, which is exactly the behaviour that shipped for eight
+    cuts and is the best thing available when there is nothing to compare against.
+
+    **The anchor is a footnote, and the rows were left alone.** Both placements were tried
+    and both were wrong. In the header it lengthens the one line whose job is the counting
+    ("1 of 3 other agents claiming gpu") — four tests assert that line exactly, and their
+    failing for an unrelated reason was the signal. Beside each age it undoes a decision
+    that has its own argument: absolute-only is what made two live sessions do the
+    subtraction in their heads, and one of them nearly handed a job to a session that had
+    ended. The question actually recorded is *"what time is it now"*, which is one fact per
+    reading — the once-per-reading tier, where the rest of `render.py` puts a fact like
+    that. There is a test pinning the row back to the age alone.
+
+    **The obvious next surface, deliberately not taken.** `cairn notes` ships
+    `STALENESS_CLAUSE` — *"a note is what one peer believed at the time shown, and nothing
+    has re-checked it since"* — and prints an absolute date per note, so a reader is asked
+    to judge staleness against a clock that surface does not print either. The argument is
+    strong and the change is three lines; what it does not have is a live reading that went
+    wrong, which is this section's bar. Named here so the next run knows to watch for it.
 
 ---
 

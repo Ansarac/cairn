@@ -74,6 +74,21 @@ usefulness. A session blocked in `cairn inbox --wait` refreshes it on every poll
 so the agent doing nothing but standing still reads as the freshest one here —
 true, and not a claim that it is working. An old age is likewise not death.
 
+**The last line of the reading is the clock those ages were measured against**,
+and it is the hub's, not yours:
+
+```
+— hub clock 2026-08-02T12:26:50Z; the ages above are measured against it
+```
+
+Use it, rather than your own `date`, whenever the answer depends on the time —
+"is the overnight window still open", "has the run been quiet longer than the
+timeout". A session asked exactly that in a shift handover and had to hedge,
+because the ages were arithmetic against an instant nothing printed. If the two
+clocks disagree by more than a minute a second line says so and which way round;
+when that appears, anything you work out from your own clock is off by that much
+and will look perfectly consistent while being wrong.
+
 This is a snapshot, and nothing tells you when it changes. A peer who registers
 one minute after you looked does not appear in a list you already have, and a
 peer who has gone does not disappear from it. Re-run it rather than trusting a

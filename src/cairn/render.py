@@ -60,6 +60,8 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from cairn.wire import now as wire_now
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -738,8 +740,59 @@ _HOUR = 3600
 _DAY = 86_400
 
 
-def _ago(stamp: str) -> str:
+CLOCK_SKEW_SECONDS = 60
+"""How far apart two clocks may be before the ages on a page are worth doubting.
+
+A minute, because that is the resolution the ages are printed at: under it the
+skew cannot change a single character of the output, and over it "just now" and
+"3m ago" start swapping places. Ordinary NTP drift is nowhere near this, so a
+reading that trips it is saying something real about one of the two machines.
+"""
+
+
+def _instant(text: str) -> datetime | None:
+    """Parse an RFC 3339 instant, or return None rather than raising.
+
+    `None` for a naive stamp as well as an unparseable one, because a naive
+    `2026-08-01T00:00:00` *parses* and then raises on the subtraction — a
+    `TypeError` several frames from here, which `cli.run` deliberately does not
+    catch, so it is a traceback and exit 1 out of `cairn peers`. Everything this
+    file subtracts arrives from a hub, and one of the two operands is now a hub
+    field that nothing validates, so the check has to be here rather than upstream.
+    """
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _clock_gap(hub_time: str, local: datetime | None = None) -> int:
+    """Return how many seconds this machine's clock is ahead of the hub's, or 0.
+
+    Zero when the hub sent no time, which means an old hub rather than a
+    synchronised one — and the difference does not matter, because with nothing
+    to compare against every age falls back to the local clock exactly as it
+    always did.
+    """
+    against = _instant(hub_time)
+    return 0 if against is None else int(((local or datetime.now(UTC)) - against).total_seconds())
+
+
+def _ago(stamp: str, now: str = "") -> str:
     """Render an RFC 3339 instant as how long ago it was.
+
+    **`now` is the hub's clock, and passing it is a correctness fix rather than a
+    parameter.** Every stamp this is handed was written by the hub — `last_seen`
+    is `store._touch`'s `now()` — and this used to subtract it from the *reader's*
+    `datetime.now(UTC)`. On one machine those agree by construction. On two, which
+    is the entire premise of the tool, they are two clocks, and their difference
+    landed in every age with nothing anywhere reporting it: a peer last heard from
+    a minute ago reads as "4m ago" on a reader whose clock runs fast, and a reader
+    whose clock runs slow is told a dead session was seen "just now". Measuring
+    hub-stamped instants on the hub's own clock removes the second clock from the
+    arithmetic entirely. Empty `now` keeps the old behaviour, which is what an
+    older hub gets and what it deserves — there is nothing better available.
 
     `peers` used to print `last_seen` as an absolute UTC timestamp, which asks
     the reader to hold the current time in their head and subtract. Two live
@@ -764,14 +817,17 @@ def _ago(stamp: str) -> str:
     is not reachable over the wire; that is the third time in this cut the only
     defence has been upstream, and this one costs a word.
     """
-    try:
-        seen = datetime.fromisoformat(stamp)
-        seconds = int((datetime.now(UTC) - seen).total_seconds())
-    except (ValueError, TypeError):
+    seen = _instant(stamp)
+    if seen is None:
         # Handed back folded, not raw. This is the branch where an unparseable
         # wire string reaches the output verbatim, so it is exactly the one that
         # could carry a newline into a `peers` line — see `oneline`.
         return oneline(stamp)
+    # A hub clock this cannot read costs the *anchor*, never the age. Falling
+    # through to `return oneline(stamp)` here would let one bad field in the
+    # envelope turn every age on the page back into a raw timestamp.
+    against = _instant(now) or datetime.now(UTC)
+    seconds = int((against - seen).total_seconds())
     if seconds < _MINUTE:
         return "just now"
     if seconds < _HOUR:
@@ -781,14 +837,36 @@ def _ago(stamp: str) -> str:
     return f"{seconds // _DAY}d ago"
 
 
-def peers_json(agents: list[Agent]) -> str:
-    """Render the peer list as JSON."""
-    payload = {"count": len(agents), "agents": [a.to_json() for a in agents]}
+def peers_json(agents: list[Agent], now: str = "") -> str:
+    """Render the peer list as JSON.
+
+    `now` is the clock the ages were measured against, and a program recomputing
+    an age from `last_seen` has to use it rather than its own — that is the whole
+    of the defect `_ago` documents, and `--json` is where it would be repeated by
+    a caller doing the arithmetic itself.
+    """
+    payload = {"count": len(agents), "now": now or wire_now(), "agents": [a.to_json() for a in agents]}
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
-def peers_text(agents: list[Agent], hub: str = "", *, wanted: Sequence[str] = (), registered: int | None = None) -> str:
+def peers_text(
+    agents: list[Agent],
+    hub: str = "",
+    *,
+    wanted: Sequence[str] = (),
+    registered: int | None = None,
+    now: str = "",
+) -> str:
     """Render the peer list for reading.
+
+    **It names the clock, and that is what a shift handover was missing.** Ages
+    here are arithmetic against an instant the reader could not see, so a live
+    session asked to say whether the overnight window was still open could not
+    answer it and hedged — the single most decision-relevant fact in a handover,
+    and the output had every ingredient except the anchor. The header now carries
+    the instant, the rows carry the absolute stamp beside the age, and which
+    clock produced the anchor is said out loud, because on a two-machine tool
+    that is not a detail.
 
     An empty list names the hub it asked, which the populated one does not need
     to. "Nobody is out there" and "you are pointed at the wrong hub" are the two
@@ -829,5 +907,57 @@ def peers_text(agents: list[Agent], hub: str = "", *, wanted: Sequence[str] = ()
     for agent in agents:
         capabilities = oneline(", ".join(agent.capabilities)) or "—"
         lines.append(f"  {oneline(agent.name):<{width}}  {oneline(agent.machine):<16} {capabilities}")
-        lines.append(f"  {'':<{width}}  {oneline(agent.cwd)}  (seen {_ago(agent.last_seen)})")
+        lines.append(f"  {'':<{width}}  {oneline(agent.cwd)}  (seen {_ago(agent.last_seen, now)})")
+    lines.extend(_clock_notes(now))
     return "\n".join(lines) + "\n"
+
+
+def _clock_notes(now: str) -> list[str]:
+    """Return the anchor every age on the page is measured from, and a skew warning.
+
+    **A footnote rather than the header, and rather than a stamp on each row.**
+    The rows keep showing the age alone: that decision has its own argument —
+    absolute-only made two live sessions do the subtraction in their heads and one
+    of them nearly handed a job to a dead session — and the question this is
+    answering is not "when exactly was that peer last seen" but *"what time is it
+    now"*, which is one fact for the whole reading. It is the once-per-reading
+    tier, and that is where the rest of this file puts a fact like that.
+
+    **The anchor is named, not just printed.** "hub clock" and "this machine's
+    clock" are the same string on one machine and two different ones on two, and
+    a reader comparing this against its own `date` has to know which it is looking
+    at before concluding anything from a difference. Only an older hub, which
+    sends no time of its own, produces the second spelling.
+
+    The skew line is silent below `CLOCK_SKEW_SECONDS`, on the rule the rest of
+    this file follows: a line that is always there is a line nobody reads. Above
+    it, it is worth interrupting for — every age here was computed on the hub's
+    clock, so anything the reader works out from its own (a shift boundary, an
+    overnight window, a wait it is about to sit through) is off by that much and
+    will look perfectly self-consistent while being wrong.
+
+    It says which way round and it does not say which machine is wrong. cairn has
+    no standing to know that: I3, with a clock attached.
+    """
+    notes = ["", f"— hub clock {now}; the ages above are measured against it"]
+    if not now:
+        notes = ["", f"— this machine's clock {wire_now()}; the ages above are measured against it"]
+    gap = _clock_gap(now)
+    if abs(gap) >= CLOCK_SKEW_SECONDS:
+        direction = "ahead of" if gap > 0 else "behind"
+        notes.append(
+            f"— this machine's clock is {_span(abs(gap))} {direction} the hub's, so anything you work out "
+            f"from your own will not line up with the ages above"
+        )
+    return notes
+
+
+def _span(seconds: int) -> str:
+    """Render a duration the same way `_ago` renders an age, minus the "ago"."""
+    if seconds < _MINUTE:
+        return f"{seconds}s"
+    if seconds < _HOUR:
+        return f"{seconds // _MINUTE}m"
+    if seconds < _DAY:
+        return f"{seconds // _HOUR}h"
+    return f"{seconds // _DAY}d"

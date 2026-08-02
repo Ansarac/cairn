@@ -660,8 +660,28 @@ class Registration:
 
 
 def envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Wrap a payload with the protocol version."""
-    return {"v": PROTOCOL_VERSION, **payload}
+    """Wrap a payload with the protocol version and the sender's clock.
+
+    **`t` is here rather than on any one route because the alternative is a
+    round trip.** Every relative time cairn prints — `peers` ages, and anything
+    a reader computes from a `created_at` — is arithmetic against a clock, and
+    until this existed that clock was always the *reader's*, subtracting a
+    hub-stamped instant from a local `now`. Two machines is the premise of the
+    whole tool, so those are two clocks, and the difference between them landed
+    silently in every age. Riding the envelope, the hub's clock is on the
+    response the caller already made, on every route, at no cost.
+
+    A client's own POSTs carry it too, because this is one function and giving
+    the two directions different envelopes to save four bytes would be a shape
+    somebody has to remember. **The hub does not read it**, and must not: a
+    timestamp from a peer is an assertion about that peer, and the hub stamps
+    its own rows with `now()` for the same reason `Message` has no `verified`.
+
+    Additive, so `PROTOCOL_VERSION` does not move: `check_version` reads `v` and
+    every `from_json` here ignores keys it does not know — which `v` itself has
+    always relied on.
+    """
+    return {"v": PROTOCOL_VERSION, "t": now(), **payload}
 
 
 def check_version(obj: dict[str, Any]) -> None:

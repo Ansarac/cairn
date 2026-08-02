@@ -60,6 +60,16 @@ class HubClient:
         """Point this client at `base_url`, giving up after `timeout` seconds."""
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.hub_time = ""
+        """The hub's own clock, as of the last call this client made.
+
+        Empty until a call has been made, and empty for good against a hub built
+        before the envelope carried one — which is what `render._ago` treats as
+        "fall back to this machine's clock", the behaviour that shipped for eight
+        cuts. It is recorded here rather than returned because every route
+        carries it and no caller wants a timestamp bolted onto the answer it
+        actually asked for. See `wire.envelope`.
+        """
 
     # -- plumbing -------------------------------------------------------------
 
@@ -74,7 +84,13 @@ class HubClient:
             request.add_header("Content-Type", "application/json")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
-                return loads(response.read())
+                answer = loads(response.read())
+                # Recorded on the way past, on every route, so that no command has
+                # to spend a second round trip learning what time the hub thinks
+                # it is. Only overwritten when the hub actually sent one: an old
+                # hub must leave the previous answer alone rather than blanking it.
+                self.hub_time = str(answer.get("t") or self.hub_time)
+                return answer
         except urllib.error.HTTPError as exc:
             detail = _error_detail(exc.read())
             if exc.code == HTTP_BAD_REQUEST:

@@ -171,6 +171,16 @@ until you look again. Every empty answer names the hub it asked —
 "wrong hub" are otherwise the same output, and a live session checked five times
 before cross-reading `cairn config`.
 
+The reading ends with the clock those ages were measured against, and it is the
+**hub's**. That matters twice. A reader had no anchor at all before — one session
+asked whether an overnight window was still open and had to hedge, because the
+ages were arithmetic against an instant nothing printed. And `last_seen` is
+stamped by the hub while the subtraction used to happen on the reader's clock, so
+on two machines the difference between them landed silently in every age: a
+session that died an hour ago reads as "just now" to a reader whose clock runs
+slow. The hub's time now rides every response, the ages are computed on it, and a
+disagreement over a minute gets a line of its own.
+
 ### What you already said
 
 `cairn inbox` shows only what arrived. `cairn sent` is the other half: what this

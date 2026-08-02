@@ -218,6 +218,7 @@ silently serve you stale code, and each has cost a session real time:
 - **A running hub ignores `store.py` and `hub.py` edits.** Restart it.
 - `pkill -f "cairn hub --port 7801"` **kills the shell issuing it**, because the
   pattern matches its own command line.
+  Break the pattern so it cannot match your own command line: `pgrep -af "port 777[8]"`.
 
 ```bash
 just check      # lint + format check + the vendor guard + pytest — the whole CI gate
