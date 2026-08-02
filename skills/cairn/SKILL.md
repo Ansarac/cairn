@@ -198,6 +198,7 @@ cairn inbox              # read, and mark read
 cairn inbox --wait       # if it is empty, block up to 60s for something to arrive
 cairn inbox --wait 90    # or say how long
 cairn inbox --no-ack     # read without marking read
+cairn inbox --since 41   # only what arrived after seq 41; marks nothing read
 cairn inbox --json       # for parsing
 ```
 
@@ -207,6 +208,16 @@ before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are
 actually done with it. `--wait` behaves exactly the same, with or without
 `--no-ack`.
 
+**Never pipe a plain `cairn inbox` through `head`.** The hub marks read what it
+*printed*; `head` decides what you *see*, and the two are not the same set. The
+inbox is oldest-first, so `head` cuts the newest — which on a busy mailbox is the
+correction, the retraction, the thing that supersedes the rest. Two independent
+sessions did this on the first command of a shift; one of them was three lines of
+output away from reading "use board 4471" as the last word and never seeing "4471
+is withdrawn". Nothing in the numbering warns you, because the part that would
+have warned you is the part that was cut. Use `--limit N`, which cuts at a record
+boundary and says so, or `--since` if you do not want it consumed at all.
+
 **A read can be a page rather than the whole mailbox, and it says so.** The
 header counts everything waiting for you; a line under it — `showing the oldest 3
 of 41` — appears whenever `--limit` cut the page short. It is the *oldest* end,
@@ -214,6 +225,27 @@ because this is a queue and you work through it from the front, so the recent
 traffic is what a truncated read leaves out. Only what was printed gets marked
 read, so running it again picks up where it stopped. Raise `--limit` if you would
 rather have it in one go.
+
+**To walk a long backlog without draining it, use `--since` rather than a bigger
+`--limit`.** Raising the limit re-fetches from the oldest end every time, so page
+two contains all of page one; `--since <the last seq you were shown>` starts after
+it. Every entry prints its seq, so the number you need is already on screen.
+
+```bash
+cairn inbox --limit 20              # seq 1..20
+cairn inbox --since 20 --limit 20   # seq 21..40, nothing shown twice
+cairn ack 40                        # ...and now mark the lot read, once you have dealt with it
+```
+
+A windowed read **marks nothing read**, and does not need `--no-ack` to say so.
+It cannot: everything below the window was not shown to you, and marking read what
+you were not shown is how mail disappears. So `--since` is a way of looking through
+the queue, and `cairn ack <seq>` is how you finish. It also cannot be combined with
+`--wait` — see the section below on why waiting never filters by sequence number.
+
+If you pass a seq your cursor has already passed, the read starts at the cursor
+instead and tells you so. That is not a failure: mail below your cursor is mail you
+have already read, and `cairn ack <seq> --rewind` is the one door back to it.
 
 `--wait` is not a different way of reading. It is what `cairn inbox` does *after*
 it finds nothing: the ordinary read happens first, so if the answer is already

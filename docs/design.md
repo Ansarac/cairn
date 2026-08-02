@@ -1724,12 +1724,22 @@ framework-internal orchestration, not network protocols.
      the oldest end. So it fetched the same 50 rows three times, and used `tail -c` as the
      offset the tool does not have — which cut one record in half and cost a fourth round
      trip to recover. That is a live exchange producing the need, which is this section's
-     bar, and it is the strongest candidate here.
+     bar, and it is the strongest candidate here. **Built as item 11**; the offset half of
+     it, not the filter half, and item 11 says why the two came apart.
    - **No supersession.** *"4471 is the build to use"* and *"4471 is withdrawn, do not
      flash it"* are stored as two unrelated claims four hours apart; nothing links them and
      nothing marks the first stale. Notes have `-q` and `settle`; messages have nothing.
      In its words: *"when the correction lands thirty messages after the instruction,
      that's a safety gap, not a UX gap."*
+
+     **Corroborated twice more, unprompted, by item 11's acceptance run**, which staged
+     the same pair as the last two of forty and asked only for a shift summary. Both
+     sessions found it and both named the same missing thing: *"nothing machine-readable
+     links them — the connection exists only in the English word 'correction:' and in my
+     reading both. They happened to be adjacent. Thirty messages apart, in a pile this
+     uniform, I could easily have carried the stale one forward."* Neither was asked about
+     supersession; both raised it. That is now three independent sessions, and it is the
+     strongest remaining candidate on this list.
 8. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred three
    times now, out of cut 5, cut 6 and cut 7. Item 5 records the evidence and what would
    trigger it: a live exchange where two agents **could not** negotiate. Every run so far
@@ -1767,6 +1777,125 @@ framework-internal orchestration, not network protocols.
     a session is the nudger again, with a third party added to the path and worse latency.
     If cairn ever grows this, it emits and stops; what picks it up is not cairn's, and
     cairn should not ship it.
+11. **A way through a backlog that is not "raise the limit".** **Done.**
+    `cairn inbox --since SEQ` shows only mail after that seq, marks nothing read, and
+    refuses to be combined with `--wait`.
+
+    **The evidence is item 7's tail and it is unusually clean.** A live session with a
+    backlog larger than one page had `--limit` as its only control. Raising it re-fetches
+    from the oldest end, so the session held the same fifty rows three times, then reached
+    for `tail -c` as the offset the tool did not have — which cut one record in half and
+    cost a fourth round trip to recover. A workaround that *fails at the thing it was
+    reaching for* is this section's trigger, and byte-slicing a record boundary is that
+    failure in its most literal form.
+
+    **A seq, not a row offset.** `--offset 50` is the shape most tools have and it is
+    wrong here for two independent reasons. A row offset is unstable under exactly the
+    condition this feature exists for — mail arriving and a cursor moving between two
+    reads renumber every row, so page two of a moving queue is not the rows after page
+    one. And cairn already prints a stable identifier on every line and already has a
+    command that takes one: `cairn ack <seq>`. The offset a reader needs is the last seq
+    it was shown, which is on screen, in the output it just read. Nothing had to be
+    invented; the number was already there and only the flag was missing.
+
+    **The window narrows the unread set. It does not replace the cursor**, and that is
+    the decision most worth recording, because the other reading is free and tempting.
+    `seq > since` with the cursor ignored would make `--since` a history browser as well
+    as an offset — "what did that peer tell me an hour ago" — for no extra code, and it
+    would be safe as far as the cursor is concerned, since a windowed read acknowledges
+    nothing. What it would not be safe from is the reader. A page mixing consumed and
+    unconsumed mail with nothing marking which is which hands a model an instruction it
+    has already carried out, in the same frame as one it has not, and the thing a session
+    does with an instruction it has already acted on is act on it again. Marking each row
+    would fix that and would cost a per-row mark on the surface whose whole discipline is
+    that only attribution and the provenance verdict ride every line. So the floor is
+    `max(cursor, since)`: every row a window returns is unread mail the reader would have
+    been handed anyway, just later.
+
+    That leaves one silent case, and it is closed rather than accepted: a `--since` behind
+    the cursor is inert, and the page says so, naming the cursor and pointing at
+    `cairn ack <seq> --rewind`. The path to it is not hypothetical — a takeover prints a
+    seq to resume from, and `cairn inbox --since <that seq>` is what a reader tries before
+    it gets to the sentence about `--rewind`.
+
+    **A windowed read acknowledges nothing.** The ack is `max(seq)` of what was printed;
+    under a window everything between the cursor and the floor was not printed, so acking
+    would step the cursor over mail nobody was shown. That is the failure item 6's fix
+    was careful not to introduce — a truncated read eating its own remainder — arriving
+    from the other end. The flag therefore reads without consuming, and the page says so
+    once, because "I read it" and "the hub thinks I read it" have stopped meaning the same
+    thing and only the reader can close the gap.
+
+    **`--since` and `--wait` are refused together, and the reason was already written
+    down.** A wait floored at a seq is "watch for anything after my ask", which item 3
+    rules out by name as the plausible one — the one most likely to be written because it
+    reads as obviously correct. The exchange that killed it is the same one: a peer
+    answering an *earlier* `tell`, so the answer that settled the question carried the
+    **lower** seq. A floored wait blocks straight through that answer, for the whole
+    deadline, while mail sits unread below the floor. The two flags are individually sound
+    and their combination reconstructs a thing this project has already measured and
+    rejected, which is worth a refusal rather than a paragraph.
+
+    **The cross-version case is the first one this project refuses rather than degrades,
+    and the asymmetry is the point.** When `unread` and `head` were added, an older hub's
+    silence about them was allowed to fall back to what the page could say: it withholds
+    two numbers, the caller can live without them, and refusing to talk over a number
+    neither end needs to agree on would be worse. A hub that does not understand `?since=`
+    withholds nothing — it answers the *unwindowed* question in the windowed question's
+    shape, and the client would print the oldest page of the whole backlog as the part the
+    reader had not seen. Silently showing mail from the wrong end of a queue is not a
+    degradation, so the hub echoes the window it applied and the client stops when the
+    echo does not come back. Checked on the echo rather than on the returned seqs, which
+    also detects it but only when the mailbox happens to hold a row old enough to give the
+    game away — a skew that appears with the data and vanishes with it is worse than one
+    that is deterministic on the first call.
+
+    `PROTOCOL_VERSION` is not bumped. Three keys are added to an existing response and no
+    field changes meaning, which is cut 4's rule applied to a response rather than a route.
+
+    **Two things deliberately not built.** The other half of item 7's second bullet is a
+    **filter** — by sender, by kind — and it has no evidence behind it: the session that
+    produced this one wanted to get *past* what it had read, not to select within it, and
+    §12 item 3 is a standing warning about how badly filters read on this surface. And
+    `cairn sent` did not gain the flag. Its page is the *newest* rows, so raising the limit
+    adds older traffic rather than re-showing the same page, which is a different problem
+    that nobody has hit.
+
+    **The acceptance run found one defect in this, and one that is not about this.** Two
+    independent `claude -p` sessions outside the repository, each handed a forty-message
+    backlog ending in *"4471 is the build to use"* followed by *"correction: 4471 is
+    withdrawn"*, each asked only to summarise the shift, each then interviewed bluntly.
+    Both got the bench answer right. Neither reached for `--since` first, and the reason
+    is the same in both transcripts: the first command of a shift is typed before any help
+    or skill has been read.
+
+    **The defect.** One session, mailbox already drained, ran `cairn inbox --since 0` to
+    find out whether an earlier backlog existed and was its own, got *"no unread
+    messages"*, and wrote into its shift summary that there was no earlier mail. The
+    command could not answer that question — the floor was its own cursor at 80 — and the
+    footnote that says precisely so did not print, because a typed `0` was being read as
+    "no window asked for". `None` is no window; `0` is a window at zero; they select the
+    same rows and they are not the same request, because one of them is a reader asking
+    something. Fixed, with the two spellings kept apart all the way to `--json`, and
+    `--since 0` now declines to acknowledge like every other window — it excludes nothing,
+    so acking would be harmless, and it would make the "nothing was marked read" footnote
+    false on exactly one spelling. A rule with one silent exception is a rule nobody relies
+    on. In its own words afterwards: *"the command was structurally incapable of answering
+    the question I asked it."*
+
+    **The one that is not about this**, recorded because it is the mirror image of the
+    incident that produced the whole item. Both sessions piped a **consuming** read through
+    `head`. The hub marks read what it printed; `head` decides what the reader sees; the
+    inbox is oldest-first, so what `head` cuts is the newest — which in this staging was
+    the withdrawal. One of them measured its own margin afterwards: *"the real output was
+    ~165 lines, so I had maybe 35 lines of headroom — about eight more messages. At 50
+    messages I'd have been silently truncated… the exact thing `head` would have eaten is
+    the 'do not flash it' line, leaving 'use 4471' as the last thing I read, with a
+    clean-looking output and no gap in the numbering to warn me. I got the right answer
+    partly by luck on a line count."* Byte-slicing the output of a read is what produced
+    this item; here it is again on the other end of the record, and this time the read had
+    already consumed what it cut. cairn cannot stop a pipe, so this went to `SKILL.md` at
+    the point of use rather than into the tool.
 
 ---
 

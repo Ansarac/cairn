@@ -147,7 +147,13 @@ class _Handler(BaseHTTPRequestHandler):
         # `unread` and `head` ride alongside `messages`, which an older client
         # simply ignores. They are the whole of this route's change: the page was
         # never the problem, believing it was the backlog was. See wire.InboxPage.
-        self._reply(200, self.store.unread(agent, limit=limit).to_json())
+        #
+        # `since` rides back out again in the response, and that echo is load
+        # bearing rather than symmetry. It is how a client learns whether the hub
+        # it is talking to understood the window at all — an older one ignores the
+        # parameter and answers with the oldest page of the whole backlog, which
+        # is a different question answered in the same shape.
+        self._reply(200, self.store.unread(agent, limit=limit, since=self._int_param(q, "since", 0)).to_json())
 
     def _sent(self) -> None:
         q = self._query()

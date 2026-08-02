@@ -158,7 +158,7 @@ class HubClient:
         with self._readable():
             return Message.from_json(answer["message"])
 
-    def inbox(self, agent: str, limit: int = 50) -> InboxPage:
+    def inbox(self, agent: str, limit: int = 50, since: int = 0) -> InboxPage:
         """Fetch a page of unread mail for `agent`, oldest first, with the true totals.
 
         Returns the page even against a hub that predates the totals: they are
@@ -168,10 +168,34 @@ class HubClient:
         the totals existed — including the bell deafness they were added to fix.
         Degrading to the old behaviour is the honest answer; refusing to talk to
         the hub over it would not be.
+
+        **A window gets the opposite treatment, and the asymmetry is the point.**
+        A hub that does not understand `?since=` does not omit a number; it
+        answers the unwindowed question in the windowed question's shape, and this
+        client would hand the caller the oldest page of the whole backlog as
+        though it were the part they had not read. Silently showing mail from the
+        wrong end of a queue is worse than any error, so the hub's echo of the
+        window it applied is checked, and a mismatch is a refusal — exit 3, "this
+        cannot be carried out as asked", because the hub is up and answering and
+        the only thing wrong is the flag.
+
+        Checked on the echo rather than on the rows, deliberately. `any(m.seq <=
+        since)` also detects it and does so only when the mailbox happens to hold
+        a row old enough to give the game away, which makes an upgrade skew a bug
+        that appears with the data and vanishes with it. This one is deterministic
+        on the first call.
         """
-        payload = self._call("GET", "/v1/inbox", agent=agent, limit=limit)
+        payload = self._call("GET", "/v1/inbox", agent=agent, limit=limit, since=since or None)
         with self._readable():
-            return InboxPage.from_json(payload)
+            page = InboxPage.from_json(payload)
+        if since and page.since != since:
+            msg = (
+                f"this hub does not support --since (it ignored ?since={since}), so it would have shown you "
+                f"the oldest page of the whole backlog instead of the part after seq {since}; "
+                f"upgrade the hub, or read without the flag"
+            )
+            raise UsageError(msg)
+        return page
 
     def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
         """Fetch a page of what `agent` sent, oldest first, and the total it has sent.

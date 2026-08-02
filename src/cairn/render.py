@@ -120,7 +120,30 @@ rejected `cairn pending` for making. Said once per reading, where the reader is.
 """
 
 
-def inbox_json(entries: list[InboxEntry], total: int) -> str:
+def _available(total: int, since: int | None, matching: int | None) -> int:
+    """Return how many rows a read could show if `--limit` alone were raised.
+
+    The backlog when there is no window, the windowed count when there is. Kept
+    in one place because it is the number every "you are not seeing all of it"
+    decision has to be made against, on both renderers — measuring truncation
+    against the backlog under a window blames `--limit` for rows the *window*
+    excluded, and sends the reader to raise a limit that will not bring them back.
+
+    `since` gates it, so the extra arguments cannot distort an unwindowed read
+    even if a caller passes nonsense: without a window there is nothing for a
+    windowed count to mean. `wire.InboxPage.available` is the same rule at the
+    other end of the wire.
+
+    **`None` is "no window", and `0` is a window at zero.** They select the same
+    rows and they are not the same request; see `_behind_cursor` for the live run
+    that made the difference matter.
+    """
+    return total if since is None or matching is None else matching
+
+
+def inbox_json(
+    entries: list[InboxEntry], total: int, *, since: int | None = None, matching: int | None = None, floor: int = 0
+) -> str:
     """Render the inbox as JSON, framing first and always.
 
     `framing` is fixed and machine-readable on purpose: a program branches on
@@ -133,10 +156,20 @@ def inbox_json(entries: list[InboxEntry], total: int) -> str:
     reading `unread` as a page size was reading a number that silently stopped
     growing at `--limit`; there is no wording that makes both readings true, and
     the one worth keeping is the one the word means.
+
+    `matching` and `since` are emitted whether or not a window was asked for, on
+    the same rule as `framing`: a shape that varies with the flags is a shape a
+    parser has to branch on. Without a window `matching` is the backlog, which is
+    the truth rather than a filler — nothing was excluded, and `since` is `null`
+    rather than `0` because "I asked for no window" and "I asked for a window at
+    zero" are different requests that happen to select the same rows.
     """
     payload = {
         "unread": total,
+        "matching": _available(total, since, matching),
         "showing": len(entries),
+        "since": since,
+        "floor": floor,
         "framing": {"source": "peer-agents", "authority": "none", "notice": NOTICE},
         "messages": [e.to_json() for e in entries],
     }
@@ -239,7 +272,60 @@ def _asked(hub: str) -> str:
     return f" (hub {hub})" if hub else ""
 
 
-def inbox_text(entries: list[InboxEntry], total: int, hub: str = "") -> str:
+WINDOW_CLAUSE = (
+    "--since is a look, not a read: nothing was marked read, so all of this is still waiting. "
+    "Consume it with `cairn ack <seq>` when you are done with it"
+)
+"""Said once per windowed reading, because the read it describes did not consume.
+
+A windowed page cannot ack — everything between the cursor and the window is
+unshown, and acking the highest row on the page would step over it silently,
+which is the one way this command has never been able to lose a message. So the
+flag simply does not acknowledge, and the reader is told, because "I read it" and
+"the hub thinks I read it" have quietly stopped meaning the same thing.
+"""
+
+
+def _behind_cursor(since: int | None, floor: int) -> str:
+    """Say that a `--since` the cursor has already overtaken changed nothing.
+
+    The floor of a windowed read is `max(cursor, since)`, so a `--since` below the
+    cursor is inert: the reader asked to start at one place, started at another,
+    and every other number on the page is consistent with what it got. That is a
+    small surprise with a real path to it — after a takeover, `cairn register`
+    prints a seq to resume from, and `cairn inbox --since <that seq>` is the
+    natural thing to try before reading the sentence that says `--rewind`.
+
+    **`since is None` rather than `not since`, and an acceptance run is why.** An
+    independent session with a drained mailbox ran `cairn inbox --since 0` to find
+    out whether an earlier backlog existed and was its own, read the resulting "no
+    unread messages" as "there is no earlier mail", and said so in a shift
+    summary. The command could not have answered that question — the floor was its
+    cursor at 80 — and this note is exactly the sentence that would have said so.
+    It did not print, because a zero was being read as "no window asked for". A
+    reader who types a number has asked something; only an absent flag has not.
+
+    One sentence, framed twice: as a footnote under a page, and as a second line
+    under an empty answer. Two wordings would drift, and the empty answer is
+    exactly where the explanation is most needed and has no page to hang under.
+    """
+    if since is None or since >= floor:
+        return ""
+    return (
+        f"--since {since} is behind your read cursor at {floor}, so the page started at the cursor and "
+        f"nothing below {floor} was shown — `cairn ack {since} --rewind` moves the cursor back if you meant that"
+    )
+
+
+def inbox_text(  # noqa: PLR0913 - the last three are one window, and hiding them in an object would hide it from every caller
+    entries: list[InboxEntry],
+    total: int,
+    hub: str = "",
+    *,
+    since: int | None = None,
+    matching: int | None = None,
+    floor: int = 0,
+) -> str:
     """Render the inbox for reading.
 
     **The header count is the backlog, not the page**, and that is the whole
@@ -248,17 +334,20 @@ def inbox_text(entries: list[InboxEntry], total: int, hub: str = "") -> str:
     "unread", which means the backlog and nothing else. The page is then
     described on its own line by `_truncation`. The two numbers agreeing is the
     ordinary case; when they disagree, each is saying something the other cannot.
+
+    **A window adds a third number and never replaces the first.** With `--since`
+    in force the header says both — what is waiting, and how much of it is past
+    the window — because a reader who is handed only the second one has been told
+    a smaller mailbox exists than does. Truncation is measured against the third;
+    see `_available`.
     """
-    if total > len(entries) and not entries:
-        # Only reachable by handing this a page of zero, which `cli` now refuses.
-        # Left honest anyway: an empty page over a non-empty backlog previously
-        # rendered as "no unread messages", which is the one answer a reader acts
-        # on without checking. See the `--limit 0` row in the appendix.
-        return f"cairn inbox: {total} unread, none of them shown — --limit asked for a page of nothing{_asked(hub)}.\n"
+    available = _available(total, since, matching)
+    inert = _behind_cursor(since, floor)
     if not entries:
-        return f"cairn inbox: no unread messages{_asked(hub)}.\n"
-    lines = [f"cairn inbox: {total} unread · {CLAIM_CLAUSE}", ""]
-    lines.extend(_truncation(len(entries), total, end="oldest"))
+        return _inbox_empty(total, available, since=since, hub=hub, inert=inert)
+    window = "" if since is None else f" · {available} after seq {since}"
+    lines = [f"cairn inbox: {total} unread{window} · {CLAIM_CLAUSE}", ""]
+    lines.extend(_truncation(len(entries), available, end="oldest"))
     for index, entry in enumerate(entries, start=1):
         message = entry.message
         head = (
@@ -274,7 +363,33 @@ def inbox_text(entries: list[InboxEntry], total: int, hub: str = "") -> str:
         lines.append("")
     lines.append(f"— {AUTHORITY_CLAUSE}")
     lines.extend(f"— {note}" for note in _provenance_notes(e.provenance for e in entries))
+    if since is not None:
+        lines.append(f"— {WINDOW_CLAUSE}")
+    if inert:
+        lines.append(f"— {inert}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _inbox_empty(total: int, available: int, *, since: int | None, hub: str, inert: str) -> str:
+    """Say which kind of nothing this is, in four cases that must not be collapsed.
+
+    "No mail at all" and "mail, but none of it here" are different answers, and
+    the second is the one a reader acts on without checking. The window adds a
+    third: a floor past the newest thing waiting, which is neither an empty
+    mailbox nor a `--limit` too small to show anything.
+    """
+    if not total:
+        answer = f"cairn inbox: no unread messages{_asked(hub)}."
+    elif since is not None and not available:
+        answer = f"cairn inbox: {total} unread, none of them after seq {since}{_asked(hub)}."
+    else:
+        # The last case is only reachable by handing this a page of zero, which
+        # `cli` now refuses. Left honest anyway: an empty page over a non-empty
+        # backlog previously rendered as "no unread messages", which is the one
+        # answer a reader acts on without checking. See the `--limit 0` row in
+        # the appendix.
+        answer = f"cairn inbox: {total} unread, none of them shown — --limit asked for a page of nothing{_asked(hub)}."
+    return f"{answer}\n— {inert}\n" if inert else f"{answer}\n"
 
 
 FIND_ECHO_CHARS = 60
