@@ -201,7 +201,7 @@ def test_two_spellings_leave_notes_in_one_pile(store, scribe):
     """
     _write(store, scribe, "clamp is loose", subject="Rig-A")
     _write(store, scribe, "and the fan is louder than last week", subject="rig-a")
-    entries, total = store.notes("RIG-A")
+    entries, total, _removed = store.notes("RIG-A")
     assert [e.note.body for e in entries] == ["clamp is loose", "and the fan is louder than last week"]
     assert total == 2
     assert [s.subject for s in store.subjects()] == ["rig-a"]
@@ -308,11 +308,11 @@ def test_a_settle_aimed_at_something_that_is_not_an_id_is_exit_three(monkeypatch
 def test_a_question_is_open_until_some_note_points_at_it(store, scribe):
     """The whole of `--open`, asked of the notes themselves rather than of a stored flag."""
     question = _write(store, scribe, "why does it reset above 40 degrees?", subject="rig-a", question=True)
-    open_now, _ = store.notes("rig-a", open_only=True)
+    open_now, _, _removed = store.notes("rig-a", open_only=True)
     assert [e.note.id for e in open_now] == [question.id]
 
     _write(store, scribe, "brownout on the 5V rail under fan load", settles=question.id)
-    assert store.notes("rig-a", open_only=True) == ([], 0)
+    assert store.notes("rig-a", open_only=True) == ([], 0, 0)
 
 
 def test_the_notes_table_has_no_column_saying_whether_a_question_is_open(store):
@@ -344,7 +344,7 @@ def test_settling_a_question_updates_no_row_and_deletes_none(store, scribe):
     assert store._db.execute("SELECT COUNT(*) AS c FROM notes").fetchone()["c"] == 2
 
     store._db.execute("DELETE FROM notes WHERE id = ?", (answer.id,))
-    reopened, total = store.notes(open_only=True)
+    reopened, total, _removed = store.notes(open_only=True)
     assert [e.note.id for e in reopened] == [question.id]
     assert total == 1
 
@@ -352,9 +352,9 @@ def test_settling_a_question_updates_no_row_and_deletes_none(store, scribe):
 def test_an_ordinary_note_is_never_open(store, scribe):
     """Only a question can be open, so a statement is never something to chase."""
     _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
-    (entry,), _ = store.notes("rig-a")
+    (entry,), _, _ = store.notes("rig-a")
     assert entry.is_open is False
-    assert store.notes("rig-a", open_only=True) == ([], 0)
+    assert store.notes("rig-a", open_only=True) == ([], 0, 0)
 
 
 def test_the_first_answer_is_the_answer_of_record(store, scribe):
@@ -368,7 +368,7 @@ def test_the_first_answer_is_the_answer_of_record(store, scribe):
     first = _write(store, scribe, "the 5V rail, under fan load", settles=question.id)
     second = _write(store, scribe, "also the 3V3 rail on a cold start", settles=question.id)
 
-    entries, _ = store.notes("rig-a")
+    entries, _, _removed = store.notes("rig-a")
     by_id = {e.note.id: e for e in entries}
     assert by_id[question.id].settled_by == first.id
     assert by_id[question.id].is_open is False
@@ -395,7 +395,7 @@ def test_a_settling_note_is_never_itself_a_question(store, scribe):
     question = _write(store, scribe, "which rail browns out?", subject="rig-a", question=True)
     answer = _write(store, scribe, "the 5V rail — but why only above 40?", settles=question.id, question=True)
     assert answer.question is False
-    assert store.notes("rig-a", open_only=True) == ([], 0)
+    assert store.notes("rig-a", open_only=True) == ([], 0, 0)
 
 
 # -- what the store will not accept --------------------------------------------
@@ -470,7 +470,7 @@ def test_the_page_is_the_newest_matches_handed_back_oldest_first(store, scribe):
     """
     for i in range(1, 6):
         _write(store, scribe, f"finding {i}", subject="rig-a")
-    page, total = store.notes("rig-a", limit=2)
+    page, total, _removed = store.notes("rig-a", limit=2)
     assert [e.note.body for e in page] == ["finding 4", "finding 5"]
     assert total == 5
 
@@ -479,7 +479,7 @@ def test_a_complete_page_reports_a_total_equal_to_itself(store, scribe):
     """A caller compares the two, so they have to agree when nothing was dropped."""
     for i in range(3):
         _write(store, scribe, f"finding {i}", subject="rig-a")
-    page, total = store.notes("rig-a", limit=50)
+    page, total, _removed = store.notes("rig-a", limit=50)
     assert (len(page), total) == (3, 3)
 
 
@@ -497,7 +497,7 @@ def test_the_total_survives_the_wire(hub):
     _wire_pile(hub, "bench/firmware", "rig-a")
     for i in range(5):
         hub.write_note("bench/firmware", f"finding {i}", subject="rig-a")
-    page, total = hub.notes("rig-a", limit=2)
+    page, total, _removed = hub.notes("rig-a", limit=2)
     assert ([e.note.body for e in page], total) == (["finding 3", "finding 4"], 5)
 
 
@@ -512,7 +512,7 @@ def test_a_search_for_a_literal_percent_finds_only_that(store, scribe):
     """
     _write(store, scribe, "yield is 100% on the second pass", subject="rig-a")
     _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
-    page, total = store.notes(find="%")
+    page, total, _removed = store.notes(find="%")
     assert total == 1
     assert "100%" in page[0].note.body
 
@@ -521,7 +521,7 @@ def test_a_search_for_a_literal_underscore_finds_only_that(store, scribe):
     """`_` is "any one character" to `LIKE`, so unescaped it matches every note with two characters in it."""
     _write(store, scribe, "the capture is at hil_soak.bin", subject="rig-a")
     _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
-    page, total = store.notes(find="_")
+    page, total, _removed = store.notes(find="_")
     assert total == 1
     assert "hil_soak.bin" in page[0].note.body
 
@@ -538,7 +538,7 @@ def test_a_search_covers_subjects_as_well_as_bodies(store, scribe):
     """The subject is where the thing is named, so a reader searching for the rig means the pile too."""
     _write(store, scribe, "clamp torqued to 4Nm", subject="rig-a")
     _write(store, scribe, "unrelated", subject="compute-b")
-    page, total = store.notes(find="rig")
+    page, total, _removed = store.notes(find="rig")
     assert total == 1
     assert page[0].note.subject == "rig-a"
 
@@ -605,7 +605,7 @@ def test_the_hub_never_sends_a_provenance_key_at_all(hub):
     assert "provenance" not in raw
     assert "verified" not in raw
     for wrapper in payload["notes"]:
-        assert set(wrapper) == {"note", "settled_by"}
+        assert set(wrapper) == {"note", "settled_by", "superseded_by"}
 
 
 def test_the_verdict_a_reader_sees_was_computed_where_the_reader_is(hub, capsys):
@@ -928,6 +928,8 @@ def test_notes_json_puts_the_framing_before_the_notes():
         "showing",
         "total",
         "open_questions",
+        "superseded",
+        "removed",
         "framing",
         "notes",
     ]
@@ -1048,7 +1050,7 @@ def test_a_subject_read_includes_everything_filed_under_it(store, scribe):
     _write(store, scribe, "two deep", subject="rig-a/chamber/door")
     _write(store, scribe, "a different rig entirely", subject="rig-b")
 
-    page, total = store.notes("rig-a")
+    page, total, _removed = store.notes("rig-a")
     assert [e.note.body for e in page] == ["the parent pile", "the chamber pile", "two deep"]
     assert total == 3
     assert [e.note.body for e in store.notes("rig-a/chamber")[0]] == ["the chamber pile", "two deep"]
@@ -1063,7 +1065,7 @@ def test_the_rollup_does_not_treat_a_subject_character_as_a_wildcard(store, scri
     """
     _write(store, scribe, "mine", subject="hil_soak/rig-a")
     _write(store, scribe, "not mine", subject="hilxsoak/rig-a")
-    page, total = store.notes("hil_soak")
+    page, total, _removed = store.notes("hil_soak")
     assert [e.note.body for e in page] == ["mine"]
     assert total == 1
 
@@ -1387,8 +1389,8 @@ def test_reading_notes_moves_no_cursor_and_leaves_the_pile_for_the_next_reader(h
     hub.write_note("compute/analysis", BODY, subject="rig-a")
     hub.write_note("compute/analysis", "why does it reset above 40?", subject="rig-a", question=True)
 
-    first, first_total = hub.notes("rig-a")
-    second, second_total = hub.notes("rig-a")
+    first, first_total, _removed = hub.notes("rig-a")
+    second, second_total, _removed = hub.notes("rig-a")
     assert [e.note.id for e in first] == [e.note.id for e in second]
     assert first_total == second_total == 2
     assert [e.is_open for e in second] == [False, True]

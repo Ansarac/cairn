@@ -129,6 +129,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "/v1/messages": self._send,
                 "/v1/ack": self._ack,
                 "/v1/notes": self._write_note,
+                "/v1/notes/delete": self._delete_note,
             }
         )
 
@@ -250,27 +251,41 @@ class _Handler(BaseHTTPRequestHandler):
     def _write_note(self) -> None:
         obj = self._read()
         settles = obj.get("settles")
+        supersedes = obj.get("supersedes")
         note = self.store.write_note(
             author=obj.get("author", ""),
             body=obj.get("body", ""),
             subject=obj.get("subject"),
             question=bool(obj.get("question")),
             settles=int(settles) if settles is not None else None,
+            supersedes=int(supersedes) if supersedes is not None else None,
             artifacts=[Artifact.from_json(a) for a in obj.get("artifacts") or ()],
         )
+        # The stored note goes back whole, which is what lets a client see that an
+        # older hub dropped its `supersedes` on the floor rather than honouring it.
         self._reply(200, {"note": note.to_json()})
         # No `notifier.publish` here, and its absence is the design rather than an
         # omission. A note has no recipient to ring, and ringing everyone would
         # turn sediment into mail — the receiver decides when to look at a
         # subject, which is invariant I2. There is a test for this silence.
 
+    def _delete_note(self) -> None:
+        obj = self._read()
+        note = self.store.delete_note(
+            note_id=int(obj.get("id") or 0),
+            author=str(obj.get("author", "")),
+            reason=str(obj.get("reason", "")),
+        )
+        self._reply(200, {"note": note.to_json()})
+
     def _notes(self) -> None:
         q = self._query()
-        entries, total = self.store.notes(
+        entries, total, removed = self.store.notes(
             subject=q.get("subject"),
             open_only=q.get("open") == "1",
             find=q.get("find"),
             limit=self._int_param(q, "limit", 50),
+            deleted=q.get("deleted") == "1",
         )
         # Serialized by hand rather than through `NoteEntry.to_json()`, because
         # that form carries a `provenance` block and the hub has no business
@@ -279,8 +294,12 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(
             200,
             {
-                "notes": [{"note": e.note.to_json(), "settled_by": e.settled_by} for e in entries],
+                "notes": [
+                    {"note": e.note.to_json(), "settled_by": e.settled_by, "superseded_by": e.superseded_by}
+                    for e in entries
+                ],
                 "total": total,
+                "removed": removed,
             },
         )
 

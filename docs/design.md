@@ -1740,7 +1740,8 @@ framework-internal orchestration, not network protocols.
      reading both. They happened to be adjacent. Thirty messages apart, in a pile this
      uniform, I could easily have carried the stale one forward."* Neither was asked about
      supersession; both raised it. That is now three independent sessions, and it is the
-     strongest remaining candidate on this list.
+     strongest remaining candidate on this list. **Built as item 14** — on notes only, and
+     item 14 records why messages deliberately got nothing.
 8. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred three
    times now, out of cut 5, cut 6 and cut 7. Item 5 records the evidence and what would
    trigger it: a live exchange where two agents **could not** negotiate. Every run so far
@@ -2034,6 +2035,85 @@ framework-internal orchestration, not network protocols.
     *wrongly* by their absence — an older hub cannot enforce deliberate subjects, but it
     stores and reads notes exactly as it did, so the client says the hub is too old for
     `cairn subject` and leaves everything else working.
+14. **Correcting sediment, and removing it.** **Done.** `cairn supersede <id> "<what is
+    true now>"` links a correction to the claim it corrects and keeps both;
+    `cairn delete <id> "<why>"` takes a body out and leaves a tombstone.
+
+    **Four independent sessions asked for the first one.** Item 7's tail has the original:
+    *"4471 is the build to use"* and *"4471 is withdrawn, do not flash it"* stored four
+    hours apart as unrelated claims, and *"when the correction lands thirty messages after
+    the instruction, that's a safety gap, not a UX gap."* Item 11's acceptance run then
+    reproduced it twice, unprompted, in the same words: *"nothing machine-readable links
+    them — the connection exists only in the English word 'correction:' and in my reading
+    both. They happened to be adjacent. Thirty messages apart, in a pile this uniform, I
+    could easily have carried the stale one forward."* And cut 9's handoff records a peer
+    filing a well-reasoned but wrong claim as a durable note, correctable only by a second
+    note contradicting it — which works only if the reader reads both.
+
+    **Messages deliberately got nothing, and the maintainer's argument is the one worth
+    recording** because it is short and it settles a design this section had been circling:
+    *a correction is just another message.* A message leaves the mechanism the moment it is
+    read — it is consumed, it is gone from the inbox, and whatever correction verb cairn
+    invented would arrive at the other end as a message anyway. Building a second delivery
+    concept to say what a first-class one already says is the kind of surface this project
+    exists to refuse. So `Message` gains no `supersedes`, and nothing on the messaging side
+    changed. A **retraction** of unread mail is a different thing and is still open —
+    while a message sits in the pipe it genuinely is still in the mechanism — and it is not
+    built here.
+
+    **Superseding is `settles` pointed at statements, and it is a second relation rather
+    than a reuse.** Settling closes a loop; superseding replaces a fact. Folding them would
+    give `open` two meanings on the one field whose entire value is that it has one. Both
+    inherit their subject from their target, so a correction cannot be filed away from the
+    claim it corrects, which is why neither verb takes a subject. Neither has an ownership
+    check: whoever finds out that something is wrong is frequently not whoever wrote it
+    down, which is the same I3 argument `settle` shipped with.
+
+    **`superseded_by` is the latest pointer where `settled_by` is the first**, and the
+    asymmetry is deliberate rather than an oversight to be tidied. An answer of record is
+    the first one — a later opinion is stored and does not displace it. A correction of
+    record is the most recent, because that is what a chain of corrections means. Reading
+    the chain the other way reports its oldest end as current.
+
+    **Deletion is the bounded exception to append-only.** The body genuinely goes, and that
+    is the point rather than a side effect: tidying a noisy pile could be done by hiding,
+    but the other reason anyone reaches for this is that the body should never have been
+    written down — a credential, an internal hostname, a path under somebody's home
+    directory — and a note that is merely filtered out of the reading is still sitting in
+    the file being handed to whoever runs `--find`. Verified live: the string is gone from
+    the database, not from the view.
+
+    The row survives, keeping its id, so anything pointing at the note still resolves and
+    the pile can still say something was here. Deleting the row would make cairn the thing
+    §10 criticises other systems for — a loss with nothing to show for it. The reason
+    replaces the body rather than living in a column of its own, because it is what a
+    reader now needs to see in the place they would have read the note.
+
+    **Tombstones are out of the page and into a count.** A reading that silently omitted
+    them is the quiet loss again; one full of them defeats the reason anybody deleted
+    anything. So the page reads clean, one line says how many went, and `--deleted` lists
+    them with who and why.
+
+    **The interactions are where the derived state can be made to lie, and each has a
+    test.** A deleted answer **reopens** its question — otherwise a loop is closed forever
+    by a note that no longer says anything. A deleted correction **restores** what it
+    replaced, for the same reason. Neither falls out of the schema; both are clauses in the
+    two derived subqueries, and both are the sort of thing that would have been found in
+    six months by somebody wondering why a question would not reopen.
+
+    **"There is no difference between a human deleting and an agent deleting — we share the
+    same interface."** The maintainer's framing, recorded because it settles a question
+    that would otherwise be re-asked every time a destructive verb is proposed: the
+    *capability* has to exist, and whether `SKILL.md` encourages an agent to go tidying on
+    its own is a separate decision made separately. It currently does not.
+
+    `PROTOCOL_VERSION` does not move. `Note` gains three optional fields and `NoteEntry`
+    one, all additive; the new route is a new path. The one place absence is dangerous is
+    `supersedes`, which an older hub ignores rather than rejects — storing the correction
+    as an unrelated note while reporting success, which is precisely the state this item
+    exists to end. The hub echoes the stored row, and the client refuses when the link is
+    not in it. Same shape as item 11's window check, and the third time this rule has
+    earned itself.
 
 ---
 

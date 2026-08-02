@@ -550,10 +550,44 @@ sentence. "Measured 2026-08-01, one run" is worth more to a reader six months ou
 than a confident claim they cannot weigh, and it is the difference between a note
 they can act on and a note they have to re-derive.
 
-**Notes are append-only.** There is no edit and no delete. That is deliberate:
-the value of sediment is knowing who believed what and when, and an edited note
-destroys exactly that. A correction is a new note — including a correction to
-something you wrote ten minutes ago.
+**Notes are never edited in place.** The value of sediment is knowing who
+believed what and when, and rewriting a note destroys exactly that. A correction
+is a new note that *points at* the old one:
+
+```bash
+cairn supersede 3 "4471 is withdrawn — do not flash it. Use 4468."
+```
+
+Both stay on the pile. The reading marks the old one `SUPERSEDED by 4`, so a
+reader who lands on either finds the other. Use this rather than writing a plain
+contradicting note: three independent sessions have hit a pile holding *"4471 is
+the build to use"* and *"4471 is withdrawn"* as two unrelated claims, and one of
+them put it exactly right — *"when the correction lands thirty messages after the
+instruction, that's a safety gap, not a UX gap."* No subject argument: it comes
+from the note you are correcting, so a correction cannot end up filed away from
+the claim it corrects. You may correct anybody's note, including your own.
+
+**When you read a pile, take `SUPERSEDED` seriously and still read the body.** It
+is kept rather than hidden precisely so you can see what changed. The later note
+is what the subject says now.
+
+**Deleting is a different thing and a smaller one.** `cairn delete <id> "<why>"`
+takes the body out for good — use it when something should not have been written
+down at all, a credential or an internal hostname or a path under somebody's home
+directory, and for clearing genuine chatter off a pile:
+
+```bash
+cairn delete 7 "contained a credential"
+```
+
+The body is gone from the hub, not merely hidden. What is left is a tombstone
+with your name, the date and your reason, so the pile can still say something was
+here — the reason replaces the body, so say why it went rather than what it said.
+A read hides tombstones and prints one line saying how many there are;
+`cairn notes <subject> --deleted` lists them.
+
+To fix something that is merely *wrong*, supersede it. Deleting removes the
+record that anybody ever believed it, which is usually the more useful half.
 
 `-a HOST:PATH` works on `note` and on `settle` as it does on a message, and
 matters more here. A note is read further from the work than a message is, so the

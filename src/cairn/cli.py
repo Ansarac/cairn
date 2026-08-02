@@ -568,6 +568,46 @@ def cmd_settle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_supersede(args: argparse.Namespace) -> int:
+    """Replace what an earlier note says, without taking it away.
+
+    The correction and the thing it corrects both stay on the pile, linked, and a
+    reading marks the older one `SUPERSEDED by <id>`. That is the whole difference
+    from writing an ordinary contradicting note, which works only if the reader
+    happens to read both — the failure `docs/design.md` §12 records from three
+    independent sessions.
+
+    No subject argument, on `cairn settle`'s reasoning: it comes from the note
+    being replaced, so a correction cannot be filed away from the claim it
+    corrects. And no ownership check — whoever finds out that something is wrong
+    is frequently not whoever wrote it down. See invariant I3.
+    """
+    me = config.require_identity()
+    note = _client(args).write_note(author=me, body=args.body, supersedes=args.id, artifacts=_artifacts(args.artifact))
+    print(f"note {note.id} on {note.subject} supersedes {args.id}")
+    print(f"  both stay on the pile; `cairn notes {note.subject}` marks {args.id} as superseded")
+    return 0
+
+
+def cmd_delete(args: argparse.Namespace) -> int:
+    """Take a note's body out, leaving a tombstone that says who and why.
+
+    The one thing in cairn that removes something. The body genuinely goes,
+    because the reason to reach for this is sometimes that it should never have
+    been written down; the row stays, so anything pointing at the note still
+    resolves and the pile can still say something was here.
+
+    The same command for a human and for an agent, deliberately: there is one
+    interface and cairn cannot tell which is driving it. What the skill does
+    *not* do is tell an agent to go tidying on its own.
+    """
+    me = config.require_identity()
+    note = _client(args).delete_note(args.id, me, args.reason)
+    print(f"deleted note {note.id} on {note.subject}")
+    print(f"  the body is gone; the tombstone says: {render.oneline(note.body)}")
+    return 0
+
+
 def cmd_notes(args: argparse.Namespace) -> int:
     """Read sediment: one subject, everything unanswered, or the index.
 
@@ -599,12 +639,20 @@ def cmd_notes(args: argparse.Namespace) -> int:
         text = render.subjects_text(summaries, _hub(args), clock)
         print(render.subjects_json(summaries, clock) if args.json else text, end="")
         return 0 if summaries else EXIT_NOTHING
-    entries, total = client.notes(subject, open_only=args.open, find=args.find, limit=args.limit)
+    entries, total, removed = client.notes(
+        subject, open_only=args.open, find=args.find, limit=args.limit, deleted=args.deleted
+    )
     read = [e.checked(provenance.assess_note(e.note)) for e in entries]
     # The hub's clock, off the call just made. `notes` is the surface that asks the
     # reader to judge how stale something is and then, until this, printed no
     # instant to judge it against — see `render.STALENESS_TAIL`.
-    scope = {"subject": subject, "open_only": args.open, "find": args.find, "now": client.hub_time}
+    scope = {
+        "subject": subject,
+        "open_only": args.open,
+        "find": args.find,
+        "now": client.hub_time,
+        "removed": removed,
+    }
     # Only the text renderer names the hub. The "nothing" answers say who they
     # asked because a *model* reads them and may have no idea what this
     # directory is configured against; whatever invoked `--json` chose the hub
@@ -1033,9 +1081,38 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("--open", action="store_true", help="only questions nobody has settled")
     p.add_argument("--find", metavar="TEXT", help="substring search across bodies and subjects")
     p.add_argument("--archived", action="store_true", help="include piles that have been closed")
+    p.add_argument("--deleted", action="store_true", help="list the tombstones instead of the notes")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser(
+        "supersede",
+        help="replace what an earlier note says, keeping both",
+        description=(
+            "Say that a note has been overtaken. Both stay on the pile and a reading marks the older one "
+            "SUPERSEDED, so a reader who finds one finds the other. The subject comes from the note being "
+            "replaced, so a correction cannot end up filed away from the claim it corrects."
+        ),
+    )
+    p.add_argument("id", type=int, help="the note id printed by `cairn notes`")
+    p.add_argument("body", help="what is true now")
+    p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
+    p.set_defaults(func=cmd_supersede)
+
+    p = sub.add_parser(
+        "delete",
+        help="take a note's body out, leaving a tombstone",
+        description=(
+            "Remove what a note said. The body genuinely goes — this is the command for something that "
+            "should not have been written down — while the row stays, so anything pointing at it still "
+            "resolves and the pile still says something was here, who took it out and why. To correct a "
+            "note rather than remove it, use `cairn supersede`."
+        ),
+    )
+    p.add_argument("id", type=int, help="the note id printed by `cairn notes`")
+    p.add_argument("reason", help="why it went; it replaces the body, so do not repeat what it said")
+    p.set_defaults(func=cmd_delete)
 
     p = sub.add_parser("forget", help="drop this directory's pin for a name that has legitimately moved")
     p.add_argument("name")
