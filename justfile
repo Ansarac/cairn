@@ -62,7 +62,7 @@ install:
 # scratch equivalent is `just hub-dev`.
 #
 # cairn has no authentication and does not sign messages yet (docs/design.md §12
-# item 6), so binding this to a network means trusting everyone who can route to
+# item 7), so binding this to a network means trusting everyone who can route to
 # it. On a shared LAN, bind an interface instead: `just hub 7777 10.0.0.5`.
 hub port="7777" host="0.0.0.0":
     uv run cairn hub --port {{port}} --host {{host}} --db ~/.local/state/cairn/hub.db

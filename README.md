@@ -99,6 +99,7 @@ cairn ask  compute/analysis "do the failures correlate with temperature?"
 cairn reply bench/firmware q-3f2a91bc "yes — every one is above 40 degrees"
 cairn inbox                                        # read, and mark read
 cairn inbox --wait 90                              # ...or stand still for a reply
+cairn sent                                         # what you already told anyone
 cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
 cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
 cairn settle 2 "measured the spare 2026-08-01: 2.1C at a 40C target, one run"
@@ -146,9 +147,24 @@ blocked in `cairn inbox --wait` refreshes on every poll. It is a snapshot with n
 notification when it changes, so a peer who arrives after you look is invisible
 until you look again. Every empty answer names the hub it asked —
 `no other agents registered (hub http://hub-host:7777)`, and the same on
-`cairn inbox` and `cairn notes` — because "nothing is there" and "wrong hub" are
-otherwise the same output, and a live session checked five times before
-cross-reading `cairn config`.
+`cairn inbox`, `cairn sent` and `cairn notes` — because "nothing is there" and
+"wrong hub" are otherwise the same output, and a live session checked five times
+before cross-reading `cairn config`.
+
+### What you already said
+
+`cairn inbox` shows only what arrived. `cairn sent` is the other half: what this
+session told anyone, oldest first, with the total so a page cannot pass for a
+history. It exists because a live exchange ran three correlation ids at once and
+tracked them in scrollback, which is the thing a restart destroys.
+
+Reading it consumes nothing — there is no cursor on your own sends. And it says
+what was **sent**, never what was delivered, read or answered: a message waiting
+for a session that has ended looks exactly like one being read right now, so the
+only evidence a question landed is an answer in your inbox. Keeping the two
+apart is why this is a log rather than a list of outstanding questions, which
+`docs/design.md` §12 item 3 rejected for making three inferences it could not
+support.
 
 ### Notes
 
