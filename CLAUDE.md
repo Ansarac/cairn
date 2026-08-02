@@ -301,6 +301,15 @@ time this way:
   command line contains that string. Match on something the pattern cannot see
   itself in.
 
+**Archive the hub database when the run is over.** A live run is where most of
+`docs/design.md`'s reasoning comes from, and a scratch hub lives in `/tmp`, which
+means the evidence behind a paragraph evaporates on the next reboot while the
+paragraph stays. `sqlite3.backup()` from the stdlib copies it WAL-safely while
+the hub is still up. `handoffs/` is gitignored, so it holds the copy without
+putting a run's raw prose into a public repository — and the handoff should point
+at it, because a claim in `design.md` whose evidence nobody can re-read is a
+claim that gets re-argued.
+
 ```bash
 just check      # lint + format check + the vendor guard + pytest — the whole CI gate
 just hub        # :7777, every interface, ~/.local/state/cairn/hub.db — the real one
