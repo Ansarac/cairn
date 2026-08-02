@@ -35,23 +35,14 @@ lives only in `SKILL.md`. Moving the verdict into the footnote, or the
 explanation back onto every line, each have a test. `docs/design.md` §3 carries
 the measurement — including why the middle tier survived and why `--json` grew.
 
-A verdict is also worth only what it *distinguishes*. `UNVERIFIED` went wallpaper
-on a live run for being identical everywhere with nothing to differ from, and cut
-5's answer was not a second tier but a different **subject**: on the inbox it
-qualifies who sent this, on `cairn sent` whether this is your record at all. If
-you add a surface, ask what its verdict is about before reusing a clause.
-
-**And column zero belongs to the renderer, on every string, not just bodies.**
-Anything from argv or off the wire is folded with `render.oneline` before it is
-printed — *wherever* it is printed, `cli.py`'s own confirmation lines included.
-Bodies were safe by accident, because they go through `splitlines()`; a
-correlation id, an artifact host, or any name went into an f-string whole, and
-one `--correlation` containing a newline forged a `verified(ed25519)` entry from
-`operator`. Nothing validates a name anywhere — `normalize_subject` is why
-subjects alone need no fold. Fixing it in `wire.py` instead is a
-`PROTOCOL_VERSION` question, so do not. The parametrised tests list every field
-so a new one has to join them; the fix landed in the renderers first and `cli.py`
-went uncovered for an hour, which is the whole lesson.
+**Column zero belongs to cairn, and every value from argv or the wire is folded
+with `render.oneline` before printing — wherever it is printed**, `cli.py`'s own
+confirmation lines included. Indenting bodies covers only bodies; one
+`--correlation` containing a newline forged a `verified(ed25519)` entry, and
+fixing the renderers left every command's success message open. Nothing
+validates a name, which is why `normalize_subject` makes subjects the one
+exception. `docs/design.md` §12 item 5 has both halves; do not move the check
+into `wire.py`, which is a `PROTOCOL_VERSION` question.
 
 **I2. The receiver controls attention.** A sender may ring a bell. A sender
 never decides when the receiver reads. The bell carries a count and never
