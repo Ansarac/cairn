@@ -42,14 +42,12 @@ lives only in `SKILL.md`. Moving the verdict into the footnote, or the
 explanation back onto every line, each have a test. `docs/design.md` §3 carries
 the measurement — including why the middle tier survived and why `--json` grew.
 
-**Column zero belongs to cairn, and every value from argv or the wire is folded
-with `render.oneline` before printing — wherever it is printed**, `cli.py`'s own
-confirmation lines included. Indenting bodies covers only bodies; one
-`--correlation` containing a newline forged a `verified(ed25519)` entry, and
-fixing the renderers left every command's success message open. Nothing
-validates a name, which is why `normalize_subject` makes subjects the one
-exception. `docs/design.md` §12 item 5 has both halves; do not move the check
-into `wire.py`, which is a `PROTOCOL_VERSION` question.
+**Column zero belongs to cairn: fold every value from argv or the wire with
+`render.oneline` before printing it — wherever it is printed**, `cli.py`'s own
+confirmation lines included. `render.oneline`'s docstring argues the rule and
+`docs/design.md` §12 item 5 has the forged inbox entry that produced it; what
+neither can reach is a new `print()` somewhere in `cli.py`, which is why this
+line exists.
 
 **I2. The receiver controls attention.** A sender may ring a bell. A sender
 never decides when the receiver reads. The bell carries a count and never
@@ -99,14 +97,12 @@ skills/cairn/SKILL.md    force-included into the wheel
 docs/design.md           why everything is the way it is
 ```
 
-Dependency direction, which the module docstrings also state: `cli → client →
-wire`, `cli → waiting → client`, and `hub → store → wire`. `waiting` may not
-import `events` — that absence is what keeps a bell frame undecoded and so keeps
-`kind` and `correlation_id` out of the waiter's reach, and there is a test for
-it. `nudge` depends on `client`, `events`, `terminal`
-and an **injected** state reader — never on `adapters`, which is exactly what
-keeps it vendor-free. Nothing imports `adapters` except `cli`, and only through
-`adapters.default()`.
+The module docstrings carry the dependency direction. Two **absences** are rules
+rather than description, and both have tests: `waiting` may not import `events`,
+which is what keeps a bell frame undecoded and so keeps `kind` and
+`correlation_id` out of the waiter's reach; and nothing imports `adapters` except
+`cli`, through `adapters.default()` — `nudge` takes an **injected** state reader
+instead, which is what keeps it vendor-free.
 
 ## Conventions
 
@@ -115,20 +111,13 @@ keeps it vendor-free. Nothing imports `adapters` except `cli`, and only through
 - **No third-party dependencies.** stdlib only, deliberately: cairn runs on a
   hardware bench where every package is one more thing that can break before a
   test run. Adding one needs a reason in `docs/design.md`.
-- `run()` converts `CairnError` to an exit code and lets real bugs keep their
-  traceback. Do not widen that catch.
-- The skill ships inside the wheel via
-  `[tool.hatch.build.targets.wheel.force-include]`. `locate_skill` has a source
-  branch and a packaged branch — **both are hot paths**, test both.
+- The skill ships inside the wheel. `locate_skill` has a source branch and a
+  packaged branch and a user only ever exercises one — **test both**.
 
 ### Exit codes are an interface
 
-`0` fine · `1` asked, nothing to report · `2` hub unreachable · `3` cannot be
-carried out as asked · `130` interrupted.
-
-`1` and `2` mean opposite things and must never be collapsed. An empty inbox is
-an answer; an unreachable hub means messages are not being delivered and nobody
-is being told.
+`cli.py`'s module docstring lists them and says why `1` and `2` can never be
+collapsed. One hazard is not visible there.
 
 **A `WireError` reaching `run()` is a traceback plus exit `1`** — a stack trace
 under the code for "asked, nothing to report", which is the poisoned-mailbox
@@ -138,67 +127,25 @@ the boundary instead: `cli._subject` → `UsageError`, `client._readable` →
 `Unreachable`. This escaped three separate ways in one cut. Prove a new validator
 with an exit-code assertion through `cli.run`, not a call to the helper.
 
-A malformed command line is `3`, and that costs one non-obvious line of code:
-argparse's own `error()` exits **2**, so `cli._Parser` overrides it to raise
-`UsageError` and `run()` parses inside its `try`. Subparsers inherit the class
-from the root parser, which is the only reason every subcommand gets this — pass
-`parser_class=` to `add_subparsers` and the guarantee is gone with no test to
-notice. A session found the old behaviour by mistyping a flag and wondering
-whether the hub had died.
-
 ## Hazards specific to this repo
 
 **A change to `wire.py` without a `PROTOCOL_VERSION` bump is a silent break.**
-Two builds will disagree and neither will say so. Run `git diff -- src/cairn/wire.py`
-before finishing any session that touched it.
+Two builds will disagree and neither will say so, and when to bump and when not
+to is on `PROTOCOL_VERSION` itself. Check with
+`git diff <session-base>..HEAD -- src/cairn/wire.py` — **never the bare
+`git diff`**, which compares the working tree with `HEAD` and so answers
+"unchanged" for anything already committed.
 
-**And a bump for a purely additive change is a loud one.** `check_version`
-compares for equality, so a bump does not deprecate an old peer, it disconnects
-one — on every route, including the unchanged ones. Bump when an existing shape
-changes meaning, never when a new one appears. Worked example and full reasoning
-on `PROTOCOL_VERSION` itself.
+**The bell is a minefield and all of it is written down at its points of use.**
+`cli.cmd_bell` for the four properties it must keep, `wire.InboxPage` for why the
+head cannot come from the page, `nudge.read_belled` for why there are two latches,
+`nudge`'s counter constants for who may touch that file's mtime,
+`adapters.claude_code.bell_payload` for the per-event envelope. Read them before
+changing anything in that path; none of it is guessable from the call sites.
 
-**`cairn bell` must never fail loudly.** It runs from another program's hook, so
-an exception there degrades the session it is attached to. Every failure path
-prints `{}` and exits 0. If you touch it, verify with the hub down.
-
-**The bell must not ring twice for the same mail.** It latches on the highest
-seq it has rung for. Without that, a reader who chose not to open the inbox gets
-a loop instead of a reminder.
-
-**The head it latches on is `InboxPage.head`, and it must never be derived from
-the page again.** That is what took the bell permanently off the air for three
-cuts: the page is the *oldest* `--limit` rows, so past the limit its maximum seq
-stopped moving, the latch pinned to it, and no amount of new mail could ring
-again. `nudge`'s counter had the same shape, so the wake path went quiet with it.
-The hub now returns the true `COUNT` and `MAX(seq)` alongside the page and both
-callers read them. `docs/design.md` §12 item 6 has the reasoning; there is an
-end-to-end test that drains a truncated backlog and rings again.
-
-**A paged surface ships its total, and `inbox` is the one that had to learn it
-twice.** `notes` and `sent` carried a truncation line from the cut that
-introduced them; `inbox` truncated in silence, which is where the deafness came
-from and is also why "showing the oldest N of M" is worded with `oldest` — a
-queue is read from the front, unlike the other two. The general habit is worth
-more than the line: **when a rule is extracted from a defect, the code it was
-extracted from is the first place to apply it and the place most likely to be
-skipped**, because everyone involved already knows about it.
-
-**And `cmd_inbox` acks the maximum seq it printed, never `page.head`.** The head
-is now one attribute away and reads as the tidier thing to advance to; advancing
-to it discards everything between the end of the page and the head. A test exists
-whose only job is to fail if somebody makes that simplification.
-
-**Registration has three cases, and the last two look identical on the wire.** A
-new name parks the cursor at the current head, so a fresh session is not buried
-under a month of other people's mail. A returning session — same name, same
-`(machine, cwd)` — keeps its cursor, so a restart still gets its backlog. A
-**takeover** — the same name from anywhere else — parks at the head too, because
-otherwise a stranger inherits the conversation, which was reproduced against a
-live hub before it was fixed. `(machine, cwd)` is the discriminator; `session_id`
-is stored but is `None` whenever the host product exports none, so it cannot be
-the test. Getting any of the three wrong is immediately visible to users and none
-is obvious from the code — `tests/test_identity.py` pins all three.
+**Registration has three cases and the last two look identical on the wire** —
+`store.register`'s docstring has all three and why `(machine, cwd)` is the
+discriminator, and `tests/test_identity.py` pins them.
 
 **A takeover must say what it stepped over.** `ack` moves forward only, so once a
 takeover jumps the cursor to the head, the skipped mail is still in `messages` and
@@ -207,47 +154,12 @@ previous holder and a resume seq, and `cairn ack <seq> --rewind` is the one door
 that moves a cursor backwards. Deleting either half turns a stated loss back into
 a silent one, which is the thing `docs/design.md` §10 criticises other systems for.
 
-**The sending side pins names too, and it fails closed.** `config.check_pin`
-records what a name reached the first time this directory sent to it and raises
-`NameMoved` if that changes; `cairn forget <name>` is the escape hatch. This is a
-declaration, not enforcement (I3) — the hub still cannot know which claimant is
-legitimate. It exists so the failure is *loud on the sender* rather than silent
-on both ends.
-
-**The bell stream is allowed to drop; making it reliable breaks the hub.** If a
-subscriber's queue fills, `events.py` discards and counts rather than waiting —
-because `publish` runs on the thread part-way through storing somebody else's
-message, so a blocking queue lets one wedged reader stall delivery for everyone.
-This is safe only because every bell triggers a full authoritative `inbox` fetch
-and the payload is discarded. Do not "fix" the dropping.
-
-**Both ends of a stream need a periodic write, and the timeouts are paired.** The
-hub heartbeats so it notices a departed reader — with no write, the handler blocks
-forever and subscriptions accumulate. The client's socket timeout notices a
-departed hub. Set the client timeout below `hub.HEARTBEAT_SECONDS` and every quiet
-stream tears itself down on a timer.
-
-**Use `read1`, never `read`, on a streaming body.** `HTTPResponse.read(n)` blocks
-until it has all `n` bytes or the connection closes, so a sixty-byte bell sits
-unseen behind a 4 KiB buffer. This was measured, and the obvious code is wrong.
-
-**Only ever type into a session reported `idle`.** `busy` fights the input buffer;
-`waiting` means the session is on a prompt, so the nudge becomes the answer to it;
-an unrecognised status is not a safe status. A record whose pid is dead is not
-`idle` either — those files outlive the process that wrote them.
-
-**Two latches, not one.** Typing into a terminal and speaking at a turn boundary
-are separate channels reaching the same reader. Sharing a latch means a nudge
-silences the next turn-boundary bell, so the reader is woken and then told nothing.
-
-**Only the daemon may advance the counter file's mtime.** That mtime *is* the
-daemon-liveness signal `counter_is_fresh()` reads, and the counter file has two
-writers: the daemon, and `cairn bell` latching what it just announced. When the
-latch touched the mtime, a hook on a machine with no nudger forged a heartbeat
-for a daemon that did not exist and then believed the empty record it had just
-written — so the bell went deaf for 90 seconds after every single ring. Hence
-`_write_record(..., keep_mtime=True)` on both latch paths. Any new writer to that
-file has to decide the same question, and the answer is almost always "keep it".
+**The stream is allowed to drop, and the nudger only ever types into `idle`.**
+Both are counter-intuitive and both are argued at their points of use:
+`events.py`'s module docstring on why making delivery reliable deadlocks the hub,
+`client.STREAM_TIMEOUT` and `hub.HEARTBEAT_SECONDS` on why the two timeouts are
+paired, `client.stream` on `read1` versus `read`, `nudge.WAKEABLE_STATES` and
+`adapters.claude_code.session_state` on which states are safe to type into.
 
 **Do not re-litigate the eliminated options.** `docs/design.md` records, with
 measurements, why these were rejected: a message bus (§7), A2A or MCP on the
@@ -301,9 +213,8 @@ do. `docs/design.md` §12 item 5 records what that produced.
 **Green tests are not the bar; a live run is.** Three things in that loop will
 silently serve you stale code, and each has cost a session real time:
 
-- `uv tool install --force .` **does not rebuild when the version is unchanged**
-  — it reports success and keeps the old wheel. Build first:
-  `uv build --wheel -o /tmp/w && uv tool install --force /tmp/w/cairn-*.whl`.
+- `uv tool install --force .` **does not rebuild when the version is unchanged**;
+  `just install` uses `--reinstall` for that reason and its comment has the rest.
 - **A running hub ignores `store.py` and `hub.py` edits.** Restart it.
 - `pkill -f "cairn hub --port 7801"` **kills the shell issuing it**, because the
   pattern matches its own command line.
