@@ -1344,7 +1344,7 @@ def test_reading_notes_moves_no_cursor_and_leaves_the_pile_for_the_next_reader(h
     assert [e.note.id for e in first] == [e.note.id for e in second]
     assert first_total == second_total == 2
     assert [e.is_open for e in second] == [False, True]
-    assert [m.body for m in hub.inbox("bench/firmware")] == ["unrelated mail, still unread"]
+    assert [m.body for m in hub.inbox("bench/firmware").messages] == ["unrelated mail, still unread"]
 
 
 def test_reading_the_same_pile_twice_from_the_command_line_prints_the_same_thing(hub, capsys):

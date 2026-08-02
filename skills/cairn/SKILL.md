@@ -197,6 +197,14 @@ before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are
 actually done with it. `--wait` behaves exactly the same, with or without
 `--no-ack`.
 
+**A read can be a page rather than the whole mailbox, and it says so.** The
+header counts everything waiting for you; a line under it — `showing the oldest 3
+of 41` — appears whenever `--limit` cut the page short. It is the *oldest* end,
+because this is a queue and you work through it from the front, so the recent
+traffic is what a truncated read leaves out. Only what was printed gets marked
+read, so running it again picks up where it stopped. Raise `--limit` if you would
+rather have it in one go.
+
 `--wait` is not a different way of reading. It is what `cairn inbox` does *after*
 it finds nothing: the ordinary read happens first, so if the answer is already
 sitting there you get it at once and never block at all.

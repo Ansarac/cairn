@@ -27,7 +27,7 @@ from cairn.client import HubClient
 from cairn.errors import Unreachable
 from cairn.hub import make_server
 from cairn.store import SqliteStore
-from cairn.wire import Agent, Message
+from cairn.wire import Agent, InboxPage, Message
 
 WORKDIR = Path("/tmp/session")
 
@@ -379,11 +379,21 @@ class FakeHub:
         self.calls = 0
         self.acked: list[int] = []
 
-    def inbox(self, agent: str, limit: int = 50) -> list[Message]:
+    def inbox(self, agent: str, limit: int = 50) -> InboxPage:
+        """Page like the real hub: the rows are capped, the totals are not.
+
+        The daemon reads only the totals, so a fake that capped those too would
+        pass the very test that pins the deafness fix.
+        """
         self.calls += 1
         if self.error is not None:
             raise self.error
-        return [m for m in self.messages if m.recipient == agent][:limit]
+        unread = [m for m in self.messages if m.recipient == agent]
+        return InboxPage(
+            messages=tuple(unread[:limit]),
+            unread=len(unread),
+            head=max((m.seq for m in unread), default=0),
+        )
 
     def ack(self, agent: str, seq: int) -> int:
         self.acked.append(seq)
@@ -586,4 +596,4 @@ def test_a_real_message_reaches_the_counter_and_its_body_never_reaches_the_termi
     assert nudge.read_unread("compute/analysis") == (1, sent.seq)
     assert nudge.read_nudged("compute/analysis") == sent.seq
     # The daemon looked, it did not read: the message is still the reader's to collect.
-    assert [m.body for m in client.inbox("compute/analysis")] == [body]
+    assert [m.body for m in client.inbox("compute/analysis").messages] == [body]

@@ -159,14 +159,28 @@ prints `{}` and exits 0. If you touch it, verify with the hub down.
 seq it has rung for. Without that, a reader who chose not to open the inbox gets
 a loop instead of a reminder.
 
-**And it currently goes deaf past `--limit`, which is open.** That highest seq is
-read off the same capped window the inbox returns, so once the unread count
-exceeds the limit the head stops moving, the latch pins to it, and the
-turn-boundary bell is **permanently silent** until the reader drains by hand.
-`nudge`'s counter is built the same way. Known, not fixed, and the fix is the hub
-returning the true `MAX(seq)` on the inbox response — which is a `wire.py` change
-and so a `PROTOCOL_VERSION` question. Do not "simplify" the latch without reading
-`docs/design.md`'s appendix row on it first.
+**The head it latches on is `InboxPage.head`, and it must never be derived from
+the page again.** That is what took the bell permanently off the air for three
+cuts: the page is the *oldest* `--limit` rows, so past the limit its maximum seq
+stopped moving, the latch pinned to it, and no amount of new mail could ring
+again. `nudge`'s counter had the same shape, so the wake path went quiet with it.
+The hub now returns the true `COUNT` and `MAX(seq)` alongside the page and both
+callers read them. `docs/design.md` §12 item 6 has the reasoning; there is an
+end-to-end test that drains a truncated backlog and rings again.
+
+**A paged surface ships its total, and `inbox` is the one that had to learn it
+twice.** `notes` and `sent` carried a truncation line from the cut that
+introduced them; `inbox` truncated in silence, which is where the deafness came
+from and is also why "showing the oldest N of M" is worded with `oldest` — a
+queue is read from the front, unlike the other two. The general habit is worth
+more than the line: **when a rule is extracted from a defect, the code it was
+extracted from is the first place to apply it and the place most likely to be
+skipped**, because everyone involved already knows about it.
+
+**And `cmd_inbox` acks the maximum seq it printed, never `page.head`.** The head
+is now one attribute away and reads as the tidier thing to advance to; advancing
+to it discards everything between the end of the page and the head. A test exists
+whose only job is to fail if somebody makes that simplification.
 
 **Registration has three cases, and the last two look identical on the wire.** A
 new name parks the cursor at the current head, so a fresh session is not buried

@@ -40,6 +40,7 @@ from cairn.wire import (
     Agent,
     Arrival,
     Artifact,
+    InboxPage,
     Message,
     MessageKind,
     Note,
@@ -49,9 +50,6 @@ from cairn.wire import (
     normalize_subject,
     now,
 )
-
-_COUNT_ALL = 1_000_000
-"""A limit high enough to mean "all of it" when counting a skipped backlog."""
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,8 +122,8 @@ class Store(Protocol):
         """Durably record a message and return it with its assigned sequence."""
         ...
 
-    def unread(self, agent: str, limit: int = 50) -> list[Message]:
-        """Return messages after the agent's cursor, oldest first."""
+    def unread(self, agent: str, limit: int = 50) -> InboxPage:
+        """Return a page of messages after the agent's cursor, plus the true count and head."""
         ...
 
     def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
@@ -219,7 +217,10 @@ class SqliteStore:
         # and where to resume from. Without `resume_at` the loss is unrecoverable:
         # `ack` will not rewind, so the only way back would be editing the database.
         resume_at = self._cursor(agent.name) if moved else 0
-        skipped = len(self.unread(agent.name, limit=_COUNT_ALL)) if moved else 0
+        # `limit=0` because the page is not wanted, only the count behind it —
+        # which `unread` now returns uncapped. This is what retires a constant
+        # whose entire job was to make a list long enough to be counted.
+        skipped = self.unread(agent.name, limit=0).unread if moved else 0
         stamped = Agent(
             name=agent.name,
             machine=agent.machine,
@@ -330,8 +331,26 @@ class SqliteStore:
             created_at=created,
         )
 
-    def unread(self, agent: str, limit: int = 50) -> list[Message]:
+    def unread(self, agent: str, limit: int = 50) -> InboxPage:
         """Select what is addressed to `agent` past its cursor, never its own sends.
+
+        The page is the **oldest** `limit` rows, and that is the opposite of
+        `sent` and `notes` on purpose: a queue is read from the front, and a
+        reader working through a backlog must not have the front of it silently
+        dropped. It is also why a `--wait` may only ever run on an *empty* window
+        — a poll loop on a truncated one would never reach the answer.
+
+        `unread` and `head` are computed over the same predicate **without the
+        limit**, and that is this method's job rather than a convenience. Both
+        used to be inferred from the page by every caller, and both inferences
+        are wrong the moment the backlog passes the cap. The count understated it
+        in silence; the head simply stopped moving, which pinned `cairn bell`'s
+        latch and took the turn-boundary bell permanently off the air. See
+        `wire.InboxPage`.
+
+        Three statements rather than one window function: this file is read by
+        people reasoning about delivery, and `COUNT`/`MAX` over a named predicate
+        says what it does at a glance.
 
         The `_touch` is why a blocked reader looks busy. `cairn inbox --wait`
         polls through here — about five times over a quiet 60-second wait — and
@@ -343,15 +362,18 @@ class SqliteStore:
         write would cost the liveness signal for the ordinary read too.
         """
         self._touch(agent)
-        rows = self._db.execute(
-            """SELECT * FROM messages
+        where = """FROM messages
                WHERE seq > (SELECT last_acked_seq FROM cursors WHERE agent = ?)
                  AND (recipient = ? OR recipient = ?)
-                 AND sender != ?
-               ORDER BY seq LIMIT ?""",
-            (agent, agent, BROADCAST, agent, limit),
-        ).fetchall()
-        return [_message_from_row(r) for r in rows]
+                 AND sender != ?"""
+        scope = (agent, agent, BROADCAST, agent)
+        totals = self._db.execute(f"SELECT COUNT(*) AS c, COALESCE(MAX(seq), 0) AS h {where}", scope).fetchone()
+        rows = self._db.execute(f"SELECT * {where} ORDER BY seq LIMIT ?", (*scope, limit)).fetchall()
+        return InboxPage(
+            messages=tuple(_message_from_row(r) for r in rows),
+            unread=int(totals["c"]),
+            head=int(totals["h"]),
+        )
 
     def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
         """Select what `agent` sent, newest page handed back oldest-first, with the total.

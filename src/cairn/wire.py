@@ -300,6 +300,76 @@ class InboxEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class InboxPage:
+    """A page of unread mail, plus the two facts a page cannot carry by itself.
+
+    `messages` is capped by the caller's `--limit`. `unread` and `head` are not:
+    they are `COUNT(*)` and `MAX(seq)` over the whole backlog behind that page.
+    The distinction is the entire point of this shape, and it exists because
+    inferring either one from the page is wrong in a way nothing reports.
+
+    **`head` is what un-deafens the bell.** `cairn bell` latches on the highest
+    seq it has announced, so that a reader who chose not to open the inbox gets a
+    reminder rather than a loop. Computed off a capped page that head stops
+    advancing the moment the backlog passes the cap — the latch pins to it, and
+    every later turn boundary compares an unmoved head against an equal latch and
+    stays silent. Permanently, until the reader drains by hand. `nudge` built its
+    counter the same way, so the wake path went quiet alongside the hook.
+
+    **`unread` is what stops a full page reading as a complete answer.** The same
+    rule `notes` and the sent log already ship with, arriving late on the surface
+    that taught it: a caller who cannot tell those two apart will eventually treat
+    one as the other.
+
+    **This does not bump `PROTOCOL_VERSION`, and the question was asked properly
+    rather than waved through.** `check_version` compares for equality, so a bump
+    disconnects an old peer on every route rather than deprecating it. Two new
+    keys appear in the `/v1/inbox` response and no existing field changes meaning:
+    an old client ignores them and behaves exactly as it does today, and a new
+    client against an old hub finds them absent — which `from_json` reads as "this
+    hub cannot tell me", falling back to the page. That fallback restores today's
+    deafness rather than an error, which is the honest degradation: the older hub
+    genuinely does not know, and refusing to run against it would break messaging
+    over a number neither end needs to agree on.
+    """
+
+    messages: tuple[Message, ...] = ()
+    unread: int = 0
+    head: int = 0
+
+    @property
+    def truncated(self) -> bool:
+        """Return whether the backlog is larger than the page shows."""
+        return self.unread > len(self.messages)
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the wire form."""
+        return {
+            "messages": [m.to_json() for m in self.messages],
+            "unread": self.unread,
+            "head": self.head,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the wire form, deriving what an older hub does not send.
+
+        `is None` rather than a falsy test, deliberately: a new hub reporting an
+        empty inbox sends `unread: 0`, and reading that as "absent" would send the
+        caller down the fallback path on the one answer where it least matters and
+        most confuses anyone debugging it.
+        """
+        messages = tuple(Message.from_json(m) for m in obj.get("messages") or ())
+        unread = obj.get("unread")
+        head = obj.get("head")
+        return cls(
+            messages=messages,
+            unread=len(messages) if unread is None else int(unread),
+            head=max((m.seq for m in messages), default=0) if head is None else int(head),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SentEntry:
     """A message this session sent, paired with what was verified about the record of it.
 

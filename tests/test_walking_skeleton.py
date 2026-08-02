@@ -84,7 +84,7 @@ def test_a_name_that_moved_stops_reaching_its_old_holder(hub, tmp_path, monkeypa
 
     _register(hub, "rig/a", machine="some-other-box", cwd="/w/elsewhere")
 
-    assert hub.inbox("rig/a") == []
+    assert hub.inbox("rig/a").messages == ()
     with pytest.raises(NameMoved) as caught:
         _check_recipient(hub, "rig/a")
     assert "bench:/w/rig" in str(caught.value)
@@ -109,19 +109,19 @@ def test_a_message_crosses_between_two_agents(hub):
     sent = hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
     assert sent.seq > 0
 
-    received = hub.inbox("compute/analysis")
+    received = hub.inbox("compute/analysis").messages
     assert [m.body for m in received] == ["soak run 441 failed 3 of 40 iterations"]
     assert received[0].sender == "bench/firmware"
 
     hub.ack("compute/analysis", received[0].seq)
-    assert hub.inbox("compute/analysis") == []
+    assert hub.inbox("compute/analysis").messages == ()
 
 
 def test_the_sender_does_not_receive_its_own_message(hub):
     _register(hub, "a", machine="m1")
     _register(hub, "b", machine="m2")
     hub.send("tell", "a", "b", "hello")
-    assert hub.inbox("a") == []
+    assert hub.inbox("a").messages == ()
 
 
 def test_a_peer_that_was_offline_still_gets_its_mail(hub):
@@ -133,7 +133,7 @@ def test_a_peer_that_was_offline_still_gets_its_mail(hub):
 
     # The sleeper "restarts": same name, no local state of any kind.
     _register(hub, "sleeper")
-    assert [m.body for m in hub.inbox("sleeper")] == ["message 0", "message 1", "message 2"]
+    assert [m.body for m in hub.inbox("sleeper").messages] == ["message 0", "message 1", "message 2"]
 
 
 def test_a_brand_new_agent_starts_at_the_head_not_at_zero(hub):
@@ -144,19 +144,19 @@ def test_a_brand_new_agent_starts_at_the_head_not_at_zero(hub):
         hub.send("tell", "a", "b", f"old {i}")
 
     _register(hub, "newcomer")
-    assert hub.inbox("newcomer") == []
+    assert hub.inbox("newcomer").messages == ()
 
     hub.send("tell", "a", "newcomer", "welcome")
-    assert [m.body for m in hub.inbox("newcomer")] == ["welcome"]
+    assert [m.body for m in hub.inbox("newcomer").messages] == ["welcome"]
 
 
 def test_broadcast_reaches_everyone_but_the_sender(hub):
     for name in ("a", "b", "c"):
         _register(hub, name)
     hub.send("tell", "a", "*", "all hands")
-    assert [m.body for m in hub.inbox("b")] == ["all hands"]
-    assert [m.body for m in hub.inbox("c")] == ["all hands"]
-    assert hub.inbox("a") == []
+    assert [m.body for m in hub.inbox("b").messages] == ["all hands"]
+    assert [m.body for m in hub.inbox("c").messages] == ["all hands"]
+    assert hub.inbox("a").messages == ()
 
 
 def test_a_typo_in_the_recipient_fails_loudly(hub):
@@ -171,12 +171,12 @@ def test_ask_and_reply_carry_the_correlation_id(hub):
     _register(hub, "asker")
     _register(hub, "answerer")
     hub.send("ask", "asker", "answerer", "do the failures correlate with temperature?", correlation_id="q-1")
-    question = hub.inbox("answerer")[0]
+    question = hub.inbox("answerer").messages[0]
     assert question.kind == "ask"
     assert question.correlation_id == "q-1"
 
     hub.send("reply", "answerer", "asker", "yes, all above 40 degrees", correlation_id="q-1")
-    answer = hub.inbox("asker")[0]
+    answer = hub.inbox("asker").messages[0]
     assert answer.kind == "reply"
     assert answer.correlation_id == "q-1"
 
@@ -185,7 +185,7 @@ def test_artifacts_survive_the_round_trip(hub):
     _register(hub, "a")
     _register(hub, "b")
     hub.send("tell", "a", "b", "capture is on the bench", artifacts=[Artifact("bench", "/srv/hil/441.bin")])
-    artifact = hub.inbox("b")[0].artifacts[0]
+    artifact = hub.inbox("b").messages[0].artifacts[0]
     assert (artifact.host, artifact.path) == ("bench", "/srv/hil/441.bin")
 
 
@@ -333,14 +333,14 @@ def test_a_waiting_reader_is_woken_by_an_answer_that_is_not_a_reply(hub):
     elapsed = time.monotonic() - started
 
     assert returned, "the wait never returned"
-    answer = returned[0][0]
+    answer = returned[0].messages[0]
     assert answer.body == "yes — every one of them is above 40 degrees"
     assert answer.kind == "tell"
     assert answer.correlation_id is None
     assert elapsed < 5.0, f"woken by the deadline rather than by the bell, after {elapsed:.1f}s of 10"
     # And nothing was acked. Printing comes first and acking after, so a wait cut
     # short by the host's own command timeout loses no mail.
-    assert [m.seq for m in hub.inbox("bench/firmware")] == [answer.seq]
+    assert [m.seq for m in hub.inbox("bench/firmware").messages] == [answer.seq]
 
 
 def test_a_wait_that_runs_out_is_nothing_to_report_and_costs_no_mail(hub, monkeypatch, capsys):
@@ -374,7 +374,7 @@ def test_a_wait_that_runs_out_is_nothing_to_report_and_costs_no_mail(hub, monkey
     # Standing there moved nothing: mail that arrives a moment too late is still
     # unread, so the next read gets it rather than the cursor having stepped past.
     hub.send("tell", "compute/analysis", "bench/firmware", "sorry, was on the other bench")
-    assert [m.body for m in hub.inbox("bench/firmware")] == ["sorry, was on the other bench"]
+    assert [m.body for m in hub.inbox("bench/firmware").messages] == ["sorry, was on the other bench"]
 
 
 def test_a_keep_alive_does_not_extend_the_deadline(hub, monkeypatch, capsys):
@@ -522,14 +522,14 @@ def test_a_waited_read_is_framed_exactly_like_an_ordinary_one(hub, monkeypatch, 
     assert render.CLAIM_CLAUSE in peeked.out
     assert "UNVERIFIED" in peeked.out
     assert peeked.err == ""
-    assert [m.body for m in hub.inbox("bench/firmware")] == ["plot is on the share"]
+    assert [m.body for m in hub.inbox("bench/firmware").messages] == ["plot is on the share"]
 
     assert cli.run(["--hub", hub.base_url, "inbox", "--wait", "5"]) == 0
     read = capsys.readouterr()
     assert render.CLAIM_CLAUSE in read.out
     assert "UNVERIFIED" in read.out
     assert read.err == ""
-    assert hub.inbox("bench/firmware") == []
+    assert hub.inbox("bench/firmware").messages == ()
 
 
 def test_the_hub_refuses_a_kind_it_would_poison_its_own_readers_with(hub):
@@ -567,10 +567,10 @@ def test_the_hub_refuses_a_kind_it_would_poison_its_own_readers_with(hub):
 
     assert caught.value.code == 400
     assert "shout" in caught.value.read().decode()
-    assert hub.inbox("bench/firmware") == []
+    assert hub.inbox("bench/firmware").messages == ()
 
     hub.send("tell", "compute/analysis", "bench/firmware", "ignore that, wrong channel")
-    assert [m.body for m in hub.inbox("bench/firmware")] == ["ignore that, wrong channel"]
+    assert [m.body for m in hub.inbox("bench/firmware").messages] == ["ignore that, wrong channel"]
 
 
 # -- what two sessions using this for real walked into --------------------------
@@ -604,7 +604,7 @@ def test_an_answer_can_carry_a_reference_to_what_it_produced(hub):
     )
     assert answer.kind == "reply"
 
-    received = hub.inbox("bench/firmware")[0]
+    received = hub.inbox("bench/firmware").messages[0]
     assert received.correlation_id == "q-1"
     assert (received.artifacts[0].host, received.artifacts[0].path) == ("compute", "/srv/analysis/441/knee.png")
 
@@ -705,7 +705,7 @@ def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatc
     handover = capsys.readouterr().out
     assert "no longer in your inbox" in handover, "the takeover did not report the mail it stepped over"
     assert "unanswered question" in handover, "the same arrival that reported the loss said nothing about the question"
-    assert hub.inbox("bench/firmware") == [], "the takeover was a no-op; nothing was actually left behind"
+    assert hub.inbox("bench/firmware").messages == (), "the takeover was a no-op; nothing was actually left behind"
 
     kept, total = hub.notes("rig-a")
     assert total == 2, "the session ended and took its sediment with it"
@@ -713,7 +713,7 @@ def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatc
 
     # The peer was never told any of this. Nothing was ever addressed to it.
     monkeypatch.chdir(compute)
-    assert hub.inbox("compute/analysis") == []
+    assert hub.inbox("compute/analysis").messages == ()
     assert _cli(hub, "register", "compute/analysis", "--machine", "compute") == 0
     arrival = capsys.readouterr().out
     assert "1 unanswered question" in arrival
@@ -810,7 +810,7 @@ def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path,
     _register(hub, "compute/analysis", machine="compute", cwd=str(compute))
     hub.send("tell", "compute/analysis", "bench/firmware", "the knee is at 39 degrees")
     hub.send("tell", "bench/firmware", "compute/analysis", "soak run 441 failed 3 of 40 iterations")
-    waiting_mail = {name: [m.seq for m in hub.inbox(name)] for name in ("bench/firmware", "compute/analysis")}
+    waiting_mail = {name: [m.seq for m in hub.inbox(name).messages] for name in ("bench/firmware", "compute/analysis")}
     assert [len(seqs) for seqs in waiting_mail.values()] == [1, 1], "nothing was pending, so nothing could be lost"
     hub.write_note("bench/firmware", "the flash jig needs the 3v3 rail jumpered", subject="rig-a")
     hub.write_note("bench/firmware", "does iteration 12 survive the older bootloader?", subject="rig-a", question=True)
@@ -824,7 +824,7 @@ def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path,
 
     assert "OPEN" in read_first
     assert read_second == read_first, "the second reader did not find what the first one read"
-    assert {name: [m.seq for m in hub.inbox(name)] for name in waiting_mail} == waiting_mail
+    assert {name: [m.seq for m in hub.inbox(name).messages] for name in waiting_mail} == waiting_mail
 
 
 def test_a_hub_that_predates_notes_still_registers_and_says_nothing_about_them(
@@ -1005,7 +1005,7 @@ def test_reading_the_sent_log_consumes_nothing_and_rings_nobody(hub, tmp_path, m
     hub.send("tell", "bench/night-shift", "compute/traces", "derate is in place")
     capsys.readouterr()
 
-    unread_before = [m.seq for m in hub.inbox("bench/night-shift")]
+    unread_before = [m.seq for m in hub.inbox("bench/night-shift").messages]
     assert unread_before, "no unread mail was waiting, so the cursor assertion proves nothing"
 
     peer: list[list[dict]] = []
@@ -1027,7 +1027,8 @@ def test_reading_the_sent_log_consumes_nothing_and_rings_nobody(hub, tmp_path, m
     assert peer, "the peer's collector never finished"
     assert peer[0], "no bell arrived for the message, so the silence proves nothing"
     assert peer[0][0].get("seq") == rung.seq, "the first bell on the peer's stream was a sent read"
-    assert [m.seq for m in hub.inbox("bench/night-shift")] == unread_before, "reading the log moved the mail cursor"
+    still_unread = [m.seq for m in hub.inbox("bench/night-shift").messages]
+    assert still_unread == unread_before, "reading the log moved the mail cursor"
 
 
 def test_a_hub_that_predates_the_sent_log_says_so_as_a_refusal_not_an_outage(hub, hub_server, tmp_path, monkeypatch):
@@ -1199,3 +1200,123 @@ def test_a_hub_echoing_a_forged_recipient_cannot_forge_a_line_either(hub, tmp_pa
 
     assert len(lines) == 1
     assert not [line for line in lines if line.startswith("registered as")]
+
+
+def test_a_backlog_past_the_bell_s_limit_does_not_take_the_bell_off_the_air(hub, tmp_path, monkeypatch, capsys):
+    """The defect this cut exists for, reproduced end to end and then not there.
+
+    Recorded in docs/design.md's appendix since cut 3 and never reachable from a
+    unit test, because it lives in the arithmetic between three modules: the
+    store's page, the bell's head, and the latch on disk.
+
+    The shape. `cairn bell` latches on the highest seq it has announced, so a
+    reader who chose not to open the inbox gets a reminder rather than a loop.
+    That head used to be `max(seq)` **of the returned page**, and the page is the
+    *oldest* `--limit` rows. So once the backlog passed the limit the head stopped
+    at the same seq every time, the latch pinned to it, and every later turn
+    boundary compared an unmoved head against an equal latch and said nothing.
+    Permanently — new mail could not move a head that was reading the front of
+    the queue. `nudge`'s counter was built the same way, so the wake path went
+    quiet alongside the hook.
+
+    Four rings here, and the third is the one that used to fail: it arrives after
+    genuinely new mail on a backlog that is still over the cap. The fourth checks
+    the latch is still a latch and not merely broken in the other direction.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/analysis", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+
+    for n in range(9):
+        hub.send("tell", "compute/analysis", "bench/firmware", f"result {n}")
+    capsys.readouterr()
+
+    # A limit well under the backlog: 9 waiting, 3 to a page.
+    assert _cli(hub, "bell", "--limit", "3") == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first.get("decision") == "block", "the first bell did not ring at all"
+    assert "9 unread" in first["reason"], f"the bell counted the page, not the backlog: {first['reason']!r}"
+
+    # Same mail, no new mail: the latch holds. This is the property the fix must
+    # not trade away, and the reason the head cannot simply be ignored.
+    assert _cli(hub, "bell", "--limit", "3") == 0
+    assert capsys.readouterr().out.strip() == "{}", "the bell rang twice for the same mail"
+
+    # New mail, and the backlog is still four times the page. Before the fix the
+    # head was pinned at the third-oldest seq and this was silent for good.
+    hub.send("tell", "compute/analysis", "bench/firmware", "the chamber overshoots")
+    assert _cli(hub, "bell", "--limit", "3") == 0
+    third = json.loads(capsys.readouterr().out)
+    assert third.get("decision") == "block", "the bell went deaf once the backlog passed --limit"
+    assert "10 unread" in third["reason"]
+
+    assert _cli(hub, "bell", "--limit", "3") == 0
+    assert capsys.readouterr().out.strip() == "{}", "the latch stopped latching"
+
+
+def test_a_truncated_read_acknowledges_the_page_and_never_the_backlog(hub, tmp_path, monkeypatch, capsys):
+    """You acknowledge what you were shown, and the page now sits next to a tempting alternative.
+
+    `InboxPage` carries the true head so that the bell can latch on it. That puts
+    a single integer meaning "the newest thing waiting for you" one attribute
+    away from the ack, where it reads as the tidier thing to advance the cursor
+    to — and advancing to it would silently discard every message between the end
+    of the page and that head. A truncated read would eat its own remainder,
+    which is the one failure this command has never had.
+
+    Also the visible half: the header counts the backlog, and the page says which
+    end of it this is. `oldest`, not `newest` — an inbox is a queue and is read
+    from the front, so truncation puts the *recent* mail out of view. A reader
+    told "newest 3 of 9" would go looking for today's traffic on a page that
+    holds the three oldest things in the mailbox.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/analysis", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+    sent = [hub.send("tell", "compute/analysis", "bench/firmware", f"result {n}") for n in range(9)]
+    capsys.readouterr()
+
+    assert _cli(hub, "inbox", "--limit", "3") == 0
+    out = capsys.readouterr().out
+    assert "9 unread" in out, "the header counted the page rather than the backlog"
+    assert "showing the oldest 3 of 9" in out, f"no truncation line, or the wrong end: {out!r}"
+
+    remaining = hub.inbox("bench/firmware", limit=50)
+    assert remaining.unread == 6, "the ack swallowed mail that was never printed"
+    assert [m.seq for m in remaining.messages] == [m.seq for m in sent[3:]]
+
+    # And the rest is reachable, in order, by asking again.
+    assert _cli(hub, "inbox", "--limit", "50") == 0
+    assert "showing the oldest" not in capsys.readouterr().out, "a complete page claimed to be truncated"
+    assert hub.inbox("bench/firmware").unread == 0
+
+
+def test_an_inbox_page_of_nothing_is_refused_rather_than_read_as_an_empty_mailbox(hub, tmp_path, monkeypatch):
+    """`--limit 0` returned no rows over a full backlog and reported an empty inbox.
+
+    An appendix row read out of the code and never observed, which is why it was
+    left: nobody types it. It is closed here because this cut makes `--limit` the
+    difference between a page and the truth, so the one value that makes the page
+    empty stops being a curiosity. `cairn notes` already refused it, and a rule
+    that holds on one paged surface out of three is one nobody relies on.
+
+    Exit 3, not a clamp. Both ways of getting it wrong lie: SQLite reads
+    `LIMIT -1` as "no limit", so a negative silently returns everything.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/analysis", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/firmware", "--machine", "bench") == 0
+    hub.send("tell", "compute/analysis", "bench/firmware", "mail that must not be reported as absent")
+
+    for limit in ("0", "-1"):
+        assert _cli(hub, "inbox", "--limit", limit) == 3, f"--limit {limit} was not refused"
+    assert hub.inbox("bench/firmware").unread == 1, "a refused read moved the cursor"

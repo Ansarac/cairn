@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from cairn.client import HubClient
-    from cairn.wire import Message
+    from cairn.wire import InboxPage
 
 MIN_STREAM_SECONDS = 1.0
 """At or below this much deadline left, do not open a stream — just poll and stop.
@@ -126,7 +126,7 @@ def wait_for_mail(  # noqa: PLR0913 - the two seams are what make this testable 
     limit: int = 50,
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
-) -> list[Message]:
+) -> InboxPage:
     """Return unread mail for `agent`, blocking up to `timeout` seconds for some.
 
     Returns an empty list if the deadline passes with nothing there, and raises
@@ -138,6 +138,14 @@ def wait_for_mail(  # noqa: PLR0913 - the two seams are what make this testable 
     test that fakes the clock while the sleep advances nothing never terminates.
     Nothing but the tests passes either.
 
+    **The predicate stays `page.messages`, never `page.unread`.** The page now
+    carries the true backlog count, which makes `unread > 0` look like the more
+    direct question and is the wrong one: this function's contract is that
+    whatever ends the wait is handed straight to the caller to print and to
+    acknowledge. A count is not something a caller can print, and stopping on one
+    while the page is empty would report a wait as satisfied by mail nobody was
+    given. `unread` rides along for the truncation line and for nothing else.
+
     It spends the whole deadline before giving up, and no more than it has to.
     Both halves are load-bearing: `cli.py` reports the number it was asked for,
     so a wait that returned early would put a duration in the transcript that
@@ -145,9 +153,9 @@ def wait_for_mail(  # noqa: PLR0913 - the two seams are what make this testable 
     caller had deliberately stayed inside.
     """
     deadline = now() + timeout
-    mail = client.inbox(agent, limit=limit)
-    if mail:
-        return mail
+    page = client.inbox(agent, limit=limit)
+    if page.messages:
+        return page
     while (remaining := deadline - now()) > MIN_STREAM_SECONDS:
         opened = now()
         rightsize = False
@@ -162,9 +170,9 @@ def wait_for_mail(  # noqa: PLR0913 - the two seams are what make this testable 
                 # subscription exists, so mail that landed in the gap between the
                 # first read above and the subscription being registered is
                 # picked up by the poll it triggers.
-                mail = client.inbox(agent, limit=limit)
-                if mail or now() >= deadline:
-                    return mail
+                page = client.inbox(agent, limit=limit)
+                if page.messages or now() >= deadline:
+                    return page
                 if deadline - now() < remaining / 2:
                     # The socket timeout in force was sized for the deadline as
                     # it stood when this stream opened, and every read restarts

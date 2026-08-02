@@ -22,6 +22,7 @@ from cairn.errors import Unreachable, UsageError
 from cairn.wire import (
     Agent,
     Artifact,
+    InboxPage,
     Message,
     MessageKind,
     Note,
@@ -157,11 +158,20 @@ class HubClient:
         with self._readable():
             return Message.from_json(answer["message"])
 
-    def inbox(self, agent: str, limit: int = 50) -> list[Message]:
-        """Fetch unread messages for `agent`, oldest first."""
+    def inbox(self, agent: str, limit: int = 50) -> InboxPage:
+        """Fetch a page of unread mail for `agent`, oldest first, with the true totals.
+
+        Returns the page even against a hub that predates the totals: they are
+        two keys on an existing response, so their absence is not an outage and
+        must not be reported as one. `InboxPage.from_json` derives both from the
+        page in that case, which reproduces exactly what this client did before
+        the totals existed — including the bell deafness they were added to fix.
+        Degrading to the old behaviour is the honest answer; refusing to talk to
+        the hub over it would not be.
+        """
         payload = self._call("GET", "/v1/inbox", agent=agent, limit=limit)
         with self._readable():
-            return [Message.from_json(m) for m in payload["messages"]]
+            return InboxPage.from_json(payload)
 
     def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:
         """Fetch a page of what `agent` sent, oldest first, and the total it has sent.

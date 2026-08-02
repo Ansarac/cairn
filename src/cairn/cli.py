@@ -307,25 +307,41 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if args.wait is not None and not (0 < args.wait < math.inf):
         msg = f"--wait needs a positive, finite number of seconds, got {args.wait:g}"
         raise UsageError(msg)
+    # Refused rather than clamped, on `cmd_notes`' reasoning and one of its own.
+    # `LIMIT 0` returns no rows over a full backlog, so the command reported an
+    # empty inbox while mail sat on the hub — and with `--wait` it did so for the
+    # whole deadline. The truncation line now catches it in the renderer too, but
+    # a caller who typed a page of nothing meant something else.
+    if args.limit < 1:
+        msg = f"--limit needs to be at least 1, got {args.limit}"
+        raise UsageError(msg)
     me = config.require_identity()
     client = _client(args)
     if args.wait is None:
-        messages = client.inbox(me, limit=args.limit)
+        page = client.inbox(me, limit=args.limit)
     else:
         from cairn import waiting
 
-        messages = waiting.wait_for_mail(client, me, timeout=args.wait, limit=args.limit)
+        page = waiting.wait_for_mail(client, me, timeout=args.wait, limit=args.limit)
+    messages = page.messages
     entries = [InboxEntry(message=m, provenance=provenance.assess(m)) for m in messages]
     # flush before the ack, not after. stdout is block-buffered off a tty and
     # nothing here handles SIGTERM, so a host killing the command in the window
     # between these two lines would move the cursor past mail that never reached
     # the terminal — the one way this command can lose a message outright.
-    print(render.inbox_json(entries) if args.json else render.inbox_text(entries, _hub(args)), end="", flush=True)
+    text = render.inbox_text(entries, page.unread, _hub(args))
+    print(render.inbox_json(entries, page.unread) if args.json else text, end="", flush=True)
     if not messages:
         if args.wait is not None:
             print(f"cairn: waited {args.wait:g}s, still nothing.", file=sys.stderr)
         return EXIT_NOTHING
     if not args.no_ack:
+        # `max(m.seq for m in messages)`, and **not** `page.head`. The page now
+        # carries the true head of the backlog, which makes it look like the
+        # tidier thing to acknowledge and would silently discard every message
+        # between the end of this page and that head — a truncated read would
+        # eat its own remainder, which is the one failure this command has never
+        # had. You acknowledge what you were shown. There is a test.
         client.ack(me, max(m.seq for m in messages))
     return 0
 
@@ -530,8 +546,14 @@ def cmd_bell(args: argparse.Namespace) -> int:
         if nudge.counter_is_fresh(me):
             count, head = nudge.read_unread(me)
         else:
-            messages = _client(args).inbox(me, limit=args.limit)
-            count, head = len(messages), max((m.seq for m in messages), default=0)
+            # Both off the page's totals, not off the page. Derived from the
+            # capped window, `head` stopped advancing as soon as the backlog
+            # passed `--limit`; the latch below then pinned to it and this bell
+            # was silent for good. The count was wrong in the same breath, so a
+            # reader with 200 waiting was told about 50 — right up until it was
+            # told about none. See `wire.InboxPage`.
+            page = _client(args).inbox(me, limit=args.limit)
+            count, head = page.unread, page.head
         if not count or head <= nudge.read_belled(me):
             print("{}")
             return 0

@@ -143,7 +143,10 @@ class _Handler(BaseHTTPRequestHandler):
             msg = "inbox requires an ?agent= parameter"
             raise UsageError(msg)
         limit = self._int_param(q, "limit", 50)
-        self._reply(200, {"messages": [m.to_json() for m in self.store.unread(agent, limit=limit)]})
+        # `unread` and `head` ride alongside `messages`, which an older client
+        # simply ignores. They are the whole of this route's change: the page was
+        # never the problem, believing it was the backlog was. See wire.InboxPage.
+        self._reply(200, self.store.unread(agent, limit=limit).to_json())
 
     def _sent(self) -> None:
         q = self._query()

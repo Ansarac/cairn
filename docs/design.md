@@ -769,7 +769,7 @@ or messaging. Not competitors; potentially complementary.
    what stayed open. The takeover report and the sender-side pin make it loud at both
    ends, which is I3 working as designed — a declaration, not enforcement — and loud is
    not access control; neither should ever be described as if it were. It is accepted on the same terms as the outage above: the network it runs on
-   is trusted, and the alternative is having no hub until §12 item 7 lands.
+   is trusted, and the alternative is having no hub until §12 item 8 lands.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
@@ -1154,7 +1154,7 @@ framework-internal orchestration, not network protocols.
    notes, which is the cursor this cut refused on purpose. It is not obvious that the
    cursor is the wrong answer any more.
 
-   One more thing worth recording for cut 6: **`UNVERIFIED` became wallpaper.** It appeared
+   One more thing worth recording for whichever cut reaches signing: **`UNVERIFIED` became wallpaper.** It appeared
    about ten times in one session, identical every time, because the hub signs nothing. The
    session did act on it — it treated every hardware claim as a claim — but reported that
    the tiering bought nothing while there was no verified message anywhere to contrast
@@ -1251,7 +1251,7 @@ framework-internal orchestration, not network protocols.
    verdict on it means something different: on the inbox `UNVERIFIED` says nobody proved
    *who sent this*; here the sender is not in question and what is unproven is that these
    are the words you sent. That is the answer to the thing item 4 recorded and left for
-   cut 6 — *`UNVERIFIED` became wallpaper … what it needs is something to differ from.*
+   signing — *`UNVERIFIED` became wallpaper … what it needs is something to differ from.*
    It now differs, without a check nobody ran and without touching signing: the verdict is
    the same honest one, and the **thing it qualifies** is different. Which is worth
    generalising, because it was not obvious: a verdict goes stale from uniformity of
@@ -1399,7 +1399,7 @@ framework-internal orchestration, not network protocols.
    which had become wallpaper needed something to differ from and that a differing
    *subject* would supply it, **did not land**. A verdict is not made legible by being
    true in a second sense on a second surface. Cut 4's row stands as written: what it
-   needs is a verified item to contrast against, which is cut 7. Cut 5 narrows that row
+   needs is a verified item to contrast against, which is item 8. Cut 5 narrows that row
    rather than retiring it, and the wording stays, because it is honest and the cost of
    being ignored is lower than the cost of being wrong.
 
@@ -1459,9 +1459,100 @@ framework-internal orchestration, not network protocols.
    currently independent. It is the first thing to revisit if the trigger already recorded
    above fires — and that trigger is one step closer than it was, because this run showed
    the manual join being performed only because the two commands happened to be batched.
-6. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred out of
-   cut 5; item 5 above records the evidence and what would trigger it.
-7. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
+6. **The inbox tells the truth about its own size.** **Done.** `/v1/inbox` returns the
+   true `unread` and the true `head` alongside the page, `cairn inbox` says when it is
+   showing you part of a backlog, and the turn-boundary bell stops going permanently
+   deaf.
+
+   **This displaced `claim`, which was next on this list, and the ordering argument is
+   the point rather than the outcome.** `claim` has had two live runs and no trigger.
+   The one contention either run produced was settled in prose in a single round trip —
+   *"I am claiming it unless you say otherwise"* answered by *"it is yours exclusively —
+   claim confirmed. Nobody is chewing it twice"* — which is this tool working, not a
+   missing affordance; and §2 has said from the beginning that one agent per rig is the
+   norm. This item, by contrast, was a **defect**, recorded in the appendix since cut 3,
+   restated in `CLAUDE.md`, and left in place three times because each cut had something
+   else to do. The rule this section applies to features — build when a live exchange
+   produces the need — has never applied to bugs, and leaving a known one in place while
+   adding surfaces is how a tool gets a reputation instead of users.
+
+   **What it was.** `cairn bell` latches on the highest seq it has announced, so a reader
+   who chose not to open the inbox gets a reminder rather than a loop. That head was
+   `max(seq)` **of the returned page**, and the page is the *oldest* `--limit` rows. So
+   the moment the backlog passed the limit the head stopped moving, the latch pinned to
+   it, and every later turn boundary compared an unmoved head against an equal latch and
+   said nothing. Permanently: new mail cannot move a head that is reading the front of a
+   queue. The count was wrong in the same breath — a reader with two hundred waiting was
+   told about fifty, right up until it was told about none. `nudge`'s counter was built
+   the same way, so the wake path went quiet alongside the hook, and the hook is the
+   primary path: only 4 of 12 live sessions publish a status the nudger can use.
+
+   **Why it defeats an invariant rather than merely annoying somebody.** I2 says the
+   receiver controls attention. That is a statement about who decides *when to read*, and
+   it presupposes the receiver is told there is something to read. A silent bell does not
+   hand the decision to the receiver; it takes it away and reports nothing. The failure
+   also runs backwards from every intuition about it — the busier the mailbox, the more
+   certain the silence.
+
+   **The fix is one shape, and the shape is the argument.** `wire.InboxPage` carries the
+   page and the two facts a page cannot carry about itself. Everything else falls out:
+   the bell and the nudger read totals instead of inferring them, `cairn inbox` gains the
+   truncation line that `notes` and the sent log have had since cut 4, and `register`'s
+   takeover report counts a skipped backlog without materialising it — which retires a
+   constant whose only job was to be bigger than any real one.
+
+   **Cut 4 wrote the rule and cited this surface as the counter-example.** *"The page
+   ships with its total, which the inbox does not, and the contrast is the argument."*
+   Cut 5's `sent` followed it. So the rule was learned on the two new surfaces and never
+   applied back to the oldest and most important one — which is the same shape as
+   `peers -c`, the column-zero body test and `render.oneline`, except inverted: not a
+   guarantee that failed to reach a new surface, but one that never reached the surface
+   that taught it. Worth stating as its own habit: **when a rule is extracted from a
+   defect, the thing it was extracted from is the first place to apply it, and it is the
+   place most likely to be skipped** — because everyone involved already knows about it.
+
+   **`PROTOCOL_VERSION` is unchanged, and here the question was live rather than
+   rhetorical.** `CLAUDE.md` had recorded this fix as "a `wire.py` change and so a
+   `PROTOCOL_VERSION` question", which it is, and the answer is no. Two keys appear on an
+   existing response and no existing field changes meaning: an old client ignores them,
+   and a new client against an old hub finds them absent, which `InboxPage.from_json`
+   reads as "this hub cannot tell me" and answers from the page. That fallback restores
+   today's deafness rather than raising, and that is the honest degradation — the old hub
+   genuinely does not know, and disconnecting over a number neither end needs to agree on
+   would break messaging to fix a bell. `Message` is untouched.
+
+   Two smaller things were closed on the way, both because this cut made them adjacent
+   rather than because they were reported. `cairn inbox --limit 0` returned no rows over a
+   full backlog and rendered as an empty mailbox; it is now refused with exit 3, as
+   `cairn notes` already did, and the renderer stays honest even if something hands it a
+   page of nothing. And the truncation line says the **oldest** N rather than the newest,
+   because an inbox is the one paged surface read from the front — a reader told "newest"
+   would go hunting for today's traffic on a page holding the three oldest things in the
+   mailbox.
+
+   **One behaviour changed that looks like a regression and is not**, so it is written
+   down before somebody re-derives it from a test. After a *partial* drain — bell rings
+   "10 unread", reader reads 3 and stops — the next turn boundary is now silent, where
+   before it rang again. The old ring was the same defect wearing its friendly face: the
+   page maximum had moved from seq 3 to seq 6, so the latch un-pinned, and the identical
+   mechanism that produced a spurious reminder here produced permanent silence when
+   nothing was drained at all. Silence is the correct answer, and the truncation line is
+   what makes it correct: the reader was told `showing the oldest 3 of 10` on its own
+   screen and chose to stop there, which is I2 exactly — the receiver controls attention.
+   Ringing to report a number the reader has just read would be the loop the latch exists
+   to prevent. New mail still rings, because new mail moves the head.
+
+   One thing deliberately left alone: **the ack still moves to the maximum seq of the
+   printed page, never to `head`.** The true head now sits one attribute away from the
+   ack and reads as the tidier thing to advance to, and advancing to it would silently
+   discard everything between the end of the page and that head — a truncated read eating
+   its own remainder, which is the one failure this command has never had. There is a
+   test whose only job is to fail if somebody makes that simplification.
+7. **`claim`** — advisory, with a constraints blob nobody interprets yet. Deferred twice
+   now, out of cut 5 and out of cut 6. Item 5 records the evidence and what would trigger
+   it: a live exchange where two agents **could not** negotiate. Both runs so far had two
+   talking sessions, which is exactly why the evidence is not there.
+8. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
 
 ---
@@ -1561,5 +1652,5 @@ of asking which is which:
 | What | Read where |
 |---|---|
 | `store.unread(limit=N)` with a backlog over N | `ORDER BY seq LIMIT ?` returns the **oldest** N, so a poll loop on a truncated window would never see the answer. This is why a wait may only ever run on an *empty* window |
-| A backlog larger than `cairn bell --limit` | `cmd_bell` computes its head from the same capped window, so once the unread count exceeds the limit the head stops moving, the latch pins to it, and the turn-boundary bell goes **permanently silent** until the reader drains below the cap by hand. `nudge`'s counter is built the same way, so the wake path goes quiet with it. Pre-existing and unreachable from cut 3 — a truncated window is non-empty, so a wait never loops on one — and deliberately not fixed here: the fix is the hub returning the true `MAX(seq)` on the inbox response, and it belongs to whichever cut next touches the bell |
-| `cairn inbox --limit 0` | `LIMIT 0` returns no rows, so the command reports an empty inbox while mail is sitting in the hub, and with `--wait` it does so for the whole deadline. Nobody types it; it is here because `--limit` is the one unvalidated numeric on the subcommand and its new neighbour is validated |
+| ~~A backlog larger than `cairn bell --limit`~~ | ~~The head is computed from the capped window, so past the limit it stops moving, the latch pins to it, and the turn-boundary bell goes **permanently silent**.~~ **Fixed in cut 6**, and worth leaving here struck through rather than deleted: it sat in this table across three cuts, each of which had something else to do, and it is the only entry that ever cost a reader mail rather than clarity. Carried for two cuts as "belongs to whichever cut next touches the bell", which turned out to mean "belongs to nobody" |
+| ~~`cairn inbox --limit 0`~~ | ~~`LIMIT 0` returns no rows, so the command reports an empty inbox while mail is sitting in the hub.~~ **Refused in cut 6.** Never observed, and closed anyway because that cut made `--limit` the difference between a page and the truth |

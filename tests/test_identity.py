@@ -58,7 +58,7 @@ def test_a_new_name_starts_at_the_head(store):
     for _ in range(3):
         store.append("tell", "sender", "old-hand", "backlog")
     store.register(_agent("newcomer", cwd="/w/new"))
-    assert store.unread("newcomer") == []
+    assert store.unread("newcomer").messages == ()
 
 
 def test_a_returning_session_keeps_its_backlog(store):
@@ -67,7 +67,7 @@ def test_a_returning_session_keeps_its_backlog(store):
     store.register(_agent("bench/firmware"))
     store.append("tell", "sender", "bench/firmware", "sent while it was down")
     store.register(_agent("bench/firmware"))
-    assert [m.body for m in store.unread("bench/firmware")] == ["sent while it was down"]
+    assert [m.body for m in store.unread("bench/firmware").messages] == ["sent while it was down"]
 
 
 def test_a_takeover_does_not_inherit_the_predecessors_mail(store):
@@ -76,7 +76,7 @@ def test_a_takeover_does_not_inherit_the_predecessors_mail(store):
     store.register(_agent("bench/firmware", machine="bench", cwd="/w/fw"))
     store.append("tell", "sender", "bench/firmware", "the flash key is in the usual place")
     store.register(_agent("bench/firmware", machine="some-other-box", cwd="/w/elsewhere"))
-    assert store.unread("bench/firmware") == []
+    assert store.unread("bench/firmware").messages == ()
 
 
 @pytest.mark.parametrize(
@@ -88,7 +88,7 @@ def test_either_half_of_the_pair_moving_counts_as_a_takeover(store, machine, cwd
     store.register(_agent("held"))
     store.append("tell", "sender", "held", "mail")
     store.register(_agent("held", machine=machine, cwd=cwd))
-    assert store.unread("held") == []
+    assert store.unread("held").messages == ()
 
 
 def test_a_takeover_is_dated_from_its_own_arrival(store):
@@ -208,9 +208,9 @@ def test_rewinding_to_the_reported_point_restores_exactly_what_was_skipped(store
         store.append("tell", "sender", "held", f"msg {i + 1}")
     store.ack("held", 2)
     taken = store.register(_agent("held", machine="elsewhere", cwd="/w/elsewhere"))
-    assert store.unread("held") == []
+    assert store.unread("held").messages == ()
     store.ack("held", taken.resume_at, rewind=True)
-    assert [m.body for m in store.unread("held")] == ["msg 3", "msg 4", "msg 5"]
+    assert [m.body for m in store.unread("held").messages] == ["msg 3", "msg 4", "msg 5"]
 
 
 def test_an_ordinary_ack_still_refuses_to_rewind(store):

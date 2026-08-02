@@ -118,12 +118,12 @@ def test_reading_the_log_moves_no_cursor(store):
     """
     store.append("tell", "compute/traces", "bench/firmware", "the knee is at 39 degrees")
     store.append("tell", "bench/firmware", "compute/traces", "derate is in place")
-    before = [m.seq for m in store.unread("bench/firmware")]
+    before = [m.seq for m in store.unread("bench/firmware").messages]
 
     store.sent("bench/firmware")
     store.sent("bench/firmware")
 
-    assert [m.seq for m in store.unread("bench/firmware")] == before
+    assert [m.seq for m in store.unread("bench/firmware").messages] == before
     assert before, "the fixture left no unread mail, so this asserted nothing"
 
 

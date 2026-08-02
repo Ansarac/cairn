@@ -120,15 +120,23 @@ rejected `cairn pending` for making. Said once per reading, where the reader is.
 """
 
 
-def inbox_json(entries: list[InboxEntry]) -> str:
+def inbox_json(entries: list[InboxEntry], total: int) -> str:
     """Render the inbox as JSON, framing first and always.
 
     `framing` is fixed and machine-readable on purpose: a program branches on
     `source` and `authority`, a model reads `notice`, and neither has to parse
     prose. It is emitted for an empty inbox too, so the shape never varies.
+
+    `unread` keeps its name and changes its value: it was `len(messages)` and is
+    now the backlog, which is what the name always claimed. `showing` is the new
+    key and the page size, matching `notes --json`. A program that had been
+    reading `unread` as a page size was reading a number that silently stopped
+    growing at `--limit`; there is no wording that makes both readings true, and
+    the one worth keeping is the one the word means.
     """
     payload = {
-        "unread": len(entries),
+        "unread": total,
+        "showing": len(entries),
         "framing": {"source": "peer-agents", "authority": "none", "notice": NOTICE},
         "messages": [e.to_json() for e in entries],
     }
@@ -231,11 +239,26 @@ def _asked(hub: str) -> str:
     return f" (hub {hub})" if hub else ""
 
 
-def inbox_text(entries: list[InboxEntry], hub: str = "") -> str:
-    """Render the inbox for reading."""
+def inbox_text(entries: list[InboxEntry], total: int, hub: str = "") -> str:
+    """Render the inbox for reading.
+
+    **The header count is the backlog, not the page**, and that is the whole
+    difference this makes. `len(entries)` is capped by `--limit`, so on a
+    truncated read it reported a smaller number than was waiting — under the word
+    "unread", which means the backlog and nothing else. The page is then
+    described on its own line by `_truncation`. The two numbers agreeing is the
+    ordinary case; when they disagree, each is saying something the other cannot.
+    """
+    if total > len(entries) and not entries:
+        # Only reachable by handing this a page of zero, which `cli` now refuses.
+        # Left honest anyway: an empty page over a non-empty backlog previously
+        # rendered as "no unread messages", which is the one answer a reader acts
+        # on without checking. See the `--limit 0` row in the appendix.
+        return f"cairn inbox: {total} unread, none of them shown — --limit asked for a page of nothing{_asked(hub)}.\n"
     if not entries:
         return f"cairn inbox: no unread messages{_asked(hub)}.\n"
-    lines = [f"cairn inbox: {len(entries)} unread · {CLAIM_CLAUSE}", ""]
+    lines = [f"cairn inbox: {total} unread · {CLAIM_CLAUSE}", ""]
+    lines.extend(_truncation(len(entries), total, end="oldest"))
     for index, entry in enumerate(entries, start=1):
         message = entry.message
         head = (
@@ -308,7 +331,7 @@ def _notes_counts(entries: list[NoteEntry]) -> str:
     return f"{counts}, {unanswered} open" if unanswered else counts
 
 
-def _truncation(shown: int, total: int) -> list[str]:
+def _truncation(shown: int, total: int, end: str = "newest") -> list[str]:
     """Return the "you are not seeing all of it" line, or nothing.
 
     Its own line at column zero, immediately under the header and **before** the
@@ -317,17 +340,21 @@ def _truncation(shown: int, total: int) -> list[str]:
     damage, and folded into the header it made a line long enough to be skimmed
     past — which is the failure it exists to prevent.
 
-    Takes counts rather than a list so that notes and the sent log share one
-    wording. Two copies of a sentence this specific would drift, and a reader who
-    learned the shape on one surface would stop trusting it on the other.
+    Takes counts rather than a list so that all three paged surfaces share one
+    wording. Three copies of a sentence this specific would drift, and a reader
+    who learned the shape on one surface would stop trusting it on the others.
 
-    `cairn inbox` truncates at `--limit` in silence, and that silence is a known
-    defect: a caller who cannot tell a full page from a complete answer will
-    eventually treat one as the other. See the appendix of docs/design.md.
+    `end` is the one thing they do not share, and it is not cosmetic. Notes and
+    the sent log keep the **newest** page, because truncation there should drop
+    ancient sediment rather than today's. An inbox keeps the **oldest**, because
+    it is a queue and a queue is read from the front — the mail at risk of being
+    dropped is the mail that has been waiting longest. Saying "newest" on the
+    inbox would send a reader looking for the recent end of a page that does not
+    contain it.
     """
     if total <= shown:
         return []
-    return [f"— showing the newest {shown} of {total}; raise --limit for the rest", ""]
+    return [f"— showing the {end} {shown} of {total}; raise --limit for the rest", ""]
 
 
 def notes_json(

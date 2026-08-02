@@ -66,9 +66,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 INBOX_LIMIT = 50
-"""How many unread messages to ask for. The count in the bell is capped by this,
-which is the same cap `cairn bell` uses; "50+ unread" and "51 unread" are the
-same fact to a reader."""
+"""How many unread messages to ask for, and it no longer caps what is counted.
+
+The hub returns the true backlog count and the true head alongside the page, so
+this bounds a transfer nobody reads rather than the number in the bell. It used
+to bound both, and the count was the harmless half: "50+ unread" and "51 unread"
+really are the same fact to a reader. The head was not harmless — pinned at the
+cap it stopped this daemon waking anybody at all, exactly when there was most to
+wake them for."""
 
 STREAM_TIMEOUT_SECONDS = 90.0
 """Socket timeout for the bell stream. Longer than the hub's heartbeat, so a
@@ -494,9 +499,12 @@ def _refresh(client: HubClient, watch: Watch, state_reader: SessionStateReader) 
     directory that is read-only: all of them are one skipped refresh.
     """
     try:
-        messages = client.inbox(watch.agent, limit=INBOX_LIMIT)
-        count = len(messages)
-        head_seq = max((m.seq for m in messages), default=0)
+        # The page is discarded; only its totals are wanted. This daemon never
+        # shows a message to anybody — it counts and it types one line — so the
+        # rows were only ever a way to arrive at a count and a head, and both
+        # were wrong past `INBOX_LIMIT`. See `wire.InboxPage`.
+        page = client.inbox(watch.agent, limit=INBOX_LIMIT)
+        count, head_seq = page.unread, page.head
         write_unread(watch.agent, count, head_seq)
         if count and head_seq > read_nudged(watch.agent) and wake(watch, count, state_reader=state_reader):
             latch_nudged(watch.agent, head_seq)
