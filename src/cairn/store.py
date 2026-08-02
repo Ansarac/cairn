@@ -31,6 +31,8 @@ import contextlib
 import difflib
 import json
 import sqlite3
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -49,6 +51,7 @@ from cairn.wire import (
     NoteEntry,
     Registration,
     SubjectSummary,
+    Withdrawal,
     normalize_subject,
     now,
 )
@@ -74,7 +77,8 @@ CREATE TABLE IF NOT EXISTS messages (
     body           TEXT NOT NULL,
     correlation_id TEXT,
     artifacts      TEXT NOT NULL,
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    retracted_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages (recipient, seq);
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender, seq);
@@ -131,6 +135,7 @@ _MIGRATIONS = (
     "ALTER TABLE notes ADD COLUMN supersedes INTEGER REFERENCES notes (id)",
     "ALTER TABLE notes ADD COLUMN deleted_at TEXT",
     "ALTER TABLE notes ADD COLUMN deleted_by TEXT",
+    "ALTER TABLE messages ADD COLUMN retracted_at TEXT",
 )
 """Columns added to a table that already exists, on the same terms as `_BACKFILL`.
 
@@ -183,6 +188,14 @@ class Store(Protocol):
 
     def ack(self, agent: str, seq: int, *, rewind: bool = False) -> int:
         """Move the cursor to `seq` and return where it now sits."""
+        ...
+
+    def retract(self, seq: int, sender: str) -> Withdrawal:
+        """Withhold a message from every mailbox that has not passed it yet."""
+        ...
+
+    def prune(self, older_than_days: int) -> tuple[int, int]:
+        """Delete old messages nobody still has unread; return how many went and how many stayed."""
         ...
 
     def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `append`
@@ -460,10 +473,16 @@ class SqliteStore:
         # cursor row — an agent that never registered — selects nothing. Binding
         # `_cursor`'s zero instead would hand every unregistered name every
         # broadcast on the hub.
+        # `retracted_at IS NULL` sits in the *shared* predicate rather than only on
+        # the row query, so it applies to `unread`, `head` and `matching` alike. A
+        # withdrawn message that still counted would ring a turn-boundary bell for
+        # mail that can never render, and latch the head on a seq nothing will ever
+        # deliver — which is docs/design.md §12 item 6's deafness, rebuilt.
         where = """FROM messages
                WHERE seq > (SELECT last_acked_seq FROM cursors WHERE agent = ?)
                  AND (recipient = ? OR recipient = ?)
-                 AND sender != ?"""
+                 AND sender != ?
+                 AND retracted_at IS NULL"""
         scope: tuple[object, ...] = (agent, agent, BROADCAST, agent)
         totals = self._db.execute(f"SELECT COUNT(*) AS c, COALESCE(MAX(seq), 0) AS h {where}", scope).fetchone()
         matching = int(totals["c"])
@@ -545,6 +564,136 @@ class SqliteStore:
             )
         row = self._db.execute("SELECT last_acked_seq FROM cursors WHERE agent = ?", (agent,)).fetchone()
         return int(row["last_acked_seq"])
+
+    def retract(self, seq: int, sender: str) -> Withdrawal:
+        """Withhold a message from every mailbox that has not passed it yet.
+
+        **A message that has been read is out of the mechanism, and cairn says so
+        rather than pretending.** Once a recipient's cursor is past it the text is
+        in somebody's context and no protocol reaches it; the honest answer is a
+        refusal, which tells the sender the thing they actually need to know — that
+        escalating is now their problem. Unsaying it is not on offer. Correcting it
+        is, and that is an ordinary message.
+
+        **A broadcast is partial by nature and reports itself that way.** One row,
+        many mailboxes, each with its own cursor: some will never see it, some
+        already have. "It worked" and "it failed" are both wrong, so the answer is
+        two numbers and a list of names. It is refused only when *no* mailbox can
+        still be spared.
+
+        The cursor is the only signal there is, and it is not perfect: a reader that
+        ran `cairn inbox --no-ack` has seen the message and left its cursor behind,
+        so this will happily withhold something already on somebody's screen. cairn
+        cannot know that, and a retraction that overstated what it achieved would be
+        worse than one that occasionally understates it.
+
+        **The body is kept**, unlike `delete_note`. Deleting a note is about text
+        that should not exist; retracting is about delivery that should not happen,
+        and the sender is owed a record in `cairn sent` of what it pulled back.
+
+        One `UPDATE`, so the window between deciding and doing is not a window: a
+        reader cannot ack in the middle of a statement.
+        """
+        row = self._db.execute("SELECT * FROM messages WHERE seq = ?", (seq,)).fetchone()
+        if row is None:
+            msg = f"no message {seq} to retract"
+            raise UsageError(msg)
+        message = _message_from_row(row)
+        if message.sender != sender:
+            msg = (
+                f"seq {seq} was sent by {message.sender}, not by you; only a sender may withdraw its own words. "
+                f"To correct somebody else's, send a message saying so"
+            )
+            raise UsageError(msg)
+        if message.retracted:
+            msg = f"seq {seq} was already withdrawn on {message.retracted_at}"
+            raise UsageError(msg)
+        holders = self._holders(message)
+        still = tuple(name for name, cursor in holders if cursor < seq)
+        gone = tuple(name for name, cursor in holders if cursor >= seq)
+        if not still:
+            who = ", ".join(gone) or "nobody it was addressed to is registered any more"
+            msg = (
+                f"too late: seq {seq} has already been read by {who}. It is out of the pipe and out of cairn's "
+                f"reach — say what changed in a new message instead"
+            )
+            raise UsageError(msg)
+        self._touch(sender)
+        withdrawn = now()
+        self._db.execute("UPDATE messages SET retracted_at = ? WHERE seq = ?", (withdrawn, seq))
+        return Withdrawal(message=replace(message, retracted_at=withdrawn), withheld=len(still), read_by=gone)
+
+    def _holders(self, message: Message) -> list[tuple[str, int]]:
+        """Return every mailbox this message was addressed to, with where its cursor sits.
+
+        A name for a direct message; everyone but the sender for a broadcast — the
+        same predicate `unread` selects on, read from the other end. An agent that
+        registered *after* the send has its cursor parked at the head by
+        `register`, so it counts as past the message, which is exactly right: it
+        was never going to be given it.
+        """
+        rows = self._db.execute(
+            """SELECT c.agent AS agent, c.last_acked_seq AS seq FROM cursors c
+               WHERE c.agent != ? AND (? = ? OR c.agent = ?)""",
+            (message.sender, message.recipient, BROADCAST, message.recipient),
+        ).fetchall()
+        return [(r["agent"], int(r["seq"])) for r in rows]
+
+    def prune(self, older_than_days: int) -> tuple[int, int]:
+        """Delete old messages nobody still has unread, and report what stayed.
+
+        **The pipe is not sediment.** A message is addressed to a session and read
+        once; notes are what outlive one. So this deletes outright rather than
+        leaving tombstones — a tombstone per pruned line of shift traffic would be
+        the thing pruning exists to remove, in a smaller font.
+
+        **It cannot take undelivered mail, and that is the whole safety property.**
+        "The peer was switched off for a week and got its backlog anyway" is the
+        premise of the product; a cleanup that could break it would be worse than
+        no cleanup. So the predicate is not age alone: a message goes only when no
+        registered mailbox still has a cursor below it. Anything held back is
+        counted and reported, because a prune that quietly did less than asked is
+        the silent shape this project keeps refusing.
+
+        **The cutoff is computed here, on the hub's clock**, from a number of days
+        rather than an instant. Every `created_at` in this table was stamped by
+        this clock, and letting a caller send an absolute cutoff would reintroduce
+        exactly the two-clock arithmetic §12 item 12 took out of `peers`.
+
+        Retracted mail is prunable on the same terms as anything else: nobody can
+        read it, so nobody's cursor is waiting on it.
+        """
+        if older_than_days < 1:
+            msg = f"--older-than needs at least 1 day, got {older_than_days}; there is no safe way to prune today"
+            raise UsageError(msg)
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat(timespec="seconds")
+        cutoff = cutoff.replace("+00:00", "Z")
+        # `m.retracted_at IS NULL` inside the hold, not outside it. A withdrawn
+        # message is unreadable by construction, so no cursor is waiting on it and
+        # nothing is lost by taking it — but a cursor sitting below its seq looks
+        # exactly like a cursor waiting for it, and without this clause the one
+        # class of message that is guaranteed safe to prune would be the class
+        # that never got pruned. Found live, against the docstring above it.
+        held = """AND m.retracted_at IS NULL
+                  AND EXISTS (SELECT 1 FROM cursors c
+                              WHERE c.last_acked_seq < m.seq AND c.agent != m.sender
+                                AND (m.recipient = ? OR m.recipient = c.agent))"""
+        scope = (cutoff, BROADCAST)
+        kept = int(
+            self._db.execute(f"SELECT COUNT(*) AS c FROM messages m WHERE m.created_at < ? {held}", scope).fetchone()[  # noqa: S608 - `held` is a literal; every value is a bound parameter
+                "c"
+            ]
+        )
+        cursor = self._db.execute(
+            f"SELECT COUNT(*) AS c FROM messages m WHERE m.created_at < ? AND NOT ({held.removeprefix('AND ')})",  # noqa: S608 - ditto
+            scope,
+        ).fetchone()
+        removable = int(cursor["c"])
+        self._db.execute(
+            f"DELETE FROM messages WHERE seq IN (SELECT m.seq FROM messages m WHERE m.created_at < ? AND NOT ({held.removeprefix('AND ')}))",  # noqa: S608, E501 - ditto
+            scope,
+        )
+        return removable, kept
 
     # -- notes ----------------------------------------------------------------
 
@@ -1137,4 +1286,5 @@ def _message_from_row(row: sqlite3.Row) -> Message:
         correlation_id=row["correlation_id"],
         artifacts=tuple(Artifact.from_json(a) for a in json.loads(row["artifacts"])),
         created_at=row["created_at"],
+        retracted_at=row["retracted_at"] or "",
     )

@@ -30,6 +30,7 @@ from cairn.wire import (
     Registration,
     SubjectSummary,
     WireError,
+    Withdrawal,
     dumps,
     envelope,
     loads,
@@ -229,6 +230,25 @@ class HubClient:
         answer = self._call("POST", "/v1/ack", payload)
         with self._readable():
             return int(answer["cursor"])
+
+    def retract(self, seq: int, sender: str) -> Withdrawal:
+        """Withhold a message from every mailbox that has not passed it yet."""
+        answer = self._call("POST", "/v1/retract", {"seq": seq, "sender": sender})
+        with self._readable():
+            return Withdrawal.from_json(answer)
+
+    def prune(self, older_than_days: int) -> tuple[int, int]:
+        """Delete old messages nobody still has unread; return how many went and how many stayed.
+
+        Days rather than an instant, deliberately. Every `created_at` on the hub
+        was stamped by the hub's clock, so a cutoff computed here would be this
+        machine's arithmetic about somebody else's timestamps — the two-clock bug
+        docs/design.md §12 item 12 took out of `peers`, rebuilt on a command that
+        deletes things.
+        """
+        answer = self._call("POST", "/v1/prune", {"older_than_days": older_than_days})
+        with self._readable():
+            return int(answer["removed"]), int(answer["kept"])
 
     def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `send`
         self,

@@ -217,6 +217,21 @@ cairn inbox --since 41   # only what arrived after seq 41; marks nothing read
 cairn inbox --json       # for parsing
 ```
 
+**You can take back a message nobody has read yet, and only that.**
+
+```bash
+cairn retract 41
+```
+
+While a message is still behind the recipient's cursor it is in the hub and the
+hub can withhold it. Once they have read it, this **fails** and tells you who
+read it — the words are in somebody's context and nothing cairn does reaches
+them. That failure is the answer, not an obstacle: what is left is to send a new
+message saying what changed, and now you know who needs it. A broadcast is
+partial and says so (`withdrew seq 3 from 2 mailboxes · too late for
+compute/analysis`). You may only retract your own sends. Your `cairn sent` keeps
+the row, marked `WITHDRAWN`, so you have a record of what you pulled.
+
 **Reading consumes.** Plain `cairn inbox` moves your read cursor, so mail you
 read and then lose to a crash is no longer waiting for you. Capture the output
 before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are

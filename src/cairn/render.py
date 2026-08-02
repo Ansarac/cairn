@@ -676,8 +676,13 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
     lines.extend(_truncation(len(entries), total))
     for entry in entries:
         message = entry.message
+        # `WITHDRAWN` shouted and next to the seq, because this is the one surface
+        # it appears on at all: a retracted message is filtered out of every
+        # recipient's inbox, so if the sender's own log did not say so, the row
+        # would read exactly like one that was delivered.
+        withdrawn = f" · WITHDRAWN {oneline(message.retracted_at)}" if message.retracted else ""
         lines.append(
-            f"seq {message.seq} · {message.kind} · to {oneline(message.recipient)}"
+            f"seq {message.seq} · {message.kind} · to {oneline(message.recipient)}{withdrawn}"
             f" · {entry.provenance.token()} · {oneline(message.created_at)}"
         )
         if message.correlation_id:
@@ -687,6 +692,11 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
         lines.extend(f"    {line}" for line in message.body.splitlines() or [""])
         lines.append("")
     lines.append(f"— {UNANSWERED_CLAUSE}")
+    if any(e.message.retracted for e in entries):
+        lines.append(
+            "— a WITHDRAWN message was pulled back before anyone read it; anybody whose cursor had already "
+            "passed it still has it"
+        )
     lines.append(f"— {RECORD_CLAUSE}")
     lines.extend(f"— {note}" for note in _provenance_notes(e.provenance for e in entries))
     return "\n".join(lines).rstrip() + "\n"

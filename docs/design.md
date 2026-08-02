@@ -2114,6 +2114,72 @@ framework-internal orchestration, not network protocols.
     exists to end. The hub echoes the stored row, and the client refuses when the link is
     not in it. Same shape as item 11's window check, and the third time this rule has
     earned itself.
+15. **Taking mail back out of the pipe, and clearing the pipe out.** **Done.**
+    `cairn retract <seq>` withholds a message from every mailbox that has not passed it;
+    `cairn prune --older-than DAYS` deletes old traffic nobody still has unread.
+
+    **Retraction is the half of item 14 that survived the argument against it.** Item 14
+    records why a *correction* to a message is just another message: it has left the
+    mechanism. A message still sitting behind somebody's cursor has not — it is in the
+    hub, undelivered, and the hub controls its own delivery. That is the line, and it is
+    also the whole feature: this works while the mail is in the pipe and refuses when it
+    is out of it.
+
+    **The refusal is the useful half, and that is not a consolation.** A command that
+    reported success on already-read mail would leave a sender believing it had unsaid
+    something at exactly the moment that matters. What this says instead is *who read it*,
+    which turns "I cannot fix this" into "I know who to talk to". Nothing else cairn could
+    do would be worth more.
+
+    **A broadcast is partial by nature and reports itself that way.** One row, many
+    mailboxes, one cursor each — so "it worked" and "it failed" are both wrong, and the
+    answer is a count and a list of names. It is refused only when no mailbox at all can
+    still be spared.
+
+    **The clause that matters is in the shared predicate, not on the page query.** A
+    withdrawn message has to leave `unread`, `head` *and* `matching` together: one that
+    still counted would ring a turn-boundary bell for mail that can never render and then
+    latch the head on a seq nothing will ever deliver. That is item 6's deafness rebuilt
+    from the other side, and it would have been invisible in every test that only checked
+    the page.
+
+    **The one ownership check in cairn, and it is not the question `settle` answers.**
+    Settling and superseding *add*, so anybody may — whoever knows the answer is frequently
+    not whoever asked. Retracting *removes*, and removing somebody else's message from a
+    mailbox they were addressed in is not a correction, it is an interception. The body is
+    kept, unlike a deleted note: deleting a note is about text that should not exist, while
+    this is about delivery that should not happen, and the sender is owed a record of what
+    it pulled back.
+
+    The cursor is the only signal available and it is not perfect: a reader that ran
+    `cairn inbox --no-ack` has seen the message and left its cursor behind, so a retraction
+    can withhold something already on somebody's screen. Documented rather than fixed —
+    cairn cannot know, and a retraction that *overstated* what it achieved would be the
+    worse failure.
+
+    **Pruning deletes outright, and the asymmetry with notes is the point.** A message is
+    addressed to a session and read once; a note is what outlives one. So there are no
+    tombstones here — a tombstone per pruned line of shift traffic is the thing pruning
+    exists to remove, in a smaller font — and notes are never touched at any age.
+
+    **What it may not do is the safety property.** *"The peer was switched off for a week
+    and got its backlog anyway"* is the premise of the product, so age alone is not the
+    predicate: a message goes only when no registered mailbox still has a cursor below it,
+    and whatever is held back is counted and said out loud. Manual, never a timer — the
+    thing that decides when a shift's traffic can go is a person who knows what the shift
+    was.
+
+    **The cutoff is days, computed on the hub's clock.** Letting a caller send an absolute
+    instant would put this machine's arithmetic on somebody else's timestamps, which is the
+    two-clock bug item 12 took out of `peers`, rebuilt on a command that deletes things.
+
+    **One defect found live, against this method's own docstring.** The hold predicate
+    counted a *retracted* message as still-unread whenever a cursor sat below its seq — so
+    the one class of message guaranteed safe to prune, because nobody can read it, was the
+    class that never got pruned. The liveness clause belongs inside the hold rather than
+    beside it. It has a test, and the test says where it came from.
+
+    `PROTOCOL_VERSION` does not move: one optional field on `Message`, two new paths.
 
 ---
 

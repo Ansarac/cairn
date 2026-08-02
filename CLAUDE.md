@@ -219,6 +219,10 @@ silently serve you stale code, and each has cost a session real time:
 - `pkill -f "cairn hub --port 7801"` **kills the shell issuing it**, because the
   pattern matches its own command line.
   Break the pattern so it cannot match your own command line: `pgrep -af "port 777[8]"`.
+  **The bracket only helps while the port appears nowhere else on that line.** It
+  loses to `export CAIRN_HUB=http://127.0.0.1:7778 && pkill -f "port 777[8]"`, and
+  to `pgrep -f "port 777"` itself. Four hits in one session, one of which ate a
+  commit. Match nothing at all instead: `fuser -k 7778/tcp`.
 
 ```bash
 just check      # lint + format check + the vendor guard + pytest — the whole CI gate
