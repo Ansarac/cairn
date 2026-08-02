@@ -128,6 +128,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/v1/subjects/archive": self._archive_subject,
                 "/v1/messages": self._send,
                 "/v1/ack": self._ack,
+                "/v1/retract": self._retract,
+                "/v1/prune": self._prune,
                 "/v1/notes": self._write_note,
                 "/v1/notes/delete": self._delete_note,
             }
@@ -247,6 +249,20 @@ class _Handler(BaseHTTPRequestHandler):
         obj = self._read()
         cursor = self.store.ack(str(obj.get("agent", "")), int(obj.get("seq") or 0), rewind=bool(obj.get("rewind")))
         self._reply(200, {"cursor": cursor})
+
+    def _retract(self) -> None:
+        obj = self._read()
+        withdrawal = self.store.retract(seq=int(obj.get("seq") or 0), sender=str(obj.get("sender", "")))
+        self._reply(200, withdrawal.to_json())
+        # No `notifier.publish`. A bell carries a count, and the count a reader
+        # would compute a moment later is already right — `store.unread` stopped
+        # counting this message the instant it was withdrawn. Ringing to announce
+        # a subtraction would be the first bell that means "look again at nothing".
+
+    def _prune(self) -> None:
+        obj = self._read()
+        removed, kept = self.store.prune(int(obj.get("older_than_days") or 0))
+        self._reply(200, {"removed": removed, "kept": kept})
 
     def _write_note(self) -> None:
         obj = self._read()

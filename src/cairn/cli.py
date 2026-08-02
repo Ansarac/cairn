@@ -392,6 +392,54 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retract(args: argparse.Namespace) -> int:
+    """Withhold a message the recipient has not read yet.
+
+    **It fails when the message has been read, and the failure is the useful
+    half.** Once a cursor is past it the text is in somebody's context and no
+    protocol reaches it; a command that reported success anyway would leave the
+    sender believing something untrue at exactly the moment that matters. What it
+    says instead is who has already read it, which is what turns "I cannot fix
+    this" into "I know who to talk to".
+
+    A broadcast is partial by nature — one message, many mailboxes, one cursor
+    each — so this reports both halves rather than picking a verdict.
+    """
+    me = config.require_identity()
+    withdrawal = _client(args).retract(args.seq, me)
+    print(f"withdrew seq {withdrawal.message.seq} from {withdrawal.withheld} mailbox{_es(withdrawal.withheld)}")
+    if withdrawal.read_by:
+        names = ", ".join(render.oneline(name) for name in withdrawal.read_by)
+        print(f"  too late for {names} — already read it; a correction has to be a new message")
+    return 0
+
+
+def _es(count: int) -> str:
+    """Pluralise "mailbox". Its own helper because `bell_reason` records what a bare `s` cost."""
+    return "" if count == 1 else "es"
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    """Delete old messages nobody still has unread.
+
+    Manual on purpose and never a timer. A pipe should not keep years of history,
+    but the thing that decides when to clear it is a person who knows what the
+    shift was, not a clock nobody is watching.
+
+    It cannot take undelivered mail. "The peer was switched off for a week and
+    still got its backlog" is the premise of the product, so anything still unread
+    by a registered mailbox stays and is counted out loud.
+    """
+    removed, kept = _client(args).prune(args.older_than)
+    print(f"pruned {removed} message{'' if removed == 1 else 's'} older than {args.older_than} days")
+    if kept:
+        plural = "message is" if kept == 1 else "messages are"
+        print(f"  {kept} older {plural} still unread by somebody, so they stayed")
+    if not removed:
+        return EXIT_NOTHING
+    return 0
+
+
 def cmd_sent(args: argparse.Namespace) -> int:
     """Read back what this session has sent.
 
@@ -1117,6 +1165,32 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p = sub.add_parser("forget", help="drop this directory's pin for a name that has legitimately moved")
     p.add_argument("name")
     p.set_defaults(func=cmd_forget)
+
+    p = sub.add_parser(
+        "retract",
+        help="withhold a message the recipient has not read yet",
+        description=(
+            "Pull back one of your own messages. It works only while the message is still in the pipe: "
+            "once a recipient's cursor is past it the words are in somebody's context and cairn cannot "
+            "reach them, so this refuses and tells you who read it. A broadcast is partial — it reports "
+            "how many mailboxes it spared and who it was too late for."
+        ),
+    )
+    p.add_argument("seq", type=int, help="the seq printed by `cairn tell` or `cairn sent`")
+    p.set_defaults(func=cmd_retract)
+
+    p = sub.add_parser(
+        "prune",
+        help="delete old messages nobody still has unread",
+        description=(
+            "Clear old traffic off the hub. Messages are a pipe rather than sediment, so this deletes "
+            "outright — notes are the thing meant to outlive a session, and they are never touched. "
+            "Anything still unread by a registered mailbox stays put and is counted, because a peer that "
+            "was switched off for a week is supposed to come back to its backlog."
+        ),
+    )
+    p.add_argument("--older-than", type=int, default=30, metavar="DAYS", help="cutoff, on the hub's clock")
+    p.set_defaults(func=cmd_prune)
 
     p = sub.add_parser("ack", help="move the read cursor by hand")
     p.add_argument("seq", type=int)

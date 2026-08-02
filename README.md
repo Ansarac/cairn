@@ -112,6 +112,7 @@ cairn inbox                                        # read, and mark read
 cairn inbox --wait 90                              # ...or stand still for a reply
 cairn inbox --since 41                             # ...or walk a backlog, marking nothing read
 cairn sent                                         # what you already told anyone
+cairn retract 41                                   # ...unsay one, if nobody has read it yet
 cairn subject rig-a/chamber "thermal chamber on rig A, 40C target"
 cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
 cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
@@ -142,6 +143,15 @@ offset, which cut a record in half. `cairn inbox --since <the last seq shown>`
 starts after it, and every entry prints its seq. A windowed read **marks nothing
 read**: everything below the window was not shown, so `cairn ack <seq>` is how you
 finish, once you have dealt with it.
+
+`cairn retract <seq>` withholds a message that is still behind the recipient's
+cursor, and **fails** once they have read it — naming who did. That refusal is the
+honest answer: read mail is in somebody's context and no protocol reaches it, so
+what is left is a new message saying what changed. A broadcast is partial and
+reports both halves. `cairn prune --older-than 30` clears old traffic off the hub,
+and cannot touch anything a registered mailbox still has unread — a peer switched
+off for a week is supposed to come back to its backlog. Notes are never pruned at
+any age; they are the thing meant to outlive a session.
 
 Big things never go in a message. Send a reference:
 

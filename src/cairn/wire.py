@@ -194,6 +194,14 @@ class Message:
 
     Deliberately has no `verified`, no `trusted` and no `origin_is_human` field.
     A sender must not be able to assert its own trustworthiness; see `Provenance`.
+
+    `retracted_at` is the sender withdrawing mail that is **still in the pipe**.
+    It never reaches a recipient — `store.unread` filters it out entirely — so the
+    only surface it appears on is the sender's own `cairn sent`, where a row that
+    was withdrawn must not read as one that was delivered. The body is kept, and
+    that is the difference from `Note.deleted_at`: deleting a note is about text
+    that should not exist, while retracting is about delivery that should not
+    happen, and the sender is owed a record of what it pulled back.
     """
 
     seq: int
@@ -204,6 +212,12 @@ class Message:
     correlation_id: str | None = None
     artifacts: tuple[Artifact, ...] = ()
     created_at: str = field(default_factory=now)
+    retracted_at: str = ""
+
+    @property
+    def retracted(self) -> bool:
+        """Return whether the sender pulled this back before it was read."""
+        return bool(self.retracted_at)
 
     def to_json(self) -> dict[str, Any]:
         """Return the wire form."""
@@ -216,6 +230,7 @@ class Message:
             "correlation_id": self.correlation_id,
             "artifacts": [a.to_json() for a in self.artifacts],
             "created_at": self.created_at,
+            "retracted_at": self.retracted_at,
         }
 
     @classmethod
@@ -238,6 +253,7 @@ class Message:
             correlation_id=obj.get("correlation_id"),
             artifacts=tuple(Artifact.from_json(a) for a in obj.get("artifacts") or ()),
             created_at=obj.get("created_at") or now(),
+            retracted_at=str(obj.get("retracted_at") or ""),
         )
 
 
@@ -455,6 +471,35 @@ class SentEntry:
                 "detail": self.provenance.detail,
             },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class Withdrawal:
+    """What retracting a message actually managed to do.
+
+    Output only. It exists because a retraction on a broadcast is **partial by
+    nature** — one row, many mailboxes, each with its own cursor — so "it worked"
+    and "it failed" are both wrong answers. `withheld` is how many mailboxes will
+    now never see it and `read_by` names the ones that already had it, because a
+    sender who has just failed to unsay something needs to know exactly who heard.
+    """
+
+    message: Message
+    withheld: int = 0
+    read_by: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form."""
+        return {"message": self.message.to_json(), "withheld": self.withheld, "read_by": list(self.read_by)}
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the rendering form."""
+        return cls(
+            message=Message.from_json(_require(obj, "message", dict)),
+            withheld=int(obj.get("withheld") or 0),
+            read_by=tuple(str(name) for name in obj.get("read_by") or ()),
+        )
 
 
 @dataclass(frozen=True, slots=True)
