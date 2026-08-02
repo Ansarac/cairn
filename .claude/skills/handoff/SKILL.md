@@ -54,15 +54,39 @@ clean tree or a green suite you did not just observe.
 > **Why something is the way it is, and what it cost to find out** → `docs/design.md`
 > **This handover only** → `handoffs/HANDOFF.md`
 
-`CLAUDE.md` carries rules and hazards. It must carry **no state**: no current status,
-no dates, no in-progress work. *If you are about to write a date into `CLAUDE.md`, the
-content belongs somewhere else.* The test is narrow: **would a session that has not
-read this do something wrong or expensive?** "The bell must never fail loudly"
-qualifies. "We are mid-way through cut 2" does not.
+### `CLAUDE.md` is the expensive one, and the default answer is no
+
+**§3's anti-bloat rules apply here first and harder**, which is the opposite of what
+the table above suggests. `HANDOFF.md` is read once and overwritten. `CLAUDE.md` is
+loaded in full into **every session, forever**, before anyone knows the task — so a line
+that changes nobody's behaviour still costs attention on every unrelated task. Cheap to
+add, paid for indefinitely. Hence one constraint the handoff does not have: **it should
+rarely change.** A session that edits it is unusual; one that adds three sections has
+misfiled something.
+
+Three exits, in order, before it is even a candidate:
+
+1. **A point of use** — a docstring on the constant, function or test somebody must be
+   editing anyway. Read exactly when relevant, free otherwise. Most "hazards" are this.
+2. **Reasoning** → `docs/design.md`, however painful it was to learn.
+3. **This user, or how to run the loop** → memory.
+
+Then the bar, all three at once: **likely, damaging, and invisible where the mistake is
+made.** Not "would a session do something wrong" — everything passes that.
+
+**Carry the rule, not its evidence.** The bloat arrives as a real one-line rule wearing
+the whole incident that produced it, when the incident is already in `docs/design.md`.
+Imperative plus pointer. A paragraph that persuades rather than instructs is in the
+wrong file.
+
+**Report the delta**, `git show <base>:CLAUDE.md | wc -l` against now. Growth is a claim
+to be defended line by line, in public. Across this project's history the file has only
+ever gone up, and the largest jumps came from the sessions most pleased with themselves.
 
 | The item is… | it goes to |
 |:--|:--|
-| a rule or hazard that prevents damage, waste, or a silent break | **`CLAUDE.md`** — a line or a row, then link out |
+| a hazard that is likely, damaging, **and** invisible at the point of use | **`CLAUDE.md`** — one line, then link out. Read the section above first |
+| a hazard with a natural point of use | the docstring there, not `CLAUDE.md` |
 | an architectural decision, or an option considered and **rejected** | `docs/design.md`, in the relevant §, **with the reasoning** |
 | a measurement | the measurements table in the `docs/design.md` appendix |
 | a change to what cairn is or is not | `README.md` "What it is not", and `docs/design.md` §1 |
@@ -121,10 +145,9 @@ promotion did not happen — say so out loud rather than shipping the growth.
 
 ## 3b. If the session ran a live hub, archive its database
 
-A live run is where most of `docs/design.md`'s reasoning comes from, and a scratch hub
-lives in `/tmp` — so the evidence behind a paragraph evaporates on the next reboot while
-the paragraph stays, and a claim nobody can re-read is a claim that gets re-argued from
-zero. Copy it while the hub is still up:
+Most of `docs/design.md`'s reasoning comes from live runs, and a scratch hub lives in
+`/tmp` — so the evidence evaporates while the paragraph stays, and a claim nobody can
+re-read gets re-argued from zero. While the hub is still up:
 
 ```python
 import sqlite3
@@ -134,10 +157,9 @@ dst = sqlite3.connect("handoffs/archive/<cut>.db")
 src.backup(dst)
 ```
 
-Render a companion `.md` **through the commands a reader would actually run**, not as a
-table dump — that is what preserves the framing tiers invariant I1 specifies. `handoffs/`
-is gitignored, so the copy survives locally without putting a run's raw prose into a
-public repository, and the handoff points at it.
+Render the companion `.md` **through the commands a reader would actually run** rather
+than as a table dump, so the I1 framing tiers survive. `handoffs/` is gitignored: the
+copy stays local, and the handoff points at it.
 
 ## 4. Commit, then emit the paste prompt
 
@@ -152,26 +174,22 @@ Continue cairn. Read handoffs/HANDOFF.md and the docs/design.md § it points at,
 then: <one concrete action>
 ```
 
-## Reminders specific to this repo
+## What this repo needs said in the handoff itself
 
-- **`wire.py` is the contract.** A changed shape needs `PROTOCOL_VERSION` bumped in the
-  same commit. Nothing will tell you otherwise until two machines disagree in the field.
-- **The vendor guard is easy to trip and easy to defeat.** If `just guard` went red, move
-  the knowledge into `src/cairn/adapters/`. Widening the grep in the justfile or CI is
-  never the fix, and doing it quietly hollows out the project's main claim.
-- **The invariant tests are not ordinary tests.**
-  `tests/test_wire.py::test_a_sender_cannot_claim_its_own_message_is_verified` asserts an
-  absence, and everything in `tests/test_render.py` asserts framing. Both look cosmetic
-  and are not. If a session weakened either, that belongs in the handoff in bold.
-- **`tests/test_walking_skeleton.py` is the load-bearing test.** If it is red, report that
-  first and do not describe anything else as working.
+`CLAUDE.md` already carries the rules; repeating them here would be the same bloat this
+skill exists to prevent. These are about **reporting**, which is a different act.
+
 - **Re-run `just check` yourself after subagent edits.** Their "all checks passed"
   routinely predates their last write.
-- **Scope creep here has one specific shape**: something that needs cairn to start,
-  resume or drive a session. That is excluded by design (`README.md` "What it is not").
-  If a session drifted that way, say so plainly — it is the failure mode that killed the
-  closest comparable project.
+- **If `tests/test_walking_skeleton.py` is red, that is the first sentence**, and nothing
+  else may be described as working.
+- **If the session weakened an invariant test — the absence assertion in
+  `tests/test_wire.py`, or anything in `tests/test_render.py` — say so in bold.** They
+  look cosmetic. They are the two invariants in executable form.
+- **If the session drifted toward starting, resuming or driving a session, say so
+  plainly.** That is out of scope by design, and it is the failure mode that killed the
+  closest comparable project — a drift nobody names is a drift that continues.
+- **Name every file you changed that changes future behaviour**: `CLAUDE.md` (with its
+  line delta), `skills/cairn/SKILL.md`, this file. All three are easy to leave
+  unmentioned and all three outlive the session.
 - Cite `file:line` for anything a reader will need to act on.
-- If the session touched `CLAUDE.md`, `skills/cairn/SKILL.md`, or this file, say so —
-  those change how future sessions and peer agents behave, and are easy to leave
-  unmentioned.

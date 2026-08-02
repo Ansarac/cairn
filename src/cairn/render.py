@@ -116,6 +116,13 @@ def _asked(hub: str) -> str:
     eye. A rule applied to three surfaces out of four is one a reader stops
     trusting, so it goes on all of them.
 
+    **Every new branch that answers "nothing" has to call this**, and that is not
+    a style note — `peers -c` rebuilt the same lie within an hour of the rule
+    landing, reporting three registered agents as an empty hub because a filter
+    matching nothing was a third explanation the code did not know about. Skipping
+    it on one surface is worse than none of them having it: a reader who has
+    learned to look for the hub and does not find it concludes the wrong thing.
+
     Empty string when the caller has no hub to name, which keeps the older
     single-argument calls — and their tests — meaning what they always did.
     """

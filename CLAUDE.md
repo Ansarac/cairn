@@ -201,11 +201,6 @@ stream tears itself down on a timer.
 until it has all `n` bytes or the connection closes, so a sixty-byte bell sits
 unseen behind a 4 KiB buffer. This was measured, and the obvious code is wrong.
 
-**Every new "nothing" branch has to carry `render._asked`.** Skipping it on one
-surface is worse than none of them having it — a reader who has learned to look
-for the hub and does not find it concludes the wrong thing. That docstring says
-why, and `peers -c` rebuilt the same lie within an hour of the rule landing.
-
 **Only ever type into a session reported `idle`.** `busy` fights the input buffer;
 `waiting` means the session is on a prompt, so the nudge becomes the answer to it;
 an unrecognised status is not a safe status. A record whose pid is dead is not
