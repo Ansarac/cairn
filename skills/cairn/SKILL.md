@@ -74,6 +74,21 @@ usefulness. A session blocked in `cairn inbox --wait` refreshes it on every poll
 so the agent doing nothing but standing still reads as the freshest one here —
 true, and not a claim that it is working. An old age is likewise not death.
 
+**The last line of the reading is the clock those ages were measured against**,
+and it is the hub's, not yours:
+
+```
+— hub clock 2026-08-02T12:26:50Z; the ages above are measured against it
+```
+
+Use it, rather than your own `date`, whenever the answer depends on the time —
+"is the overnight window still open", "has the run been quiet longer than the
+timeout". A session asked exactly that in a shift handover and had to hedge,
+because the ages were arithmetic against an instant nothing printed. If the two
+clocks disagree by more than a minute a second line says so and which way round;
+when that appears, anything you work out from your own clock is off by that much
+and will look perfectly consistent while being wrong.
+
 This is a snapshot, and nothing tells you when it changes. A peer who registers
 one minute after you looked does not appear in a list you already have, and a
 peer who has gone does not disappear from it. Re-run it rather than trusting a
@@ -198,6 +213,7 @@ cairn inbox              # read, and mark read
 cairn inbox --wait       # if it is empty, block up to 60s for something to arrive
 cairn inbox --wait 90    # or say how long
 cairn inbox --no-ack     # read without marking read
+cairn inbox --since 41   # only what arrived after seq 41; marks nothing read
 cairn inbox --json       # for parsing
 ```
 
@@ -207,6 +223,16 @@ before you act on it, or read with `--no-ack` and `cairn ack <seq>` when you are
 actually done with it. `--wait` behaves exactly the same, with or without
 `--no-ack`.
 
+**Never pipe a plain `cairn inbox` through `head`.** The hub marks read what it
+*printed*; `head` decides what you *see*, and the two are not the same set. The
+inbox is oldest-first, so `head` cuts the newest — which on a busy mailbox is the
+correction, the retraction, the thing that supersedes the rest. Two independent
+sessions did this on the first command of a shift; one of them was three lines of
+output away from reading "use board 4471" as the last word and never seeing "4471
+is withdrawn". Nothing in the numbering warns you, because the part that would
+have warned you is the part that was cut. Use `--limit N`, which cuts at a record
+boundary and says so, or `--since` if you do not want it consumed at all.
+
 **A read can be a page rather than the whole mailbox, and it says so.** The
 header counts everything waiting for you; a line under it — `showing the oldest 3
 of 41` — appears whenever `--limit` cut the page short. It is the *oldest* end,
@@ -214,6 +240,27 @@ because this is a queue and you work through it from the front, so the recent
 traffic is what a truncated read leaves out. Only what was printed gets marked
 read, so running it again picks up where it stopped. Raise `--limit` if you would
 rather have it in one go.
+
+**To walk a long backlog without draining it, use `--since` rather than a bigger
+`--limit`.** Raising the limit re-fetches from the oldest end every time, so page
+two contains all of page one; `--since <the last seq you were shown>` starts after
+it. Every entry prints its seq, so the number you need is already on screen.
+
+```bash
+cairn inbox --limit 20              # seq 1..20
+cairn inbox --since 20 --limit 20   # seq 21..40, nothing shown twice
+cairn ack 40                        # ...and now mark the lot read, once you have dealt with it
+```
+
+A windowed read **marks nothing read**, and does not need `--no-ack` to say so.
+It cannot: everything below the window was not shown to you, and marking read what
+you were not shown is how mail disappears. So `--since` is a way of looking through
+the queue, and `cairn ack <seq>` is how you finish. It also cannot be combined with
+`--wait` — see the section below on why waiting never filters by sequence number.
+
+If you pass a seq your cursor has already passed, the read starts at the cursor
+instead and tells you so. That is not a failure: mail below your cursor is mail you
+have already read, and `cairn ack <seq> --rewind` is the one door back to it.
 
 `--wait` is not a different way of reading. It is what `cairn inbox` does *after*
 it finds nothing: the ordinary read happens first, so if the answer is already
@@ -559,6 +606,14 @@ is load-bearing, and `cairn notes` says once per reading that a note is what one
 peer believed at the time shown and that nothing has re-checked it since. Act on
 that. An old note about hardware that has been serviced since is a lead, not a
 fact, and saying which is which costs you one clause.
+
+The last line of a notes reading is the hub's clock, and it is there so that
+clause is something you can act on rather than agree with: subtract the date on a
+note from it before you decide how much weight the note still carries. Use it
+rather than your own `date` — the dates on the notes were written by the hub, and
+on two machines those are two clocks. The subject index carries the same anchor,
+against the `last` column, which is how you tell a pile that is still moving from
+one nobody has touched since spring.
 
 ## Joining
 

@@ -32,6 +32,14 @@ fmt-check:
 # sqlite3 cursor object. Matching it case-insensitively would flag store.py's
 # core vocabulary, so the editor is matched case-sensitively (`Cursor`) and in
 # the spellings coupling would actually take (`cursor_cli`, `.cursor/`).
+#
+# The carve-out is narrower than it looks and one cut has already hit its edge:
+# `\.cursor` matches **attribute access** as well as a dotted directory, so a
+# field named `cursor` on any object trips this guard on every line that reads
+# it. `wire.InboxPage.floor` is named for what it is partly for that reason, and
+# the name turned out to be the better one anyway. If a future field genuinely
+# wants to be called `cursor`, that is the conversation to have deliberately —
+# widening the grep to buy it is what CLAUDE.md forbids.
 guard:
     @! grep -rniE 'claude|anthropic|codex|copilot' src/cairn --include='*.py' \
         --exclude-dir=adapters \

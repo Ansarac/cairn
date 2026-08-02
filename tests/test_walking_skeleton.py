@@ -120,6 +120,36 @@ def test_a_message_crosses_between_two_agents(hub):
     assert hub.inbox("compute/analysis").messages == ()
 
 
+def test_a_backlog_is_walked_a_page_at_a_time_and_consumed_once_at_the_end(hub):
+    """`--since` end to end: the offset a live session went looking for and did not find.
+
+    Over HTTP because the window is a query parameter the hub has to honour and
+    echo, and the echo is what a client checks before believing the page. In
+    process this is three store calls; across the wire it is also a hub that could
+    quietly ignore the parameter and answer the whole-backlog question instead.
+
+    The cursor is the assertion that matters. Three reads, seven rows, nothing
+    marked read until one deliberate `ack` — which is what makes this a way of
+    looking through a queue rather than a second way of draining it.
+    """
+    _register(hub, "bench/firmware")
+    _register(hub, "compute/analysis")
+    for n in range(7):
+        hub.send("tell", "compute/analysis", "bench/firmware", f"iteration {n} log line")
+
+    pages, floor = [], 0
+    while (page := hub.inbox("bench/firmware", limit=3, since=floor)).messages:
+        pages.append([m.seq for m in page.messages])
+        assert page.unread == 7, "the window was applied to the backlog count"
+        floor = page.messages[-1].seq
+
+    assert pages == [[1, 2, 3], [4, 5, 6], [7]]
+    assert len(hub.inbox("bench/firmware").messages) == 7, "walking the backlog consumed part of it"
+
+    hub.ack("bench/firmware", floor)
+    assert hub.inbox("bench/firmware").messages == ()
+
+
 def test_the_sender_does_not_receive_its_own_message(hub):
     _register(hub, "a", machine="m1")
     _register(hub, "b", machine="m2")

@@ -227,7 +227,15 @@ def test_json_frames_an_empty_inbox_too():
 
 def test_json_puts_the_framing_before_the_messages():
     """A model reads top-down, so the frame has to arrive before the content."""
-    assert list(json.loads(_inbox_json([_entry()]))) == ["unread", "showing", "framing", "messages"]
+    assert list(json.loads(_inbox_json([_entry()]))) == [
+        "unread",
+        "matching",
+        "showing",
+        "since",
+        "floor",
+        "framing",
+        "messages",
+    ]
 
 
 def test_the_text_and_json_framings_cannot_drift():

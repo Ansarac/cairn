@@ -110,6 +110,7 @@ cairn ask  compute/analysis "do the failures correlate with temperature?"
 cairn reply bench/firmware q-3f2a91bc "yes — every one is above 40 degrees"
 cairn inbox                                        # read, and mark read
 cairn inbox --wait 90                              # ...or stand still for a reply
+cairn inbox --since 41                             # ...or walk a backlog, marking nothing read
 cairn sent                                         # what you already told anyone
 cairn note rig-a/chamber "overshoots ~2C above a 40C target; measured 2026-08-01, one run"
 cairn note rig-a -q "is the spare chamber 2C high too, or only this one?"
@@ -130,6 +131,14 @@ correlation id: in a live exchange a peer answered an earlier `tell` with a
 `tell`, seconds *before* the `ask` landed — that answer settled the question
 too, and carried a **lower** sequence number than it. Every plausible filter —
 kind, correlation id, "anything newer than my ask" — would have walked past it.
+
+A backlog is walked with `--since`, not with a bigger `--limit`. The page is the
+oldest end of the queue, so raising the limit re-fetches everything already seen —
+a live session held the same fifty rows three times and then used `tail -c` as the
+offset, which cut a record in half. `cairn inbox --since <the last seq shown>`
+starts after it, and every entry prints its seq. A windowed read **marks nothing
+read**: everything below the window was not shown, so `cairn ack <seq>` is how you
+finish, once you have dealt with it.
 
 Big things never go in a message. Send a reference:
 
@@ -161,6 +170,16 @@ until you look again. Every empty answer names the hub it asked —
 `cairn inbox`, `cairn sent` and `cairn notes` — because "nothing is there" and
 "wrong hub" are otherwise the same output, and a live session checked five times
 before cross-reading `cairn config`.
+
+The reading ends with the clock those ages were measured against, and it is the
+**hub's**. That matters twice. A reader had no anchor at all before — one session
+asked whether an overnight window was still open and had to hedge, because the
+ages were arithmetic against an instant nothing printed. And `last_seen` is
+stamped by the hub while the subtraction used to happen on the reader's clock, so
+on two machines the difference between them landed silently in every age: a
+session that died an hour ago reads as "just now" to a reader whose clock runs
+slow. The hub's time now rides every response, the ages are computed on it, and a
+disagreement over a minute gets a line of its own.
 
 ### What you already said
 

@@ -122,7 +122,7 @@ class Store(Protocol):
         """Durably record a message and return it with its assigned sequence."""
         ...
 
-    def unread(self, agent: str, limit: int = 50) -> InboxPage:
+    def unread(self, agent: str, limit: int = 50, since: int = 0) -> InboxPage:
         """Return a page of messages after the agent's cursor, plus the true count and head."""
         ...
 
@@ -331,7 +331,7 @@ class SqliteStore:
             created_at=created,
         )
 
-    def unread(self, agent: str, limit: int = 50) -> InboxPage:
+    def unread(self, agent: str, limit: int = 50, since: int = 0) -> InboxPage:
         """Select what is addressed to `agent` past its cursor, never its own sends.
 
         The page is the **oldest** `limit` rows, and that is the opposite of
@@ -352,6 +352,24 @@ class SqliteStore:
         people reasoning about delivery, and `COUNT`/`MAX` over a named predicate
         says what it does at a glance.
 
+        **`since` moves the floor of the page forward and moves nothing else.**
+        It is the offset a live session went looking for and did not find: with
+        `--limit` as the only control, the way to see past the first page is to
+        raise the limit, which re-fetches everything already read — so a session
+        with sixty-three waiting fetched the same fifty rows three times and then
+        cut a record in half with `tail -c`. The floor applied is
+        `max(cursor, since)`, so this can only ever narrow what the cursor already
+        allows: every row it returns is unread mail the caller would have received
+        anyway, which is what keeps a windowed read from mixing consumed and
+        unconsumed traffic on one page with nothing marking which is which.
+
+        **The window is deliberately not applied to `unread` and `head`.** Those
+        two are facts about the mailbox and the bell reads them; recomputing them
+        under a caller's window would make "unread" mean whatever the last reader
+        typed. `matching` is the windowed count, it is what a truncation line has
+        to be measured against, and it equals `unread` whenever no window is in
+        force. See `wire.InboxPage`.
+
         The `_touch` is why a blocked reader looks busy. `cairn inbox --wait`
         polls through here — about five times over a quiet 60-second wait — and
         each poll refreshes `last_seen`, so a session doing nothing but standing
@@ -362,17 +380,34 @@ class SqliteStore:
         write would cost the liveness signal for the ordinary read too.
         """
         self._touch(agent)
+        floor = max(0, since)
+        # The cursor stays a subselect rather than the integer read below it, and
+        # the difference is not style: `seq > NULL` is NULL, so a name with no
+        # cursor row — an agent that never registered — selects nothing. Binding
+        # `_cursor`'s zero instead would hand every unregistered name every
+        # broadcast on the hub.
         where = """FROM messages
                WHERE seq > (SELECT last_acked_seq FROM cursors WHERE agent = ?)
                  AND (recipient = ? OR recipient = ?)
                  AND sender != ?"""
-        scope = (agent, agent, BROADCAST, agent)
+        scope: tuple[object, ...] = (agent, agent, BROADCAST, agent)
         totals = self._db.execute(f"SELECT COUNT(*) AS c, COALESCE(MAX(seq), 0) AS h {where}", scope).fetchone()
+        matching = int(totals["c"])
+        if floor:
+            # The clause is a literal and the floor is a bound parameter, as
+            # everywhere else in this file. A fourth statement rather than a
+            # conditional inside the third: the extra count is what a windowed
+            # read costs, and it should be visible that it is only paid then.
+            where, scope = f"{where} AND seq > ?", (*scope, floor)
+            matching = int(self._db.execute(f"SELECT COUNT(*) AS c {where}", scope).fetchone()["c"])
         rows = self._db.execute(f"SELECT * {where} ORDER BY seq LIMIT ?", (*scope, limit)).fetchall()
         return InboxPage(
             messages=tuple(_message_from_row(r) for r in rows),
             unread=int(totals["c"]),
             head=int(totals["h"]),
+            floor=max(self._cursor(agent), floor),
+            since=floor,
+            matching=matching,
         )
 
     def sent(self, agent: str, limit: int = 50) -> tuple[list[Message], int]:

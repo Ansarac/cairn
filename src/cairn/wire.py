@@ -301,7 +301,7 @@ class InboxEntry:
 
 @dataclass(frozen=True, slots=True)
 class InboxPage:
-    """A page of unread mail, plus the two facts a page cannot carry by itself.
+    """A page of unread mail, plus the facts a page cannot carry by itself.
 
     `messages` is capped by the caller's `--limit`. `unread` and `head` are not:
     they are `COUNT(*)` and `MAX(seq)` over the whole backlog behind that page.
@@ -321,26 +321,66 @@ class InboxPage:
     that taught it: a caller who cannot tell those two apart will eventually treat
     one as the other.
 
+    **`since`, `matching` and `floor` describe a window, and they are three
+    because the reader needs three different numbers to be told the truth.**
+    `--since` moves the bottom of a read forward without moving the read position,
+    so a reader working through a backlog can ask for the part it has not looked
+    at yet. `unread` still counts the whole backlog, because that is what the word
+    means and because the bell reads it. `matching` counts what is past the
+    window as well, and it is what truncation must be measured against — against
+    `unread` a windowed page reports itself as cut short by a `--limit` that is
+    not what dropped those rows. `floor` is where the page actually began, which
+    is `max(read position, since)`, and it is the only thing that can explain a
+    window the reader asked for and did not get: a `--since` behind the read
+    position shows fewer rows than were asked for, and nothing else in the
+    response says why. Named for what it is rather than for the read position it
+    equals on an unwindowed read, because on a windowed one it frequently is not
+    that.
+
     **This does not bump `PROTOCOL_VERSION`, and the question was asked properly
     rather than waved through.** `check_version` compares for equality, so a bump
-    disconnects an old peer on every route rather than deprecating it. Two new
-    keys appear in the `/v1/inbox` response and no existing field changes meaning:
-    an old client ignores them and behaves exactly as it does today, and a new
-    client against an old hub finds them absent — which `from_json` reads as "this
-    hub cannot tell me", falling back to the page. That fallback restores today's
-    deafness rather than an error, which is the honest degradation: the older hub
-    genuinely does not know, and refusing to run against it would break messaging
-    over a number neither end needs to agree on.
+    disconnects an old peer on every route rather than deprecating it. Every key
+    here is additive on the `/v1/inbox` response and no existing field changes
+    meaning: an old client ignores them and behaves exactly as it does today.
+
+    **What differs between the two generations of key is what their absence
+    costs, and it is the reason `client.inbox` refuses where it used to fall
+    back.** A hub that does not send `unread` and `head` withholds two numbers the
+    caller can live without — the fallback reproduces exactly the behaviour that
+    shipped for three cuts, deafness included, which is honest degradation. A hub
+    that does not understand `?since=` withholds nothing and *answers a different
+    question*: it returns the oldest page of the whole backlog, which a caller
+    that asked for a window would print as the window. That is not a number two
+    ends need not agree on; it is mail shown in the wrong place, or hidden. So the
+    hub echoes the window it applied, and a client that asked for one and is not
+    told it was applied stops rather than guesses. `since` is echoed **as it was
+    asked for**, not as the bound that bit, so that the echo answers "did you
+    understand me" and `floor` separately answers "what did you actually do".
     """
 
     messages: tuple[Message, ...] = ()
     unread: int = 0
     head: int = 0
+    floor: int = 0
+    since: int = 0
+    matching: int | None = None
+    """How many are past the window as well as past the read position.
+
+    `None` means no separate count was reported, which covers both a page with no
+    window and a hub built before there was one. Resolved by `available`; never
+    defaulted to zero, because a zero here is a real answer — a window past the
+    end of the backlog matches nothing — and the two must not look alike.
+    """
+
+    @property
+    def available(self) -> int:
+        """Return how many rows this read could show if `--limit` alone were raised."""
+        return self.unread if self.matching is None else self.matching
 
     @property
     def truncated(self) -> bool:
-        """Return whether the backlog is larger than the page shows."""
-        return self.unread > len(self.messages)
+        """Return whether more is reachable by this same read than the page shows."""
+        return self.available > len(self.messages)
 
     def to_json(self) -> dict[str, Any]:
         """Return the wire form."""
@@ -348,6 +388,9 @@ class InboxPage:
             "messages": [m.to_json() for m in self.messages],
             "unread": self.unread,
             "head": self.head,
+            "floor": self.floor,
+            "since": self.since,
+            "matching": self.matching,
         }
 
     @classmethod
@@ -357,15 +400,21 @@ class InboxPage:
         `is None` rather than a falsy test, deliberately: a new hub reporting an
         empty inbox sends `unread: 0`, and reading that as "absent" would send the
         caller down the fallback path on the one answer where it least matters and
-        most confuses anyone debugging it.
+        most confuses anyone debugging it. `matching` keeps its `None` rather than
+        being derived, because "this hub told me nothing about a window" is the
+        signal `client.inbox` checks.
         """
         messages = tuple(Message.from_json(m) for m in obj.get("messages") or ())
         unread = obj.get("unread")
         head = obj.get("head")
+        matching = obj.get("matching")
         return cls(
             messages=messages,
             unread=len(messages) if unread is None else int(unread),
             head=max((m.seq for m in messages), default=0) if head is None else int(head),
+            floor=int(obj.get("floor") or 0),
+            since=int(obj.get("since") or 0),
+            matching=None if matching is None else int(matching),
         )
 
 
@@ -611,8 +660,28 @@ class Registration:
 
 
 def envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Wrap a payload with the protocol version."""
-    return {"v": PROTOCOL_VERSION, **payload}
+    """Wrap a payload with the protocol version and the sender's clock.
+
+    **`t` is here rather than on any one route because the alternative is a
+    round trip.** Every relative time cairn prints — `peers` ages, and anything
+    a reader computes from a `created_at` — is arithmetic against a clock, and
+    until this existed that clock was always the *reader's*, subtracting a
+    hub-stamped instant from a local `now`. Two machines is the premise of the
+    whole tool, so those are two clocks, and the difference between them landed
+    silently in every age. Riding the envelope, the hub's clock is on the
+    response the caller already made, on every route, at no cost.
+
+    A client's own POSTs carry it too, because this is one function and giving
+    the two directions different envelopes to save four bytes would be a shape
+    somebody has to remember. **The hub does not read it**, and must not: a
+    timestamp from a peer is an assertion about that peer, and the hub stamps
+    its own rows with `now()` for the same reason `Message` has no `verified`.
+
+    Additive, so `PROTOCOL_VERSION` does not move: `check_version` reads `v` and
+    every `from_json` here ignores keys it does not know — which `v` itself has
+    always relied on.
+    """
+    return {"v": PROTOCOL_VERSION, "t": now(), **payload}
 
 
 def check_version(obj: dict[str, Any]) -> None:

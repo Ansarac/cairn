@@ -209,13 +209,18 @@ def cmd_peers(args: argparse.Namespace) -> int:
     not to have. I3: this narrows a list, it does not certify anyone.
     """
     hub = _hub(args)
-    everyone = HubClient(hub).peers(exclude=config.current_identity())
+    client = HubClient(hub)
+    everyone = client.peers(exclude=config.current_identity())
     agents = everyone
     if args.capability:
         wanted = set(args.capability)
         agents = [a for a in everyone if wanted <= set(a.capabilities)]
-    text = render.peers_text(agents, hub, wanted=args.capability, registered=len(everyone))
-    print(render.peers_json(agents) if args.json else text, end="")
+    # The hub's clock, read off the call that was already made rather than
+    # fetched. Every age below it was stamped by that clock, so it is the one
+    # this page's arithmetic has to be done on — see `render._ago`.
+    now = client.hub_time
+    text = render.peers_text(agents, hub, wanted=args.capability, registered=len(everyone), now=now)
+    print(render.peers_json(agents, now) if args.json else text, end="")
     return 0 if agents else EXIT_NOTHING
 
 
@@ -299,6 +304,14 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     constraints docs/design.md §12 item 3 records. What arrives is printed and
     acked exactly as it would have been without the flag: there is no partial
     ack, because there is no second code path for one to live in.
+
+    `--since` does change it, in exactly one way: **a windowed read never
+    acknowledges.** The ack is `max(seq)` of what was printed, and under a window
+    everything between the cursor and the floor was not printed — so acking would
+    step the cursor over mail nobody was shown, which is the one failure this
+    command has never had. You acknowledge what you were shown, and a read that
+    was shown only part of the queue therefore acknowledges nothing. `--no-ack`
+    is not required alongside it and saying so is `render.WINDOW_CLAUSE`'s job.
     """
     # Finite, not merely positive. `float("infinity")` and `nan` both survive a
     # `> 0` test, and `inf` reaches `socket.settimeout`, which raises
@@ -317,10 +330,29 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if args.limit < 1:
         msg = f"--limit needs to be at least 1, got {args.limit}"
         raise UsageError(msg)
+    if args.since is not None and args.since < 0:
+        msg = f"--since takes a seq to start after, so it cannot be negative; got {args.since}"
+        raise UsageError(msg)
+    # Refused rather than combined, and this is the one refusal here that is
+    # about semantics rather than about a number. `--since S` with `--wait` is
+    # the waiter docs/design.md §12 item 3 rules out by name: "watch for anything
+    # after my ask", which is the plausible one, the one most likely to be
+    # written, and the one that fails on the exchange that taught the rule — a
+    # peer answering an *earlier* `tell`, so the answer that settled the question
+    # carried a **lower** seq than the question. A wait floored at S blocks
+    # through exactly that answer, and it does so while mail sits unread below
+    # the floor, which is the `--limit 0` failure with a deadline attached.
+    if args.since is not None and args.wait is not None:
+        msg = (
+            "--since and --wait cannot be combined: a wait floored at a seq is a wait that can block through "
+            "an answer carrying a lower one, which is what --wait is written not to do. Window the read, or "
+            "wait on the whole inbox"
+        )
+        raise UsageError(msg)
     me = config.require_identity()
     client = _client(args)
     if args.wait is None:
-        page = client.inbox(me, limit=args.limit)
+        page = client.inbox(me, limit=args.limit, since=args.since or 0)
     else:
         from cairn import waiting
 
@@ -331,19 +363,31 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     # nothing here handles SIGTERM, so a host killing the command in the window
     # between these two lines would move the cursor past mail that never reached
     # the terminal — the one way this command can lose a message outright.
-    text = render.inbox_text(entries, page.unread, _hub(args))
-    print(render.inbox_json(entries, page.unread) if args.json else text, end="", flush=True)
+    # `args.since` rather than `page.since`, and this is the one place the two
+    # differ on purpose. The wire carries the floor the hub applied, which is `0`
+    # both for "no window" and for "a window at zero"; only the command line knows
+    # which was typed, and `render._behind_cursor` has the acceptance run that
+    # turned that distinction into a wrong answer in somebody's shift summary.
+    shape = {"since": args.since, "matching": page.matching, "floor": page.floor}
+    text = render.inbox_text(entries, page.unread, _hub(args), **shape)
+    print(render.inbox_json(entries, page.unread, **shape) if args.json else text, end="", flush=True)
     if not messages:
         if args.wait is not None:
             print(f"cairn: waited {args.wait:g}s, still nothing.", file=sys.stderr)
         return EXIT_NOTHING
-    if not args.no_ack:
+    if not args.no_ack and args.since is None:
         # `max(m.seq for m in messages)`, and **not** `page.head`. The page now
         # carries the true head of the backlog, which makes it look like the
         # tidier thing to acknowledge and would silently discard every message
         # between the end of this page and that head — a truncated read would
         # eat its own remainder, which is the one failure this command has never
         # had. You acknowledge what you were shown. There is a test.
+        #
+        # `args.since is None` rather than `not page.since`, so that `--since 0`
+        # does not ack. That window excludes nothing, so acking it would be
+        # harmless and it would also make the footnote printed above — nothing
+        # was marked read — a lie on exactly one spelling of the flag. A rule
+        # with one silent exception is a rule nobody can rely on.
         client.ack(me, max(m.seq for m in messages))
     return 0
 
@@ -484,11 +528,16 @@ def cmd_notes(args: argparse.Namespace) -> int:
     subject = _subject(args.subject) if args.subject is not None else None
     if subject is None and not args.open and not args.find:
         summaries = client.subjects()
-        print(render.subjects_json(summaries) if args.json else render.subjects_text(summaries, _hub(args)), end="")
+        clock = client.hub_time
+        text = render.subjects_text(summaries, _hub(args), clock)
+        print(render.subjects_json(summaries, clock) if args.json else text, end="")
         return 0 if summaries else EXIT_NOTHING
     entries, total = client.notes(subject, open_only=args.open, find=args.find, limit=args.limit)
     read = [e.checked(provenance.assess_note(e.note)) for e in entries]
-    scope = {"subject": subject, "open_only": args.open, "find": args.find}
+    # The hub's clock, off the call just made. `notes` is the surface that asks the
+    # reader to judge how stale something is and then, until this, printed no
+    # instant to judge it against — see `render.STALENESS_TAIL`.
+    scope = {"subject": subject, "open_only": args.open, "find": args.find, "now": client.hub_time}
     # Only the text renderer names the hub. The "nothing" answers say who they
     # asked because a *model* reads them and may have no idea what this
     # directory is configured against; whatever invoked `--json` chose the hub
@@ -817,8 +866,24 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("-a", "--artifact", action="append", default=[], metavar="HOST:PATH")
     p.set_defaults(func=cmd_reply)
 
-    p = sub.add_parser("inbox", help="read unread messages")
+    p = sub.add_parser(
+        "inbox",
+        help="read unread messages",
+        description=(
+            "Read what is waiting for you, oldest first, and by default mark it read. "
+            "`--since SEQ` walks a backlog a page at a time without consuming it: pass the last seq "
+            "you were shown and the next read starts after it. A windowed read never marks anything "
+            "read, because it was never shown the part of the queue below the window."
+        ),
+    )
     p.add_argument("--limit", type=int, default=50)
+    p.add_argument(
+        "--since",
+        type=int,
+        default=None,
+        metavar="SEQ",
+        help="show only mail after this seq; marks nothing read, and cannot be combined with --wait",
+    )
     p.add_argument("--no-ack", action="store_true", help="read without marking as read")
     p.add_argument("--json", action="store_true")
     p.add_argument(
