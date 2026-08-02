@@ -255,6 +255,17 @@ def test_the_bell_counts_one_message_in_the_singular():
     assert "2 unread messages from" in render.bell_reason(2)
 
 
+def test_the_bell_pronoun_agrees_with_the_count():
+    """The noun was pinned here and the pronoun was not, so only the noun stayed right.
+
+    An acceptance run quoted this line back verbatim to establish that its count
+    was correct, and reported the noun's number as part of the string; `1 unread
+    message … read them` had been shipping underneath it the whole time.
+    """
+    assert "to read it " in render.bell_reason(1)
+    assert "to read them " in render.bell_reason(2)
+
+
 def test_the_bell_cannot_carry_the_message():
     """Structural, not editorial: it takes a count, so there is nothing to leak.
 

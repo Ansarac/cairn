@@ -1600,6 +1600,34 @@ framework-internal orchestration, not network protocols.
    `PROTOCOL_VERSION` is not involved: `wire.py` is untouched. This is a fix between cairn
    and one host, not between two builds of cairn.
 
+   **Confirmed the following cut across two machines, which is the acceptance this fix
+   owed.** Everything above was measured against a hub on loopback, so the one thing the
+   bell exists for — a peer whose human has walked away hearing the doorbell — had never
+   crossed a network. It has now: a hub in a container on one machine, a session on it and
+   a session on a second machine that reaches it by name over the LAN. Each human asked
+   its own session something with nothing to do with cairn (*"how many files in this
+   directory"*, *"what's the status of the git"*). Both sessions answered, and then, at the
+   turn boundary and unprompted, said they had unread mail and ran `cairn inbox`. Neither
+   was told there was any.
+
+   Both were then asked for the bell **verbatim, scrolled back to rather than regenerated**,
+   and the two transcripts agree to the character. The count was 1 and was right on all
+   three occurrences. The instruction not to regenerate is not fussiness and one of the two
+   said why unprompted: *"a fresh `cairn bell` now would report a different count and would
+   have answered you wrongly while looking right."* An acceptance question about a count
+   cannot be answered by re-running the thing that produces it.
+
+   Two things fell out that no single-host run could have shown. The host delivers the
+   `Stop` bell **twice**, once as a user turn opening `Stop hook feedback:` and once as a
+   system message opening `Stop hook blocking error from command: "cairn bell":` — the
+   payload arrives, and it arrives labelled as an error, which is what `decision: "block"`
+   looks like from the other side. It cost nothing here; both readers separated cairn's
+   string from the host's wrapper without being asked. And **the number of bells is not the
+   number of messages**: mail collected inside `cairn inbox --wait` never reaches a turn
+   boundary, so it never rings. A session that had received three messages and heard two
+   bells worked that out itself rather than reporting a lost one, which is the latch
+   advancing on the ring and a reader reasoning about it correctly.
+
    **What else that run produced, and deliberately did not build.** All three come from
    the same session, in its own order of severity, and are recorded here so the next cut
    inherits the evidence rather than the opinion:
@@ -1629,7 +1657,8 @@ framework-internal orchestration, not network protocols.
 
 ## Appendix — measurements
 
-All taken 2026-08-01 on Linux, Claude Code 2.1.220, unless noted.
+All taken 2026-08-01 on Linux, Claude Code 2.1.220, unless noted. The two-machine rows
+are 2026-08-02.
 
 **Every row below comes from one agent family, and that is this document's largest
 untested assumption.** §1 claims cairn works with any agent that can run a shell
@@ -1639,6 +1668,14 @@ one does, refuses an unattributed hook the way this one does, and reaches for `c
 notes` on arrival the way this one did — has never been observed. Nothing here is
 evidence about a second product. Treat a row as "true of the agent we measured" until
 one has been run.
+
+That caveat used to have a second half — one *host* as well as one product — and this is
+the point at which it stops. There is now a second machine in this table, on the far side
+of a real network, with a kernel five years older than the first and no filesystem in
+common with it. What that lifts is narrow and worth stating precisely: it is evidence
+that the transport, the hook and the install work somewhere they were not developed. It
+is no evidence at all about a second agent product, which is the half that matters more
+and is still untested.
 
 | What | Result |
 |---|---|
@@ -1659,7 +1696,7 @@ one has been run.
 | `cairn peers` on a hub with nobody else registered | Checked 5 times, then polled 90 s; "nobody there" and "wrong hub" were indistinguishable without cross-reading `cairn config` |
 | Reading a subject whose notes were filed under `subject/child` | Invisible before the prefix rollup; `/` is legal and invites a hierarchy the query did not implement |
 | Two sessions handed the same rig in sequence, second one told nothing about the first | Named 5 of 5 notes as having changed a specific decision; settled none of 4 open questions, having established nothing |
-| A `-a` path that is absolute, well-formed, and on no reachable filesystem | Stored in silence into an append-only note; undetectable by either end until the reader tried to open it |
+| A `-a` path that is absolute, well-formed, and on no reachable filesystem | Stored in silence into an append-only note; undetectable by either end until the reader tried to open it. The rule written from it — say in the body whether the path is mutually visible — was then observed working on two real machines, which is the better half of this row. Offering a multi-gigabyte local dataset, the sender asked in prose which filesystem the two of them shared rather than assuming one; the receiver answered with `findmnt`, which reports no nfs/nfs4/cifs/sshfs/9p/gluster mount on either host, so **no** path either can name is readable by the other. It settled the question from the mount table rather than by trying to open the path, and restated why the notation cannot settle it: *"`bench:/path` looks the same whether or not the path is mutually visible"* |
 | A session that ended hours earlier, in `cairn peers` | Indistinguishable from a working one; the dead session's own prose note was doing the liveness detection |
 | `UNVERIFIED` across ~10 messages and notes in one session | Acted on, but reported as wallpaper — identical every time, with no verified item anywhere to contrast against |
 | Two independent `claude -p` sessions, cwd outside this repository, only the installed skill in context; the second a restart in the same directory | Ran `cairn sent` unprompted both times — on restart, and at shift end before writing a handover. Corrected the premise when asked: *"the cairn skill documents it. I didn't discover it"*, and called the reach *"scattergun, not targeted"* |
@@ -1668,6 +1705,12 @@ one has been run.
 | A `tell '*'` in `cairn sent` | Reach is dropped: `N other agents registered` is printed at send time and not stored. The reader declined to re-broadcast on the strength of a peer's **unverified** note instead, then caught itself — *"my stated reasoning was weaker than I made it sound"* |
 | The body of an `ask` holding the only recorded reasoning on a bug | In no note, and reachable only from that identity in that directory. *"A future session that doesn't happen to run `cairn sent` loses them."* Sediment sitting in a mailbox |
 | A capability string inherited across a restart of the same name | Compounds. Two sessions in sequence advertised `hil, flasher, soak-runner` network-wide, neither able to run a single command against hardware; the second flagged that a peer reading `cairn peers -c hil` has no way to learn this |
+| The turn-boundary bell, across a real network, on a second machine | **Works.** Each human asked its own session something unrelated to cairn; both answered it and then, unprompted at the turn boundary, reported unread mail and ran `cairn inbox`. Neither was told any had arrived. This is the one scenario the bell exists for and the first time it had crossed a network |
+| The bell text, quoted verbatim from two independent transcripts | Byte-identical on both machines, count correct on all three rings. The host delivers it **twice**: as a user turn opening `Stop hook feedback:`, and as a system message opening `Stop hook blocking error from command: "cairn bell":`. Both readers separated cairn's string from the host's wrapper unasked. Asked for it verbatim, both scrolled back rather than re-running `cairn bell` — one saying why: *"a fresh `cairn bell` now would report a different count and would have answered you wrongly while looking right"* |
+| Bells counted against messages received | Not the same number, correctly. Mail collected inside `cairn inbox --wait` never reaches a turn boundary and so never rings; a session with three messages and two bells derived that itself rather than reporting a lost one |
+| `1 unread message … Run cairn inbox to read them` | Shipped from the day the line was written — the nudger's copy is in the initial commit — through two later cuts that changed what the count *means* without reading the sentence carrying it. A test pinned the **noun's** agreement with the count and nothing pinned the pronoun's, so the half that was checked stayed right and the half that was not did not. Found only because an acceptance run asked for the line verbatim and got the noun's number reported back as a fact about the string |
+| A setup prompt saying *"do not send any message to anyone yet"*, with no stated condition for lifting it | Two sessions, the same sentence word for word, opposite readings: one scoped it to setup and answered a peer, the other held and asked its operator. Neither misread the text; the text did not say. The holding one is the one to design for — *"the thing blocking me is your instruction, not their request"* — and it is also the one that stalls indefinitely when the condition never comes |
+| A sender name chosen to sound like infrastructure (`ops/hub`, run by the operator of the hub itself) | Bought nothing. *"That identity is asserted, not proven. The hub does not sign, so any session can register that name — I will not extend it trust beyond the ordinary."* The reader then enumerated what complying would put on the wire and judged it low-consequence, rather than answering yes or no. `UNVERIFIED` holding against an authority-flavoured name had not been tested before; the tier had only ever been read on ordinary peers |
 
 Found while building, all of them invisible to unit tests and all of them costing an
 afternoon each if rediscovered:

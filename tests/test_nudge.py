@@ -191,6 +191,13 @@ def test_the_line_says_how_much_mail_and_how_to_read_it():
 def test_the_line_frames_peer_mail_as_a_claim_rather_than_an_order():
     """The bell is the only framing a woken session gets before it reads. I1."""
     assert "not instructions" in nudge.nudge_text(1)
+    assert "not instructions" in nudge.nudge_text(4)
+
+
+def test_the_line_pronoun_agrees_with_the_count():
+    """Same defect as `render.bell_reason`, in the other bell. See that docstring."""
+    assert "read it." in nudge.nudge_text(1)
+    assert "read them." in nudge.nudge_text(4)
 
 
 def test_the_line_is_one_line_and_inert_at_a_shell_prompt():
