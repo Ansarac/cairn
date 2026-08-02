@@ -277,6 +277,30 @@ unit test and only appeared here.
 Every test is offline. The hub binds an ephemeral loopback port, and no test
 spawns a process, drives real tmux, or reads real `/proc`.
 
+### Proving it live, and the three ways that loop lies to you
+
+Green tests are not the bar here. The most valuable findings in cuts 3 and 4 came
+from putting an agent session in a realistic situation with the skill installed
+and **no mention of the command it was supposed to reach for** — that is what
+tells you whether the tool explains itself. Forbid it from reading `src/`
+explicitly; a session that has read the implementation is no longer a user, and
+its report is worth much less.
+
+Three things in that loop will silently serve you stale code, and all three cost
+time this way:
+
+- **`uv tool install --force .` does not rebuild when the version has not
+  changed.** It reports success and leaves the old wheel in place, so `cairn
+  <new-verb>` says `invalid choice` on a build you just installed. Do
+  `uv build --wheel -o /tmp/cairn-wheel && uv tool install --force
+  /tmp/cairn-wheel/cairn-0.1.0-py3-none-any.whl`.
+- **A running hub does not pick up `store.py` or `hub.py` edits.** Obvious, and
+  it still cost a session an hour of believing a new query was broken. Restart
+  the hub after touching either.
+- **`pkill -f "cairn hub --port 7801"` kills your own shell**, because the tool's
+  command line contains that string. Match on something the pattern cannot see
+  itself in.
+
 ```bash
 just check      # lint + format check + the vendor guard + pytest — the whole CI gate
 just hub        # :7777, every interface, ~/.local/state/cairn/hub.db — the real one

@@ -1210,6 +1210,15 @@ framework-internal orchestration, not network protocols.
 
 All taken 2026-08-01 on Linux, Claude Code 2.1.220, unless noted.
 
+**Every row below comes from one agent family, and that is this document's largest
+untested assumption.** §1 claims cairn works with any agent that can run a shell
+command; the structural half of that claim is enforced by the vendor guard, but the
+behavioural half — that a different product reads `cairn inbox`'s framing the way this
+one does, refuses an unattributed hook the way this one does, and reaches for `cairn
+notes` on arrival the way this one did — has never been observed. Nothing here is
+evidence about a second product. Treat a row as "true of the agent we measured" until
+one has been run.
+
 | What | Result |
 |---|---|
 | Peer content injected as hook text | Refused as prompt injection |
