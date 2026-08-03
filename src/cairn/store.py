@@ -57,7 +57,7 @@ from cairn.wire import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -1188,8 +1188,17 @@ class SqliteStore:
             raise UsageError(_no_such_subject(subject, self._subject_names()))
         return found
 
-    def _subject_names(self) -> list[str]:
-        return [r["name"] for r in self._db.execute("SELECT name FROM subjects ORDER BY name").fetchall()]
+    def _subject_names(self) -> list[tuple[str, bool]]:
+        """Every subject name, paired with whether it is archived.
+
+        Archived piles are included on purpose, and this is the one reader of
+        the table that must not filter them out. The index hides them because
+        it is a list of live work; this is a list of *what already exists*, and
+        a pile the writer is not shown is a pile they open a second copy of —
+        which is the exact failure `_no_such_subject` is here to prevent.
+        """
+        rows = self._db.execute("SELECT name, archived_at FROM subjects ORDER BY name").fetchall()
+        return [(r["name"], bool(r["archived_at"])) for r in rows]
 
     def _touch(self, name: str) -> None:
         """Record that `name` was heard from just now.
@@ -1236,7 +1245,7 @@ SUBJECTS_SHOWN = 8
 """How many existing subjects a refusal lists when it has no better guess."""
 
 
-def _nearest(subject: str, names: Sequence[str]) -> list[str]:
+def _nearest(subject: str, names: Sequence[str], archived: Collection[str] = ()) -> list[str]:
     """Return the subjects a mistyped one most likely meant.
 
     **Substring before edit distance, and that order is from the measured case.**
@@ -1247,15 +1256,27 @@ def _nearest(subject: str, names: Sequence[str]) -> list[str]:
     `rig-a` exists — is the same shape with the containment the other way round.
     Both are substring hits, so substring goes first and `difflib` picks up the
     genuine typos underneath it.
+
+    **A live pile outranks an archived one**, because only three guesses are
+    shown and one of these two can be written to. The sort is stable, so it
+    demotes archived hits without disturbing the order above.
     """
     hits = [name for name in names if subject in name or name in subject]
     for name in difflib.get_close_matches(subject, names, n=NEAREST_SHOWN, cutoff=0.6):
         if name not in hits:
             hits.append(name)
+    hits.sort(key=lambda name: name in archived)
     return hits[:NEAREST_SHOWN]
 
 
-def _no_such_subject(subject: str, names: Sequence[str]) -> str:
+def _listed(label: str, names: Sequence[str], limit: int) -> str:
+    """Render one `label: a, b, c (+N more)` line of the refusal."""
+    shown = ", ".join(names[:limit])
+    more = f" (+{len(names) - limit} more)" if len(names) > limit else ""
+    return f"  {label}: {shown}{more}"
+
+
+def _no_such_subject(subject: str, names: Sequence[tuple[str, bool]]) -> str:
     """Return the refusal a writer meets when the pile does not exist yet.
 
     **This text is the feature.** Requiring subjects to be opened deliberately
@@ -1264,23 +1285,41 @@ def _no_such_subject(subject: str, names: Sequence[str]) -> str:
     So it guesses, and when it cannot guess it lists, and it always prints the
     exact command with the name already in it.
 
+    **An archived pile is named, and named on its own line.** It has to be named
+    at all, because a writer who is not shown it opens a second copy of it — the
+    index may hide archived piles, but this is the one place where the question
+    is not "what is live" but "does this already exist". It cannot be named in
+    the same breath as a live one either: the writer's next act is a `cairn note`
+    that an archived pile refuses, and a suggestion whose only outcome is a
+    second refusal teaches a reader to stop reading these. So the line carries
+    the command that makes the suggestion usable. Found while staging an
+    acceptance run: the list offered an archived pile and the next command
+    rejected it, which is `docs/design.md` §12 item 16 defect 6 a third time,
+    at a surface that fix did not reach.
+
     Every value here is a normalized subject, so it cannot contain whitespace and
     cannot open a line of its own — the one place in this file where peer-authored
     text reaches a message, and the reason `normalize_subject` refuses whitespace
     outright rather than folding it. See `render.oneline`.
     """
+    all_names = [name for name, _ in names]
+    archived = {name for name, is_archived in names if is_archived}
+
     opening = (
         f"no subject {subject!r}. Subjects are opened deliberately, so that four spellings of one run "
         f"do not become four piles nobody can find."
     )
     lines = [opening]
-    near = _nearest(subject, names)
-    if near:
-        lines.append(f"  did you mean: {', '.join(near)}")
-    elif names:
-        shown = ", ".join(names[:SUBJECTS_SHOWN])
-        more = f" (+{len(names) - SUBJECTS_SHOWN} more)" if len(names) > SUBJECTS_SHOWN else ""
-        lines.append(f"  subjects that exist: {shown}{more}")
+    near = _nearest(subject, all_names, archived)
+    candidates, label, limit = (
+        (near, "did you mean", NEAREST_SHOWN) if near else (all_names, "subjects that exist", SUBJECTS_SHOWN)
+    )
+    live = [name for name in candidates if name not in archived]
+    closed = [name for name in candidates if name in archived]
+    if live:
+        lines.append(_listed(label, live, limit))
+    if closed:
+        lines.append(_listed("archived, so writing needs `cairn subject <name> --reopen` first", closed, limit))
     lines.append(f'  open it if it is genuinely new: cairn subject {subject} "<one line saying what it is>"')
     lines.append("  see them all, with what each is for: cairn notes")
     return "\n".join(lines)
