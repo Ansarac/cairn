@@ -2319,6 +2319,63 @@ framework-internal orchestration, not network protocols.
     never reads the number, and an old client against a new hub prints a count that is now
     right where it used to be wrong.
 
+    **What the run produced and this cut did not build**, in the sessions' own order of
+    severity, recorded so the next cut inherits the evidence rather than the opinion —
+    same purpose as item 7's tail, which is where items 11, 12 and 14 came from.
+
+    - **A pile is read in id order, so the stale claim is met before its correction, and
+      only a tag stands between them.** The strongest item here because two independent
+      sessions raised it unprompted and neither had read the other. The session that
+      *wrote* the correction: *"I did everything the tool permits and I am still not
+      confident that 'reads the pile fast, does not come away thinking rev C' is true.
+      This is the requirement I am least sure I met, and the gap is in cairn, not in the
+      wording."* The session that then read it: *"the distance between 'flash rev C' and
+      'rev C is withdrawn' is measured in scroll… This is the single worst thing I hit."*
+      Note 5 was second of eight; note 14 was seventh. Both named the same shapes as
+      candidate fixes — surface superseded corrections at the top, or refuse to print a
+      superseded body without its replacement adjacent. Not built here because item 14's
+      ordering is deliberate and reordering a pile is a change to what a reading *is*;
+      it needs its own argument, and now it has the evidence for one.
+    - **Nothing searches messages.** `cairn notes --find` exists; `cairn sent` has no
+      filter at all, and no surface shows anybody else's traffic. The operator
+      requirement that produced this was *"nobody acts on anything this machine said
+      earlier about which board to use"*, which is a message-search problem whose only
+      tool is reading the whole sent log by eye. Fine at three sends. The second half is
+      sharper and cairn may not want to answer it: *"If `nightshift` also broadcast 'use
+      rev C' — plausible, since note 5 is theirs — I cannot see it, cannot retract it,
+      and cannot even find out that it happened."*
+    - **Two notes that *agree* cannot be linked.** `supersede` is the only note-to-note
+      relation and it asserts the earlier one is wrong. Both writing sessions hit the same
+      thing from opposite ends: a fact general to the rig, discovered on one run, has to
+      be filed twice because the rollup is one-way, and *"the only note-to-note link cairn
+      has is `supersede`, which asserts the earlier note is wrong — note 8 is not wrong,
+      it is incomplete."* Both resorted to `see note 9` in prose. The reader then paid for
+      it: *"nothing in either note says 'this is the deliberate double-file, not a
+      duplicate', so I had to diff two long paragraphs to satisfy myself they did not
+      disagree."*
+    - **A question is open or settled, with nothing in between.** The one session
+      positioned to answer an open question could answer only the half beginning when it
+      arrived, and said so: settling on that *"would have taken a live data-integrity
+      question off `--open`, which is the only place anyone will find it"*. It filed an
+      ordinary note instead and left the question open — the right call, made against the
+      tool rather than with it.
+    - **`delete` has one setting, and `prune` has no dry run.** *"cairn gives one
+      irreversible verb for 'should not have been written down at all' and nothing for
+      'written for a good reason, wrong venue'."* And on prune: *"You asked me to tell you
+      what I cleared. What I can tell you is a number."* Both single-session, both
+      concrete, neither yet corroborated.
+
+    **One thing the run did that nobody designed for, and it is worth a decision rather
+    than a fix.** Unprompted and on its own initiative, a session **deleted another
+    session's note** — a plaintext credential — and messaged the author about it. Item 14
+    recorded the maintainer's framing that the *capability* has to exist and that whether
+    `SKILL.md` encourages an agent to go tidying is a separate decision, currently not
+    taken. This is that decision arriving from the other direction: the skill does not
+    encourage it and a reader did it anyway, on the first cold reading, because the
+    documented case matched what was in front of it. It also reported the discomfort
+    accurately — *"permanent, unilateral, and made with my operator away… It was the right
+    call and I should not have been the only one making it."*
+
 ---
 
 ## Appendix — measurements
