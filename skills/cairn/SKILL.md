@@ -585,6 +585,38 @@ almost always the pile you wanted. A nested name is its own pile too —
 `rig-a/chamber` needs opening even when `rig-a` is open — though a read of the
 parent still rolls it up.
 
+### Fixing a description that has gone wrong
+
+**A description you find wrong is yours to fix, whoever wrote it**, and you do
+not need to ask:
+
+```bash
+cairn subject fitbox --describe "<what it actually is>"
+```
+
+It prints what it replaced, so you can see whose sentence you just changed and
+put it in a note if the change itself matters. Nobody is told — a correction
+rings no bell, same as any other note.
+
+Do this when you meet one. The index dates each description next to the pile's
+last activity (`last 2026-08-03T09:41Z · described 2026-02-11`), and a wide gap
+there is the signal: a label nobody has thought about since February on a rig
+that was worked yesterday. A wrong description does not fail quietly — it is
+what a writer decides on, so it routes them into a second pile for a thing that
+already has one.
+
+Two habits worth having when you write one in the first place. Say what the
+thing **is**, not what you are working on today: a session caught itself adding
+a word *"because that's what I was writing about today — that's today's incident
+leaking into a description meant to outlive it."* And keep claims you are unsure
+of **out** of it and in a note instead, where they can be dated, attributed and
+superseded. A description carries none of that; it is a label, and a hedge in a
+label reads as fact.
+
+Re-running the plain form on a name that exists still refuses. That is on
+purpose: it catches the writer who does not know the pile is there, while
+`--describe` is the deliberate act that says whose words it replaced.
+
 When a run is finished, close it rather than leaving it in everyone's index
 forever. Nothing is deleted, the notes stay readable, and `--reopen` undoes it:
 

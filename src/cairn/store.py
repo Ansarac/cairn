@@ -98,12 +98,14 @@ CREATE TABLE IF NOT EXISTS notes (
     deleted_by TEXT
 );
 CREATE TABLE IF NOT EXISTS subjects (
-    name        TEXT PRIMARY KEY,
-    description TEXT NOT NULL,
-    created_by  TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    archived_at TEXT,
-    archived_by TEXT
+    name         TEXT PRIMARY KEY,
+    description  TEXT NOT NULL,
+    created_by   TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    archived_at  TEXT,
+    archived_by  TEXT,
+    described_at TEXT,
+    described_by TEXT
 );
 """
 """Step 1 of four: the tables, and the file's only statement of the current shape.
@@ -126,6 +128,8 @@ _MIGRATIONS = (
     "ALTER TABLE notes ADD COLUMN deleted_at TEXT",
     "ALTER TABLE notes ADD COLUMN deleted_by TEXT",
     "ALTER TABLE messages ADD COLUMN retracted_at TEXT",
+    "ALTER TABLE subjects ADD COLUMN described_at TEXT",
+    "ALTER TABLE subjects ADD COLUMN described_by TEXT",
 )
 """Step 2: columns added to a table that already exists, on the same terms as `_BACKFILL`.
 
@@ -289,6 +293,10 @@ class Store(Protocol):
 
     def create_subject(self, name: str, description: str, author: str) -> SubjectSummary:
         """Open a new pile deliberately, and return it."""
+        ...
+
+    def describe_subject(self, name: str, description: str, author: str) -> tuple[SubjectSummary, str]:
+        """Correct an existing pile's description, returning it and the text it replaced."""
         ...
 
     def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
@@ -1136,6 +1144,12 @@ class SqliteStore:
         rows = self._db.execute(
             f"""SELECT s.name AS subject, s.description AS description, s.created_by AS created_by,
                        s.created_at AS created_at, s.archived_at AS archived_at,
+                       -- A description nobody has corrected was written when the pile was
+                       -- opened, by whoever opened it. Coalescing says that rather than
+                       -- leaving a null to render as "nobody knows", which would make an
+                       -- original description look less accountable than a corrected one.
+                       COALESCE(s.described_at, s.created_at) AS described_at,
+                       COALESCE(s.described_by, s.created_by) AS described_by,
                        COUNT(CASE WHEN n.deleted_at IS NULL THEN n.id END) AS notes,
                        COALESCE(SUM(CASE WHEN n.question = 1 AND n.deleted_at IS NULL
                                           AND NOT EXISTS (SELECT 1 FROM notes x
@@ -1192,6 +1206,70 @@ class SqliteStore:
             (subject, text, author, now()),
         )
         return self._require_subject(subject)
+
+    def describe_subject(self, name: str, description: str, author: str) -> tuple[SubjectSummary, str]:
+        """Correct the description of a pile that already exists, and return what it replaced.
+
+        **The field the whole command rests on was the one field nothing could
+        fix.** `create_subject` argues that what stops a fifth spelling is the
+        index saying what each pile is for. Three acceptance sessions across two
+        cuts then found the same sentence failing three different ways, and none
+        of them had a way out: one wrote *"today's incident leaking into a
+        description meant to outlive it"*, one measured a stale one at *"six
+        months out, negative — not zero"* because it misroutes rather than merely
+        ageing, and one filed the claim it was least sure of — *"Distinct rig from
+        chamber-2"* — and noted that unlike a note, a description cannot be
+        superseded. A load-bearing field with no correction path is one that gets
+        quietly worse for as long as the pile survives.
+
+        **Anyone registered may correct it, not only the author.** `retract` is
+        owner-only because it withdraws somebody's words from other people's
+        mailboxes; this is the opposite act — the sentence is shared
+        infrastructure, and the reader best placed to notice it is wrong is
+        precisely the one it just misrouted. A session that spotted a stale
+        description left it alone and said why: *"correcting it is a supersede on
+        somebody else's note, which is outside what you asked me for."* Making the
+        fix need permission is how it stays broken.
+
+        **The old text comes back rather than being kept.** Same rule as a
+        takeover: state the loss to the person causing it, at the moment they
+        cause it. Storing a chain of former descriptions would make this a wiki,
+        and the durable place for "it used to say X and that was wrong" already
+        exists — it is a note on the pile.
+
+        This does not conflict with `create_subject` refusing an existing name.
+        That refusal is aimed at a writer who does not know the pile exists and
+        would silently overwrite a stranger's sentence; this is a separate verb
+        that cannot be reached by accident and says whose words it replaced.
+
+        Allowed on an archived pile, because a description is not content. A
+        finished run whose label is wrong misleads exactly the person digging
+        through old work, who has the least context to catch it.
+        """
+        if self.get_agent(author) is None:
+            msg = f"unknown author {author!r}; register before describing a subject"
+            raise UsageError(msg)
+        subject = normalize_subject(name)
+        pile = self._require_subject(subject)
+        text = " ".join(description.split()).strip()
+        if not text:
+            msg = (
+                f"subject {subject!r} needs a description: one line saying what it is, so the next person "
+                f"can tell it apart from the pile they were about to create"
+            )
+            raise UsageError(msg)
+        if len(text) > MAX_BODY_CHARS:
+            msg = f"description is {len(text)} chars; it is a label, not a note — write the detail as a note"
+            raise UsageError(msg)
+        if text == pile.description:
+            msg = f"subject {subject!r} already reads exactly that; nothing to correct"
+            raise UsageError(msg)
+        self._touch(author)
+        self._db.execute(
+            "UPDATE subjects SET description = ?, described_at = ?, described_by = ? WHERE name = ?",
+            (text, now(), author, subject),
+        )
+        return self._require_subject(subject), pile.description
 
     def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
         """Close a pile to new notes, or open it again. Reading is never affected.
@@ -1406,6 +1484,8 @@ def _summary_from_row(row: sqlite3.Row) -> SubjectSummary:
         description=row["description"],
         created_by=row["created_by"],
         archived_at=row["archived_at"] or "",
+        described_at=row["described_at"] or "",
+        described_by=row["described_by"] or "",
     )
 
 

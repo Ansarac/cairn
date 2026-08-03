@@ -345,9 +345,17 @@ def test_an_upgraded_hub_takes_the_writes_its_new_columns_are_for(tmp_path):
     sent = store.append("tell", SCRIBE, PEER, "ignore that last one")
     withdrawal = store.retract(sent.seq, SCRIBE)
 
+    described, replaced = store.describe_subject("rig-a", "thermal chamber A, and its fixture", SCRIBE)
+
     assert correction.supersedes == 1, "`supersedes` did not survive the round trip"
     assert store.get_note(doomed.id).deleted, "`deleted_at` did not survive the round trip"
     assert withdrawal.withheld == 1, "`retracted_at` did not survive the round trip"
+    # `described_at`/`described_by` alter `subjects`, which the oldest shape does not
+    # have at all — the ALTER is suppressed there and `_TABLES` supplies the columns
+    # instead, while a mid-age database gets them from the ALTER. Both routes have to
+    # arrive at a writable column, and only one of them is exercised by a fresh open.
+    assert described.described_by == SCRIBE, "`described_by` did not survive the round trip"
+    assert replaced, "the backfilled description was not returned as the text replaced"
     store.close()
 
 

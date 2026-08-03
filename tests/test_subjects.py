@@ -356,6 +356,163 @@ def test_archiving_a_pile_with_an_open_question_is_refused(store):
     assert store.archive_subject("rig-a", SCRIBE).archived
 
 
+# -- correcting the description --------------------------------------------------
+
+
+def test_a_description_can_be_corrected_and_says_what_it_replaced(store):
+    """The field the whole command rests on was the one field nothing could fix.
+
+    Three acceptance sessions across two cuts hit the same sentence failing three
+    ways — today's incident leaking into it, going stale and misrouting, and
+    carrying an assertion its author was least sure of — and none had a way out.
+    The old text comes back rather than being stored: same rule as a takeover,
+    state the loss to the person causing it, at the moment they cause it.
+    """
+    store.create_subject("fitbox", "the curve-fitting box", SCRIBE)
+
+    pile, replaced = store.describe_subject("fitbox", "the two curve-fitting boxes on this bench", SCRIBE)
+
+    assert pile.description == "the two curve-fitting boxes on this bench"
+    assert replaced == "the curve-fitting box"
+    assert store.get_subject("fitbox").description == "the two curve-fitting boxes on this bench"
+
+
+def test_anybody_registered_may_correct_a_description_not_only_its_author(store):
+    """Deliberate, and the opposite call from `retract`.
+
+    `retract` is owner-only because it withdraws somebody's words from other
+    people's mailboxes. A description is shared infrastructure, and the reader
+    best placed to notice it is wrong is the one it just misrouted. A session
+    that spotted a stale one left it alone precisely because fixing it looked
+    like trespass — *"outside what you asked me for"* — which is how it stays
+    broken.
+    """
+    store.create_subject("fitbox", "the curve-fitting box", SCRIBE)
+    store.register(Agent(name="bench/ops", machine="bench", cwd="/w/ops"))
+
+    pile, _ = store.describe_subject("fitbox", "the two fitting boxes on this bench", "bench/ops")
+
+    assert pile.described_by == "bench/ops", "the correction must say who made it"
+    assert pile.created_by == SCRIBE, "and must not rewrite who opened the pile"
+
+
+def test_reopening_the_name_is_still_refused_which_is_what_makes_the_flag_safe(store):
+    """The guard `--describe` is allowed to exist behind.
+
+    A writer who does not know the pile exists types the create form, and that
+    still refuses. Only a separate verb — which nobody reaches by accident —
+    overwrites a stranger's sentence, and it reports whose it was.
+    """
+    store.create_subject("fitbox", "the curve-fitting box", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.create_subject("fitbox", "something entirely different", SCRIBE)
+
+    assert "already exists" in str(refusal.value)
+
+
+def test_describing_a_pile_the_same_way_twice_is_refused(store):
+    """A no-op that reports success would move the date and claim the line was reviewed."""
+    store.create_subject("fitbox", "the curve-fitting box", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.describe_subject("fitbox", "the curve-fitting box", SCRIBE)
+
+    assert "nothing to correct" in str(refusal.value)
+
+
+def test_an_archived_pile_still_takes_a_correction_though_it_takes_no_notes(store):
+    """A description is not content.
+
+    A finished run whose label is wrong misleads exactly the person digging
+    through old work, who has the least context to catch it. Notes are refused
+    there because they are new sediment; this is the sentence that says what the
+    sediment is.
+    """
+    store.create_subject("soak-441", "overnigth soak of buidl 441", SCRIBE)
+    store.archive_subject("soak-441", SCRIBE)
+
+    with pytest.raises(UsageError):
+        store.write_note(SCRIBE, "one more thing", subject="soak-441")
+
+    pile, _ = store.describe_subject("soak-441", "overnight soak of build 441", SCRIBE)
+    assert pile.description == "overnight soak of build 441"
+    assert pile.archived, "correcting the label must not quietly reopen the pile"
+
+
+def test_an_unregistered_author_cannot_describe(store):
+    """Same rule as every other write: a name nobody can look up is not attribution."""
+    store.create_subject("fitbox", "the curve-fitting box", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.describe_subject("fitbox", "something else", "nobody")
+
+    assert "unknown author" in str(refusal.value)
+
+
+def test_a_description_nobody_has_corrected_is_dated_to_when_the_pile_was_opened(store):
+    """Rather than left null to render as "nobody knows".
+
+    An original description is not less accountable than a corrected one — it was
+    written by whoever opened the pile, then. Saying so is what lets the index
+    show an age for every line rather than only for the touched ones.
+    """
+    pile = store.create_subject("rig-a", "thermal chamber A", SCRIBE)
+
+    assert pile.described_at == pile.last_at != ""
+    assert pile.described_by == SCRIBE
+
+
+def test_the_index_dates_the_description_separately_from_the_pile(hub, monkeypatch, capsys):
+    """The decay signal, and the reason the correction path gets walked at all.
+
+    `last` is the newest *note*. It reads as freshness for the pile and is
+    silently not a claim about the sentence a writer actually decides on — so a
+    description wrong for a year looked exactly as authoritative as one written
+    this morning. The two dates sit side by side because the useful thing is the
+    comparison: a label last thought about in February on a pile worked yesterday.
+    """
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "thermal chamber A"]) == 0
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "notes"]) == 0
+    printed = capsys.readouterr().out
+
+    assert "· described " in printed
+    assert "the `last` and `described` dates above are on the same clock" in printed
+
+
+def test_correcting_a_description_over_the_wire_reports_the_old_text(hub, monkeypatch, capsys):
+    """End to end, because the replaced text has to survive the hub to be printable."""
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "fitbox", "the curve-fitting box"]) == 0
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "subject", "fitbox", "--describe", "the two fitting boxes"]) == 0
+    printed = capsys.readouterr().out
+
+    assert "described fitbox · the two fitting boxes" in printed
+    assert "it used to read: the curve-fitting box" in printed
+    assert "nobody was told" in printed, "a correction rings no bell, and the writer has to know that"
+
+
+def test_describe_refuses_to_be_combined_with_the_other_two_modes(hub, monkeypatch, capsys):
+    """Refused rather than ordered, because either order is somebody's reasonable guess."""
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "thermal chamber A"]) == 0
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "--describe", "x", "--archive"]) == 3
+    assert "One at a time" in capsys.readouterr().err
+
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "also a description", "--describe", "x"]) == 3
+    assert "do not also pass a description argument" in capsys.readouterr().err
+
+
 # -- the command surface ---------------------------------------------------------
 
 
