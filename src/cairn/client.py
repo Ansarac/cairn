@@ -237,18 +237,22 @@ class HubClient:
         with self._readable():
             return Withdrawal.from_json(answer)
 
-    def prune(self, older_than_days: int) -> tuple[int, int]:
-        """Delete old messages nobody still has unread; return how many went and how many stayed.
+    def prune(self, older_than_days: int) -> tuple[int, int, tuple[str, ...]]:
+        """Delete old messages nobody still has unread; return what went, what stayed, and whose.
 
         Days rather than an instant, deliberately. Every `created_at` on the hub
         was stamped by the hub's clock, so a cutoff computed here would be this
         machine's arithmetic about somebody else's timestamps — the two-clock bug
         docs/design.md §12 item 12 took out of `peers`, rebuilt on a command that
         deletes things.
+
+        `kept_by` is empty against a hub that predates it, and `kept` stays the
+        count of record for that reason: an empty list means "this hub did not
+        say", never "nobody is holding anything".
         """
         answer = self._call("POST", "/v1/prune", {"older_than_days": older_than_days})
         with self._readable():
-            return int(answer["removed"]), int(answer["kept"])
+            return int(answer["removed"]), int(answer["kept"]), tuple(str(a) for a in answer.get("kept_by") or ())
 
     def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `send`
         self,

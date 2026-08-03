@@ -352,3 +352,62 @@ def test_the_renderer_says_nothing_about_either_when_neither_happened():
 
     assert "SUPERSEDED" not in text
     assert "deleted" not in text
+
+
+def test_the_tombstone_view_does_not_report_the_live_notes_as_deletions(store):
+    """From cut 13's acceptance run, and it is the count lying in the loudest direction.
+
+    `removed` used to be the *complement* of the page rather than the tombstones on
+    it. In the plain view those are the same set, so it read correctly for two
+    cuts; under `--deleted` the complement is the live notes, and the footnote
+    calling it a deletion tally then announced fifteen deletions over a page
+    showing one. Three independent sessions hit it, two said they read it three
+    times, and the one doing a hub tidy-up had to count the previous reading by
+    hand to rule out that something had gone missing on its watch.
+    """
+    for n in range(4):
+        store.write_note(SCRIBE, f"claim {n}", subject=SUBJECT)
+    store.delete_note(2, SCRIBE, "a credential nobody should have written down")
+
+    live, live_total, live_removed = store.notes(SUBJECT)
+    buried, buried_total, buried_removed = store.notes(SUBJECT, deleted=True)
+
+    assert (len(live), live_total, live_removed) == (3, 3, 1)
+    assert (len(buried), buried_total, buried_removed) == (1, 1, 1), "the count must be tombstones in both views"
+
+
+def test_the_tombstone_view_drops_the_footnote_instead_of_restating_the_page(store):
+    """There the line *is* the page, and it offered the command the reader had just run."""
+    store.write_note(SCRIBE, "4471 is the build to use", subject=SUBJECT)
+    gone = store.write_note(SCRIBE, "a password", subject=SUBJECT)
+    store.delete_note(gone.id, SCRIBE, "credentials do not belong on an unauthenticated hub")
+
+    entries, total, removed = store.notes(SUBJECT, deleted=True)
+    text = render.notes_text(entries, total, SUBJECT, removed=removed, deleted=True)
+    plain_entries, plain_total, plain_removed = store.notes(SUBJECT)
+    plain = render.notes_text(plain_entries, plain_total, SUBJECT, removed=plain_removed)
+
+    assert "has been deleted here" not in text
+    assert "1 note has been deleted here" in plain, "the plain view still has to say the pile was tidied"
+
+
+def test_a_note_on_an_archived_pile_says_so_when_a_live_parent_rolls_it_up(store):
+    """A finished run's notes arrive inside a live rig's reading, and the index does not list them.
+
+    An acceptance session read `cairn notes`, saw two subjects, then read the
+    parent and met a note filed on a third it had never been shown. It inferred
+    archiving as the reason and wrote afterwards that had it trusted the index as
+    the map of what exists, it would have concluded the note was not there.
+    Archiving is allowed to hide a pile from the index; it is not allowed to make
+    a note that is still being read look current.
+    """
+    store.create_subject(f"{SUBJECT}/soak", "the overnight soak of 4471, finished", SCRIBE)
+    store.write_note(SCRIBE, "ran clean for 14 hours", subject=f"{SUBJECT}/soak")
+    store.write_note(SCRIBE, "the fixture takes M3", subject=SUBJECT)
+    store.archive_subject(f"{SUBJECT}/soak", SCRIBE)
+
+    entries, total, removed = store.notes(SUBJECT)
+    text = render.notes_text(entries, total, SUBJECT, removed=removed)
+
+    assert [e.archived for e in entries] == [True, False], "the flag rides the note, not the request"
+    assert "archived subject" in text

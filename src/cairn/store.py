@@ -194,8 +194,8 @@ class Store(Protocol):
         """Withhold a message from every mailbox that has not passed it yet."""
         ...
 
-    def prune(self, older_than_days: int) -> tuple[int, int]:
-        """Delete old messages nobody still has unread; return how many went and how many stayed."""
+    def prune(self, older_than_days: int) -> tuple[int, int, tuple[str, ...]]:
+        """Delete old messages nobody still has unread; return what went, what stayed, and whose."""
         ...
 
     def write_note(  # noqa: PLR0913, PLR0917 - the note schema, same reasoning as `append`
@@ -578,8 +578,10 @@ class SqliteStore:
         **A broadcast is partial by nature and reports itself that way.** One row,
         many mailboxes, each with its own cursor: some will never see it, some
         already have. "It worked" and "it failed" are both wrong, so the answer is
-        two numbers and a list of names. It is refused only when *no* mailbox can
-        still be spared.
+        **both** lists of names — who was spared and who was too late. It said
+        only the second for two cuts, which reads as an answer and is not one: the
+        sender's next move is deciding who to go and talk to, and that is the list
+        it left out. It is refused only when *no* mailbox can still be spared.
 
         The cursor is the only signal there is, and it is not perfect: a reader that
         ran `cairn inbox --no-ack` has seen the message and left its cursor behind,
@@ -621,7 +623,12 @@ class SqliteStore:
         self._touch(sender)
         withdrawn = now()
         self._db.execute("UPDATE messages SET retracted_at = ? WHERE seq = ?", (withdrawn, seq))
-        return Withdrawal(message=replace(message, retracted_at=withdrawn), withheld=len(still), read_by=gone)
+        return Withdrawal(
+            message=replace(message, retracted_at=withdrawn),
+            withheld=len(still),
+            read_by=gone,
+            withheld_from=still,
+        )
 
     def _holders(self, message: Message) -> list[tuple[str, int]]:
         """Return every mailbox this message was addressed to, with where its cursor sits.
@@ -639,7 +646,7 @@ class SqliteStore:
         ).fetchall()
         return [(r["agent"], int(r["seq"])) for r in rows]
 
-    def prune(self, older_than_days: int) -> tuple[int, int]:
+    def prune(self, older_than_days: int) -> tuple[int, int, tuple[str, ...]]:
         """Delete old messages nobody still has unread, and report what stayed.
 
         **The pipe is not sediment.** A message is addressed to a session and read
@@ -654,6 +661,14 @@ class SqliteStore:
         registered mailbox still has a cursor below it. Anything held back is
         counted and reported, because a prune that quietly did less than asked is
         the silent shape this project keeps refusing.
+
+        **And named, not just counted.** The count alone reads as *"2 older
+        messages are still unread by somebody"*, which an operator running this on
+        a shared hub cannot act on: the instruction it answers is always about a
+        particular machine coming back off leave, and "somebody" does not say
+        whether that is the machine. An acceptance session ran the command, kept
+        the backlog, and had to report that it could confirm *a* backlog was
+        preserved and not *the* one.
 
         **The cutoff is computed here, on the hub's clock**, from a number of days
         rather than an instant. Every `created_at` in this table was stamped by
@@ -674,10 +689,16 @@ class SqliteStore:
         # exactly like a cursor waiting for it, and without this clause the one
         # class of message that is guaranteed safe to prune would be the class
         # that never got pruned. Found live, against the docstring above it.
-        held = """AND m.retracted_at IS NULL
-                  AND EXISTS (SELECT 1 FROM cursors c
-                              WHERE c.last_acked_seq < m.seq AND c.agent != m.sender
-                                AND (m.recipient = ? OR m.recipient = c.agent))"""
+        #
+        # `holder` is one string because it is asked in both directions: which
+        # messages a mailbox is holding, and which mailboxes are holding one. Two
+        # spellings of a predicate this load-bearing would drift, and the drift
+        # would show up as a prune that deleted mail while naming nobody — the
+        # count and the names disagreeing about the thing the count exists for.
+        holder = """m.retracted_at IS NULL
+                    AND c.last_acked_seq < m.seq AND c.agent != m.sender
+                    AND (m.recipient = ? OR m.recipient = c.agent)"""
+        held = f"AND EXISTS (SELECT 1 FROM cursors c WHERE {holder})"  # noqa: S608 - `holder` is a literal; every value is a bound parameter
         scope = (cutoff, BROADCAST)
         kept = int(
             self._db.execute(f"SELECT COUNT(*) AS c FROM messages m WHERE m.created_at < ? {held}", scope).fetchone()[  # noqa: S608 - `held` is a literal; every value is a bound parameter
@@ -689,11 +710,19 @@ class SqliteStore:
             scope,
         ).fetchone()
         removable = int(cursor["c"])
+        # The same predicate read from the mailbox end, before the delete rather
+        # than after it — the rows the names come from are about to go.
+        holders = self._db.execute(
+            f"""SELECT DISTINCT c.agent AS agent FROM cursors c
+                WHERE EXISTS (SELECT 1 FROM messages m WHERE m.created_at < ? AND {holder})
+                ORDER BY c.agent""",  # noqa: S608 - ditto
+            scope,
+        ).fetchall()
         self._db.execute(
             f"DELETE FROM messages WHERE seq IN (SELECT m.seq FROM messages m WHERE m.created_at < ? AND NOT ({held.removeprefix('AND ')}))",  # noqa: S608, E501 - ditto
             scope,
         )
-        return removable, kept
+        return removable, kept, tuple(r["agent"] for r in holders)
 
     # -- notes ----------------------------------------------------------------
 
@@ -981,15 +1010,33 @@ class SqliteStore:
             params += [pattern, pattern]
         clause = " AND ".join(where)
         total = int(self._db.execute(f"SELECT COUNT(*) AS c FROM notes n WHERE {clause}", params).fetchone()["c"])  # noqa: S608 - `clause` is built from literals above; every value is a bound parameter
-        # The tombstone count is the same filter with the liveness clause flipped,
-        # so it can never disagree with the page about what was being looked at.
-        buried = clause.replace(where[0], "n.deleted_at IS NOT NULL" if not deleted else "n.deleted_at IS NULL", 1)
+        # The tombstone count is the same filter with the liveness clause forced
+        # to "deleted", so it can never disagree with the page about what was
+        # being looked at — and it counts the same thing in both views.
+        #
+        # It used to *flip* the clause instead, which is a different sentence: the
+        # complement of the page. In the plain view those coincide, so it read
+        # correctly for two cuts. Under `deleted=True` the complement is the live
+        # notes, and the footnote calling it a deletion count then reported "15
+        # notes have been deleted here" over a page showing one tombstone. Three
+        # independent acceptance sessions hit it and two said they read it three
+        # times; one was midway through a hub tidy-up, where a number like that
+        # reads as evidence something has already gone missing on your watch.
+        buried = clause.replace(where[0], "n.deleted_at IS NOT NULL", 1)
         removed = int(self._db.execute(f"SELECT COUNT(*) AS c FROM notes n WHERE {buried}", params).fetchone()["c"])  # noqa: S608 - ditto
         rows = self._db.execute(
             f"""SELECT n.*,
                        (SELECT MIN(s.id) FROM notes s WHERE s.settles = n.id AND s.deleted_at IS NULL) AS settled_by,
                        (SELECT MAX(s.id) FROM notes s WHERE s.supersedes = n.id AND s.deleted_at IS NULL)
-                           AS superseded_by
+                           AS superseded_by,
+                       -- Whether the pile this sits on is closed. A subject read
+                       -- rolls up its children, so an archived child's notes turn
+                       -- up inside a live parent's reading with nothing to say the
+                       -- pile is finished — and the index does not list it either,
+                       -- so the reader has no second place to find out. NULL for a
+                       -- note whose subject row predates `subjects`, which reads as
+                       -- "not archived" and is right: it cannot have been.
+                       (SELECT s.archived_at IS NOT NULL FROM subjects s WHERE s.name = n.subject) AS archived
                 FROM notes n WHERE {clause} ORDER BY n.id DESC LIMIT ?""",  # noqa: S608 - ditto
             [*params, limit],
         ).fetchall()
@@ -998,6 +1045,7 @@ class SqliteStore:
                 note=_note_from_row(r),
                 settled_by=int(r["settled_by"]) if r["settled_by"] is not None else None,
                 superseded_by=int(r["superseded_by"]) if r["superseded_by"] is not None else None,
+                archived=bool(r["archived"]),
             )
             for r in reversed(rows)
         ]

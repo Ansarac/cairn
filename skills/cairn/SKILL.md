@@ -227,10 +227,22 @@ While a message is still behind the recipient's cursor it is in the hub and the
 hub can withhold it. Once they have read it, this **fails** and tells you who
 read it — the words are in somebody's context and nothing cairn does reaches
 them. That failure is the answer, not an obstacle: what is left is to send a new
-message saying what changed, and now you know who needs it. A broadcast is
-partial and says so (`withdrew seq 3 from 2 mailboxes · too late for
-compute/analysis`). You may only retract your own sends. Your `cairn sent` keeps
-the row, marked `WITHDRAWN`, so you have a record of what you pulled.
+message saying what changed, and now you know who needs it. You may only retract
+your own sends. Your `cairn sent` keeps the row, marked `WITHDRAWN`, so you have
+a record of what you pulled.
+
+A broadcast is partial and names both halves:
+
+```
+withdrew seq 3 from 2 mailboxes
+  withheld from ops/dispatch, lab/oven-4 — they will never be given it
+  too late for compute/analysis — already read it; a correction has to be a new message
+```
+
+Read both lists. The second is who you still have to talk to. The first is who
+you no longer have to, and you cannot work it out by subtracting one list from
+`cairn peers` — a peer that registered after your send is in the peer list and
+was never a recipient.
 
 **Reading consumes.** Plain `cairn inbox` moves your read cursor, so mail you
 read and then lose to a crash is no longer waiting for you. Capture the output
@@ -250,11 +262,19 @@ boundary and says so, or `--since` if you do not want it consumed at all.
 
 **A read can be a page rather than the whole mailbox, and it says so.** The
 header counts everything waiting for you; a line under it — `showing the oldest 3
-of 41` — appears whenever `--limit` cut the page short. It is the *oldest* end,
-because this is a queue and you work through it from the front, so the recent
-traffic is what a truncated read leaves out. Only what was printed gets marked
-read, so running it again picks up where it stopped. Raise `--limit` if you would
-rather have it in one go.
+of 41; the newest 38 are not on this page` — appears whenever `--limit` cut the
+page short. It is the *oldest* end, because this is a queue and you work through
+it from the front, so the recent traffic is what a truncated read leaves out.
+Only what was printed gets marked read, so running it again picks up where it
+stopped. Raise `--limit` if you would rather have it in one go.
+
+**`cairn sent --limit` cuts the other end, and that catches people.** Everything
+above is about the inbox, which is oldest-first; your sent log is newest-first, so
+`--limit` there drops the *oldest* — which is the thing you sent earliest in the
+shift, and usually the one you have come back to check on. A session ran
+`cairn sent --limit 3` to confirm a message it had just withdrawn and got a page
+without it. Both commands name the end that is missing; read that line rather
+than assuming the shape carries over.
 
 **To walk a long backlog without draining it, use `--since` rather than a bigger
 `--limit`.** Raising the limit re-fetches from the oldest end every time, so page
@@ -405,6 +425,35 @@ happen to run `cairn sent` loses them*. When you send an explanation, a
 hypothesis or a reason, ask whether it would survive you. If it would not, write
 the note too.
 
+### Clearing old traffic off the hub
+
+Not a thing to do on a normal shift. It is here because when somebody *is* asked
+to do it, this is the only command that will, and a session given exactly that job
+searched the whole of this file, found nothing, and had to go to `cairn --help`.
+
+```bash
+cairn prune --older-than 30
+```
+
+**It deletes outright, and it never touches notes.** Messages are a pipe; notes
+are the thing meant to outlive a session, so no tombstone is left and no note is
+at risk at any age. There is no dry run and nothing lists what went — if you need
+a record of the traffic, take it before you run this.
+
+**It cannot take mail anybody still has unread, whatever its age**, because a
+peer that was switched off for a week is supposed to come back to its backlog.
+Whatever it held back it names:
+
+```
+pruned 4 messages older than 30 days
+  2 older messages are still unread by ops/dispatch, so they stayed
+```
+
+That second line is usually the one you were actually asked about. The cutoff is
+a whole number of days, counted back from now on the hub's clock — so "everything
+from last month" is not something you can express exactly, and the safe side of
+the boundary is the smaller sweep.
+
 ## Notes: what outlives the session
 
 A note is not a message with a longer shelf life. It is addressed to a
@@ -547,6 +596,12 @@ It will refuse while the pile still has an open question, because the index is
 sorted by exactly those and archiving would take them out of it. Settle them
 first — *"no longer relevant, run closed"* is a perfectly good answer.
 
+An archived pile is out of `cairn notes` but never out of the record. The index
+says how many it is not showing (`2 archived subjects not shown`), `--archived`
+lists them, and a note on an archived pile is marked `archived subject` wherever
+it is read — including inside a parent's rollup, which is where you will meet one
+without having gone looking for it.
+
 ### Leaving one
 
 ```bash
@@ -618,15 +673,15 @@ nobody months from now knows what your working directory was. A note records who
 wrote it, so it needs a registered name like everything else.
 
 **Choosing the subject is the part to slow down on.** Case folding stops `rig-a`
-and `Rig-A` from becoming two piles. It does nothing at all about `soak-441`,
-`eval-441`, `run-441` and `441` — cairn will create all four without a murmur,
-and then the reader finds one of them. Run `cairn notes` before you invent a
-name, and file under a pile that already exists. `cairn note` tells you which
-side you came down on:
+and `Rig-A` from becoming two piles. It does nothing about `soak-441`,
+`eval-441`, `run-441` and `441` being four names for one run — which is why
+opening one is a separate command that guesses at what you meant. The refusal is
+the guard; by the time you are writing a note, you have already been made to
+decide. `cairn note` then just says how much is there:
 
 ```
 note 5 on rig-a/soak-441 · 2 notes there now
-note 1 on rig-a/chamber · new subject — `cairn notes` lists the ones that already exist
+note 1 on rig-a/chamber · first note on this subject
 ```
 
 A subject may contain only `a-z`, `0-9`, `.` `_` `-` and `/`, must start with a
@@ -723,8 +778,19 @@ remembered per working directory — a session restarting in the same directory
 picks its identity, and its unread mail, back up.
 
 Register **once per directory**, not once per session — a session restarting in
-the same place already has its identity and its mail. Registering again is
-harmless, just unnecessary.
+the same place already has its identity and its mail. Registering again under the
+*same* name is harmless, just unnecessary.
+
+**Registering under a different name in a directory that already has one is not
+harmless, and it is the easy mistake.** You are a new session, the natural thing
+is to register, and the natural name is the obvious variation on the last one. But
+the sent log, the read cursor and the right to `cairn retract` all belong to the
+*name* — and only a sender may withdraw its own message. A session that renamed
+itself on arrival would have lost the ability to pull back a broadcast its
+predecessor had sent an hour earlier telling two machines to flash a board that
+had since been withdrawn. Run `cairn whoami` first. If it prints a name, you are
+that already; keep it unless you mean to hand the work over, and cairn will tell
+you what you left behind if you do.
 
 Pick a name nobody else would pick. Claiming one that already belongs to a live
 session elsewhere takes it over: you will not see its unread mail, and anyone who

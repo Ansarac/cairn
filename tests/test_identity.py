@@ -284,3 +284,72 @@ def test_an_unreadable_pin_file_fails_open_rather_than_blocking_all_sends(pins):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     check_pin("bench/firmware", "bench", "/w/fw")
+
+
+# -- renaming a directory's identity -------------------------------------------
+
+
+def test_registering_a_new_name_says_what_the_directory_is_leaving_behind(pins, capsys):
+    """From cut 13's acceptance run, and the near-miss it recorded was the dangerous kind.
+
+    The pin is per-directory, so a fresh session inherits the previous one's
+    identity — and with it the sent log, the read cursor, and the only right to
+    withdraw its unread mail, because `retract` refuses anybody but the sender.
+    The skill's own advice is to register on arrival; the obvious name is the last
+    one with a suffix. A live session was one command from doing exactly that
+    while a broadcast telling two machines to flash a withdrawn board sat unread
+    on the hub, and reported afterwards that what stopped it was its operator's
+    instruction to establish state first, not anything cairn said.
+    """
+    import threading
+
+    from cairn import cli
+    from cairn.hub import make_server
+
+    server = make_server(SqliteStore(":memory:"), host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[:2]
+        base = f"http://{host}:{port}"
+        assert cli.run(["--hub", base, "register", "hil-a/dayshift"]) == 0
+        capsys.readouterr()
+
+        assert cli.run(["--hub", base, "register", "hil-a/dayshift-2"]) == 0
+        printed = capsys.readouterr().out
+    finally:
+        server.notifier.close_all()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert "left behind  hil-a/dayshift" in printed
+    assert "cairn retract" in printed, "the right that is actually lost has to be the one named"
+    assert "cairn register hil-a/dayshift" in printed, "and the way back, since there is one"
+
+
+def test_re_registering_the_same_name_says_nothing_about_leaving_anything(pins, capsys):
+    """Registering again under the same name is the harmless case, and a line there would train the other one past."""
+    import threading
+
+    from cairn import cli
+    from cairn.hub import make_server
+
+    server = make_server(SqliteStore(":memory:"), host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[:2]
+        base = f"http://{host}:{port}"
+        assert cli.run(["--hub", base, "register", "hil-a/dayshift"]) == 0
+        capsys.readouterr()
+
+        assert cli.run(["--hub", base, "register", "hil-a/dayshift"]) == 0
+        printed = capsys.readouterr().out
+    finally:
+        server.notifier.close_all()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert "left behind" not in printed

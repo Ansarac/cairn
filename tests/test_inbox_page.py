@@ -176,12 +176,17 @@ def test_the_truncation_line_arrives_before_the_first_message():
     In the footnotes it lands after the reader has formed a view of the mailbox,
     which is after the damage. Same placement and same reasoning as `notes` and
     the sent log — one helper, so the three cannot drift.
+
+    It names **both** ends, and that half came from a live session: `sent --limit`
+    keeps the newest where `inbox --limit` keeps the oldest, and a reader primed by
+    the skill's inbox hazard ran `sent --limit 3` to check on the very message that
+    fell off the other end. Saying which end is missing is what it caught that on.
     """
     lines = render.inbox_text([_entry(1), _entry(2)], total=9).splitlines()
 
-    assert lines.index("— showing the oldest 2 of 9; raise --limit for the rest") < next(
-        i for i, line in enumerate(lines) if line.startswith("[1]")
-    )
+    assert lines.index(
+        "— showing the oldest 2 of 9; the newest 7 are not on this page — raise --limit for the rest"
+    ) < next(i for i, line in enumerate(lines) if line.startswith("[1]"))
 
 
 def test_json_reports_the_backlog_and_the_page_separately():

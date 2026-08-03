@@ -605,7 +605,7 @@ def test_the_hub_never_sends_a_provenance_key_at_all(hub):
     assert "provenance" not in raw
     assert "verified" not in raw
     for wrapper in payload["notes"]:
-        assert set(wrapper) == {"note", "settled_by", "superseded_by"}
+        assert set(wrapper) == {"note", "settled_by", "superseded_by", "archived"}
 
 
 def test_the_verdict_a_reader_sees_was_computed_where_the_reader_is(hub, capsys):
@@ -925,6 +925,7 @@ def test_notes_json_puts_the_framing_before_the_notes():
         "scope",
         "subject",
         "now",
+        "viewing",
         "showing",
         "total",
         "open_questions",
@@ -1143,11 +1144,17 @@ def test_a_hub_with_no_subjects_route_costs_the_hint_and_nothing_else():
 # happened, creating a fourth pile looked exactly like adding to the first.
 
 
-def test_the_first_note_on_a_subject_says_the_subject_is_new(hub, monkeypatch, capsys):
-    """Starting a pile and adding to one are the same command with the same output otherwise.
+def test_the_first_note_on_a_subject_reports_it_and_does_not_advise_about_it(hub, monkeypatch, capsys):
+    """The write says how much is on the pile. It no longer tells the writer to go and check.
 
-    A live session was handed a bench and never told `note` existed; nothing on
-    the write said whether the name it had invented was one anybody else used.
+    "new subject — `cairn notes` lists the ones that already exist" was the only
+    guard there was when a subject came into being as a side effect of the first
+    note. Since `cairn subject`, the pile was opened deliberately one command
+    earlier and a duplicate name would have been refused there — so the sentence
+    arrives after the decision, about a decision the tool already made the writer
+    take on purpose. Three acceptance sessions in a row met it immediately after
+    their own successful `cairn subject`; advice that cannot be acted on is what
+    trains a reader past the next line too.
     """
     monkeypatch.setenv("CAIRN_AGENT", "bench/firmware")
     _join(hub, "bench/firmware")
@@ -1156,8 +1163,8 @@ def test_the_first_note_on_a_subject_says_the_subject_is_new(hub, monkeypatch, c
     capsys.readouterr()
     assert _cli(hub, "note", "soak-441", "3 of 40 iterations failed") == 0
     printed = capsys.readouterr().out
-    assert "new subject" in printed
-    assert "cairn notes" in printed, "a new pile has to say where the existing ones are listed"
+    assert "first note on this subject" in printed
+    assert "already exist" not in printed, "the pile was opened deliberately; there is nothing left to check"
 
 
 def test_a_later_note_says_how_much_is_on_the_pile_now(hub, monkeypatch, capsys):
@@ -1171,7 +1178,7 @@ def test_a_later_note_says_how_much_is_on_the_pile_now(hub, monkeypatch, capsys)
     assert _cli(hub, "note", "soak-441", "all three were above 40 degrees") == 0
     printed = capsys.readouterr().out
     assert "2 notes there now" in printed
-    assert "new subject" not in printed
+    assert "first note" not in printed
 
 
 def test_a_first_note_on_a_parent_still_reads_as_new_though_its_child_has_notes(hub, monkeypatch, capsys):
@@ -1189,7 +1196,7 @@ def test_a_first_note_on_a_parent_still_reads_as_new_though_its_child_has_notes(
     hub.write_note("bench/firmware", "and the gasket is on order", subject="rig-a/chamber")
 
     assert _cli(hub, "note", "rig-a", "clamp torqued to 4Nm") == 0
-    assert "new subject" in capsys.readouterr().out
+    assert "first note on this subject" in capsys.readouterr().out
     # It really is one pile to read and two to list — which is why the marker
     # cannot be taken off the read.
     assert hub.notes("rig-a")[1] == 3
@@ -1219,7 +1226,7 @@ def test_a_hub_with_no_subject_index_costs_the_marker_and_stores_the_note_anyway
     assert _cli(hub, "note", "soak-441", "3 of 40 iterations failed") == 0, "an old hub read as a failed write"
     printed = capsys.readouterr()
     assert "note 1 on soak-441" in printed.out
-    assert "new subject" not in printed.out
+    assert "first note" not in printed.out
     assert "notes there now" not in printed.out
     assert printed.err == ""
     assert [e.note.body for e in hub.notes("soak-441")[0]] == ["3 of 40 iterations failed"]

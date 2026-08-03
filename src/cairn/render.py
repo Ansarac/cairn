@@ -466,6 +466,13 @@ def _marks(entry: NoteEntry) -> str:
         marks.append(f"SUPERSEDED by {entry.superseded_by}")
     if entry.note.question:
         marks.append("question · OPEN" if entry.is_open else f"question · settled by {entry.settled_by}")
+    if entry.archived:
+        # Lower case, because it is not a warning about the body: an archived pile
+        # is finished work, not wrong work. It is here at all because a subject
+        # read rolls up its children and the index does not list archived piles,
+        # so without it a finished run's notes arrive inside a live parent's
+        # reading with nothing anywhere to say the run is over.
+        marks.append("archived subject")
     if entry.note.settles is not None:
         marks.append(f"settles {entry.note.settles}")
     if entry.note.supersedes is not None:
@@ -473,15 +480,23 @@ def _marks(entry: NoteEntry) -> str:
     return f" · {' · '.join(marks)}" if marks else ""
 
 
-def _removed_note(removed: int, subject: str | None) -> list[str]:
+def _removed_note(removed: int, subject: str | None, *, deleted: bool = False) -> list[str]:
     """Say that this pile has been tidied, without filling it with tombstones.
 
     A reading that silently omitted deleted notes would be the quiet loss this
     project keeps finding in other systems; one that listed them all would defeat
     the reason anybody deleted anything. So the page is clean and the fact is one
     line, with the flag that shows them.
+
+    **Silent in the `--deleted` view, because there the line is the page.** A
+    reader who asked for the tombstones is looking at every one of them; a
+    footnote counting them and then offering the command they just ran is at best
+    noise. It was worse than noise before `store.notes` was fixed — the count it
+    printed there was the *live* notes, so the sentence claimed a mass deletion
+    that had not happened. Suppressing it here and counting tombstones there are
+    two halves of the same fix; keep them together.
     """
-    if not removed:
+    if not removed or deleted:
         return []
     scope = f" {subject}" if subject else ""
     # Noun, verb and pronoun all agree with the count. `bell_reason` carries the
@@ -524,10 +539,25 @@ def _truncation(shown: int, total: int, end: str = "newest") -> list[str]:
     dropped is the mail that has been waiting longest. Saying "newest" on the
     inbox would send a reader looking for the recent end of a page that does not
     contain it.
+
+    **So the line names the end that is gone, not only the end that is here.**
+    Saying which end was kept is honest and it is not enough: `SKILL.md` spends a
+    long paragraph on the inbox cutting the newest, and a reader who learned the
+    shape there carries it to `cairn sent`, where it is exactly backwards. One did
+    — it ran `sent --limit 3` specifically to check on the message it had just
+    withdrawn, which was the oldest of four, and got a page without it. It caught
+    that off this line and said so; the half of the sentence it caught it on is
+    the half being added here.
     """
     if total <= shown:
         return []
-    return [f"— showing the {end} {shown} of {total}; raise --limit for the rest", ""]
+    missing = total - shown
+    gone = "oldest" if end == "newest" else "newest"
+    line = (
+        f"— showing the {end} {shown} of {total}; "
+        f"the {gone} {missing} {'is' if missing == 1 else 'are'} not on this page — raise --limit for the rest"
+    )
+    return [line, ""]
 
 
 def notes_json(  # noqa: PLR0913 - the filter the reader asked for; hiding it in an object would hide the scope
@@ -539,6 +569,7 @@ def notes_json(  # noqa: PLR0913 - the filter the reader asked for; hiding it in
     find: str | None = None,
     now: str = "",
     removed: int = 0,
+    deleted: bool = False,
 ) -> str:
     """Render a pile of notes as JSON, framing first and always.
 
@@ -546,11 +577,16 @@ def notes_json(  # noqa: PLR0913 - the filter the reader asked for; hiding it in
     and emitted even when there is nothing, so the shape never varies. `total`
     rides alongside `showing` because a program that cannot see it truncated
     will report a partial pile as the whole one.
+
+    `viewing` says which page this is, and it earns its key: `removed` counts
+    tombstones in scope, so in the tombstone view it equals `total` and a program
+    that could not tell the two views apart would double-count them.
     """
     payload = {
         "scope": _notes_scope(subject, open_only=open_only, find=find),
         "subject": subject,
         "now": now or wire_now(),
+        "viewing": "deleted" if deleted else "live",
         "showing": len(entries),
         "total": total,
         "open_questions": sum(1 for e in entries if e.is_open),
@@ -572,6 +608,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
     hub: str = "",
     now: str = "",
     removed: int = 0,
+    deleted: bool = False,
 ) -> str:
     """Render a pile of notes for reading.
 
@@ -628,7 +665,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
         lines.append(
             "— a superseded note is kept, not hidden: read both, and take the later one as what the subject says now"
         )
-    lines.extend(_removed_note(removed, subject))
+    lines.extend(_removed_note(removed, subject, deleted=deleted))
     # Last, and after the staleness clause rather than beside it: the clause says
     # what a date means and this says what to measure it against, which is the
     # order a reader needs them in. See `_clock_notes` for why `inbox` has none.
@@ -702,10 +739,11 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def subjects_json(summaries: list[SubjectSummary], now: str = "") -> str:
+def subjects_json(summaries: list[SubjectSummary], now: str = "", hidden: int = 0) -> str:
     """Render the subject index as JSON."""
     payload = {
         "count": len(summaries),
+        "archived_not_shown": hidden,
         "now": now or wire_now(),
         "open_questions": sum(s.open_questions for s in summaries),
         "framing": {"source": "peer-agents", "authority": "none", "notice": NOTES_NOTICE},
@@ -714,14 +752,29 @@ def subjects_json(summaries: list[SubjectSummary], now: str = "") -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
-def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "") -> str:
+def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "", hidden: int = 0) -> str:
     """Render the subject index for reading.
 
     Counts only, no bodies — but the subject strings themselves are peer-authored,
     so the claim clause still rides the header. What keeps this safe at column two
     rather than needing an indent is that a subject cannot contain whitespace.
+
+    **`hidden` is the archived piles this listing is not showing, and it has to be
+    said.** Leaving finished work out is the point of archiving; leaving it out
+    *silently* turns the one listing a reader treats as the map of what exists into
+    a map with places missing. A live session read the index, then read a parent
+    subject, met a note filed on a child that the index had not mentioned, and had
+    to infer that archiving was the reason — writing afterwards that had it trusted
+    the index it would have concluded the note was not there. §12 item 14's rule
+    for tombstones, arriving a second time for piles: hidden is fine, concealed is
+    not.
     """
     if not summaries:
+        if hidden:
+            return (
+                f"cairn notes: nothing open{_asked(hub)}; "
+                f"{hidden} archived subject{'' if hidden == 1 else 's'} — `cairn notes --archived` lists them.\n"
+            )
         return f"cairn notes: no notes anywhere yet{_asked(hub)}.\n"
     width = max(len(s.subject) for s in summaries)
     plural = "subject" if len(summaries) == 1 else "subjects"
@@ -751,6 +804,11 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "")
         lines.append(f"— a read includes what is under it: `cairn notes {nested}` covers everything in {nested}/")
     if any(s.open_questions for s in summaries):
         lines.append("— see only what is unanswered with `cairn notes --open`")
+    if hidden:
+        lines.append(
+            f"— {hidden} archived subject{'' if hidden == 1 else 's'} not shown; "
+            f"`cairn notes --archived` includes {'it' if hidden == 1 else 'them'}"
+        )
     # The index prints a `last` date per row and is read to decide what is worth
     # opening, so it needs the anchor for the same reason a read of one pile does.
     lines.extend(_clock_notes(now, "the `last` dates above are on the same clock")[1:])
