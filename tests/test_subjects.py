@@ -124,6 +124,79 @@ def test_the_refusal_always_prints_the_command_that_fixes_it(store):
     assert 'cairn subject soak-441 "<one line saying what it is>"' in str(refusal.value)
 
 
+def _offered_as_writable(text: str) -> list[str]:
+    """Every subject the refusal put on a line that reads as "write here"."""
+    offered: list[str] = []
+    for line in text.splitlines():
+        for label in ("did you mean: ", "subjects that exist: "):
+            _, sep, tail = line.partition(label)
+            if sep:
+                offered.extend(name.strip() for name in tail.split(" (+")[0].split(","))
+    return offered
+
+
+def test_every_pile_the_refusal_offers_can_actually_be_written_to(store):
+    """The one that matters, and the one that was wrong.
+
+    Found while staging an acceptance run rather than by a reader: the list was
+    built from every row in `subjects`, so it offered an archived pile in the
+    same breath as a live one, and taking the suggestion earned a second refusal
+    one command later. A refusal whose advice does not work is worse than a bare
+    one — it is what teaches a reader to stop reading these lines, which is
+    exactly the failure `docs/design.md` §12 item 16 defect 7 recorded for
+    `· new subject`.
+    """
+    store.create_subject("rig-a", "thermal chamber A", SCRIBE)
+    store.create_subject("rig-a/soak-441", "overnight soak of build 441", SCRIBE)
+    store.archive_subject("rig-a/soak-441", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.write_note(SCRIBE, "unrelated", subject="zzz")
+
+    offered = _offered_as_writable(str(refusal.value))
+    assert offered, "the refusal offered nothing at all"
+    for name in offered:
+        store.write_note(SCRIBE, "taking the refusal at its word", subject=name)
+
+
+def test_an_archived_pile_is_named_but_on_its_own_line_with_the_way_back(store):
+    """Named, because a writer who is not shown it opens a second copy of it.
+
+    The index hides archived piles because it is a list of live work. This is
+    not that list — the question here is whether the name already exists, and
+    for that a finished run counts. So it is neither concealed nor offered as
+    somewhere to write.
+    """
+    store.create_subject("rig-a", "thermal chamber A", SCRIBE)
+    store.create_subject("rig-a/soak-441", "overnight soak of build 441", SCRIBE)
+    store.archive_subject("rig-a/soak-441", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.write_note(SCRIBE, "unrelated", subject="zzz")
+    printed = str(refusal.value)
+
+    assert "rig-a/soak-441" in printed, "an archived pile a writer cannot see is one they duplicate"
+    assert "subjects that exist: rig-a\n" in printed
+    assert "archived, so writing needs `cairn subject <name> --reopen` first: rig-a/soak-441" in printed
+
+
+def test_the_guess_demotes_an_archived_pile_rather_than_dropping_the_live_one(store):
+    """Only three guesses are shown, and one of these two can be written to."""
+    store.create_subject("rig-a/soak-441", "overnight soak of build 441", SCRIBE)
+    store.create_subject("rig-b/soak-441", "the same build on rig B", SCRIBE)
+    store.create_subject("rig-c/soak-441", "and again on rig C", SCRIBE)
+    store.create_subject("rig-d/soak-441", "the first one, kept for comparison", SCRIBE)
+    store.archive_subject("rig-a/soak-441", SCRIBE)
+
+    with pytest.raises(UsageError) as refusal:
+        store.write_note(SCRIBE, "another result", subject="soak-441")
+    printed = str(refusal.value)
+
+    assert _offered_as_writable(printed) == ["rig-b/soak-441", "rig-c/soak-441", "rig-d/soak-441"]
+    above_the_archived_line, _, _ = printed.partition("archived,")
+    assert "rig-a/soak-441" not in above_the_archived_line, "an archived pile crowded out a writable one"
+
+
 def test_a_child_is_its_own_pile_and_needs_its_own_opening(store):
     """The maintainer's call, and the narrower of the two readings.
 
