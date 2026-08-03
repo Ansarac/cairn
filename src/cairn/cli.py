@@ -579,7 +579,14 @@ def _pile(client: HubClient, subject: str) -> str:
 
 
 def cmd_subject(args: argparse.Namespace) -> int:
-    """Open a pile deliberately, or close one that is finished.
+    """Open a pile deliberately, correct what it says it is, or close one that is finished.
+
+    `--describe` is a separate verb rather than a second meaning for the
+    positional argument, and that is the whole of why it is safe: re-running
+    `cairn subject <name> "<text>"` still refuses, so a writer who does not know
+    the pile exists cannot overwrite a stranger's sentence by doing the obvious
+    thing. Reaching the correction takes a flag nobody types by accident, and it
+    reports whose words it replaced. `store.describe_subject` has the evidence.
 
     The one command that exists because of what happens without it. A subject used
     to come into being as a side effect of writing the first note to it, so
@@ -594,6 +601,23 @@ def cmd_subject(args: argparse.Namespace) -> int:
     me = config.require_identity()
     client = _client(args)
     name = _subject(args.name)
+    if args.describe is not None:
+        if args.description:
+            msg = "--describe carries the new text; do not also pass a description argument"
+            raise UsageError(msg)
+        if args.archive or args.reopen:
+            msg = "--describe corrects a label; --archive and --reopen open or close the pile. One at a time"
+            raise UsageError(msg)
+        pile, replaced = _older_hub(
+            lambda: client.describe_subject(name, args.describe, me), "cairn subject --describe"
+        )
+        print(f"described {pile.subject} · {render.oneline(pile.description)}")
+        # The old text is printed, and it is folded like anything else off the
+        # wire: it was typed by whoever described the pile last, which is the
+        # peer-authored path column zero belongs to cairn on. See `render.oneline`.
+        print(f"  it used to read: {render.oneline(replaced)}")
+        print("  nobody was told; if that correction matters, say so in a note on the pile")
+        return 0
     if args.archive or args.reopen:
         if args.description:
             msg = "--archive and --reopen close or open a pile; they take no description"
@@ -622,7 +646,7 @@ def cmd_subject(args: argparse.Namespace) -> int:
     return 0
 
 
-def _older_hub(call):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it would be longer than it is
+def _older_hub(call, missing: str = ""):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it would be longer than it is
     """Turn "this hub has no such route" into a sentence about the hub's age.
 
     `client._call` maps a 404 to `Unreachable`, which is right for a garnish —
@@ -630,6 +654,11 @@ def _older_hub(call):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it 
     because the route *is* the command: "cannot reach hub" on a hub that just
     answered `cairn notes` sends the reader to check the network, which is the
     one place the fault is not.
+
+    `missing` says which route was absent, because the two ages are different
+    hubs. One predates the subject table entirely; one has subjects and only
+    lacks the correction route, and telling its operator it "creates piles
+    implicitly" would send them looking for a problem they do not have.
     """
     from cairn.errors import Unreachable
 
@@ -638,10 +667,16 @@ def _older_hub(call):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it 
     except Unreachable as exc:
         if "404" not in str(exc):
             raise
-        msg = (
-            "this hub predates `cairn subject`, so it has no subject table and creates piles implicitly.\n"
-            "  upgrade the hub to get deliberate subjects; until then `cairn note <subject>` still works"
-        )
+        if missing:
+            msg = (
+                f"this hub predates `{missing}`, so it cannot do that yet.\n"
+                f"  upgrade the hub; everything else about this subject still works"
+            )
+        else:
+            msg = (
+                "this hub predates `cairn subject`, so it has no subject table and creates piles implicitly.\n"
+                "  upgrade the hub to get deliberate subjects; until then `cairn note <subject>` still works"
+            )
         raise UsageError(msg) from exc
 
 
@@ -1165,6 +1200,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
     p.add_argument("description", nargs="?", help="one line saying what it is")
     p.add_argument("--archive", action="store_true", help="close it to new notes; reading is unaffected")
     p.add_argument("--reopen", action="store_true", help="undo an archive")
+    p.add_argument(
+        "--describe",
+        metavar="TEXT",
+        help="correct the description of a pile that already exists; prints what it replaced",
+    )
     p.set_defaults(func=cmd_subject)
 
     p = sub.add_parser("settle", help="answer an open question, whoever asked it")

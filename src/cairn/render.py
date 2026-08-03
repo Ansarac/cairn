@@ -783,7 +783,16 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "",
         count = f"{summary.notes} note{'' if summary.notes == 1 else 's'}"
         unanswered = f"{summary.open_questions} open" if summary.open_questions else "—"
         closed = " · archived" if summary.archived else ""
-        lines.append(f"  {summary.subject:<{width}}  {count:<9} {unanswered:<8} last {summary.last_at}{closed}")
+        # `described` sits beside `last` rather than after the sentence it dates,
+        # because the two are only useful as a pair: a label last thought about in
+        # July on a pile worked yesterday is the stale-description shape, and that
+        # is a comparison, not a fact. A description ages and nothing said so —
+        # every note is read beside a date, while the sentence a writer actually
+        # decides on had none, so one wrong for a year read exactly as
+        # authoritative as one written this morning. Date only; the seconds are
+        # noise at the job a reader does with it, which is compare it to today.
+        aged = f" · described {summary.described_at[:10]}" if summary.described_at else ""
+        lines.append(f"  {summary.subject:<{width}}  {count:<9} {unanswered:<8} last {summary.last_at}{aged}{closed}")
         # The description on its own indented line, and this is what the index is
         # for now. Counts tell a reader how much is on a pile; only this tells them
         # whether it is the pile they meant — which is the difference between an
@@ -811,7 +820,7 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "",
         )
     # The index prints a `last` date per row and is read to decide what is worth
     # opening, so it needs the anchor for the same reason a read of one pile does.
-    lines.extend(_clock_notes(now, "the `last` dates above are on the same clock")[1:])
+    lines.extend(_clock_notes(now, "the `last` and `described` dates above are on the same clock")[1:])
     return "\n".join(lines).rstrip() + "\n"
 
 

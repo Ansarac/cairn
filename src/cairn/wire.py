@@ -708,6 +708,16 @@ class SubjectSummary:
     `archived_at` is a string rather than a flag so that the reading can say when
     and the row can say who — a pile that vanished from the index with no date on
     it is the silent-loss shape this project keeps finding in other systems.
+
+    **`described_at` and `described_by` exist because a description ages and
+    nothing said so.** Every note is read beside a date and an author; the
+    sentence a writer actually decides on had neither, so one written eighteen
+    months ago and wrong for twelve read exactly as authoritative as one written
+    this morning. `last_at` is not that date — it is the newest *note*, which
+    reads as freshness for the pile and is silently not a claim about the
+    description. An acceptance session put the consequence at *"six months out,
+    negative — not zero"*, because a stale description does not fail quietly, it
+    misroutes the next writer into a second pile. See `store.describe_subject`.
     """
 
     subject: str
@@ -717,6 +727,8 @@ class SubjectSummary:
     description: str = ""
     created_by: str = ""
     archived_at: str = ""
+    described_at: str = ""
+    described_by: str = ""
 
     @property
     def archived(self) -> bool:
@@ -733,6 +745,8 @@ class SubjectSummary:
             "description": self.description,
             "created_by": self.created_by,
             "archived_at": self.archived_at,
+            "described_at": self.described_at,
+            "described_by": self.described_by,
         }
 
     @classmethod
@@ -743,6 +757,11 @@ class SubjectSummary:
         described — true of an older hub, where nobody could have. Unlike a
         window, nothing here is answered wrongly by their absence: the counts, the
         name and the date all still mean what they meant.
+
+        `described_at` and `described_by` default the same way, and an older hub
+        omitting them is read as "this build cannot tell you", which is the truth.
+        A missing date here must never be shown as a fresh one — that would be the
+        stale-description problem wearing the fix's clothes.
         """
         return cls(
             subject=normalize_subject(_require(obj, "subject", str)),
@@ -752,6 +771,8 @@ class SubjectSummary:
             description=str(obj.get("description") or ""),
             created_by=str(obj.get("created_by") or ""),
             archived_at=str(obj.get("archived_at") or ""),
+            described_at=str(obj.get("described_at") or ""),
+            described_by=str(obj.get("described_by") or ""),
         )
 
 

@@ -125,6 +125,7 @@ class _Handler(BaseHTTPRequestHandler):
             {
                 "/v1/register": self._register,
                 "/v1/subjects": self._open_subject,
+                "/v1/subjects/describe": self._describe_subject,
                 "/v1/subjects/archive": self._archive_subject,
                 "/v1/messages": self._send,
                 "/v1/ack": self._ack,
@@ -339,6 +340,17 @@ class _Handler(BaseHTTPRequestHandler):
         # No `notifier.publish`, for the same reason `_write_note` sends none: a
         # subject has no recipient, and ringing everyone because somebody opened a
         # pile would turn sediment into mail. Invariant I2.
+
+    def _describe_subject(self) -> None:
+        obj = self._read()
+        summary, replaced = self.store.describe_subject(
+            name=str(obj.get("name", "")),
+            description=str(obj.get("description", "")),
+            author=str(obj.get("author", "")),
+        )
+        self._reply(200, {"subject": summary.to_json(), "replaced": replaced})
+        # No bell here either, and for `_open_subject`'s reason. A corrected label
+        # is still sediment: it waits to be read, it does not go and find anybody.
 
     def _archive_subject(self) -> None:
         obj = self._read()

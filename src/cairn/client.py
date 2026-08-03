@@ -343,6 +343,21 @@ class HubClient:
         with self._readable():
             return SubjectSummary.from_json(answer["subject"])
 
+    def describe_subject(self, name: str, description: str, author: str) -> tuple[SubjectSummary, str]:
+        """Correct a pile's description, returning its new state and the text it replaced.
+
+        The replaced text is returned rather than dropped because the caller is
+        the only one who can still show it to the person who overwrote it — see
+        `store.describe_subject`. An older hub has no such route and `_call` turns
+        that into `Unreachable`, which `cli._older_hub` reads as a hub age
+        problem rather than a network one.
+        """
+        answer = self._call(
+            "POST", "/v1/subjects/describe", {"name": name, "description": description, "author": author}
+        )
+        with self._readable():
+            return SubjectSummary.from_json(answer["subject"]), str(answer.get("replaced") or "")
+
     def archive_subject(self, name: str, author: str, *, reopen: bool = False) -> SubjectSummary:
         """Close a pile to new notes, or open it again, and return its new state."""
         answer = self._call("POST", "/v1/subjects/archive", {"name": name, "author": author, "reopen": reopen})
