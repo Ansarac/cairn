@@ -2551,6 +2551,14 @@ framework-internal orchestration, not network protocols.
     instead returns a peer on another bench who does not know about the crack. *"Caution
     that offloads onto someone downstream is just an unpriced transfer."*
 
+    Fixed by splitting the rule rather than weakening it. A tool either runs here or it
+    does not, and the original incident stands unchanged for that half; where a machine
+    physically sits is not on `PATH`, and there the strongest evidence that exists is a
+    human at the bench, which is good evidence. The costs are stated too, because they are
+    not symmetric: a wrong claim is one misrouted message found on arrival, while a missing
+    one is paid by whoever filtered for it, silently, and is the mistake this rule was
+    quietly encouraging.
+
     **Not built, and recorded for corroboration rather than acted on:** every session
     wanted to know whether anything it sent had landed, and `cairn sent` records only what
     was sent. A read receipt is I2-adjacent rather than forbidden — the cursors already
