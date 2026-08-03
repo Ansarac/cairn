@@ -200,9 +200,9 @@ def test_pruning_takes_old_read_traffic_and_leaves_what_is_still_waiting(store):
     waiting = store.append("tell", SENDER, READER, "old and unread")
     _age(store)
 
-    removed, kept = store.prune(30)
+    removed, kept, kept_by = store.prune(30)
 
-    assert (removed, kept) == (1, 1)
+    assert (removed, kept, kept_by) == (1, 1, (READER,))
     assert [m.body for m in store.unread(READER).messages] == ["old and unread"]
     assert waiting.seq > read.seq, "the fixture acked the message it meant to leave behind"
 
@@ -213,9 +213,9 @@ def test_a_peer_that_has_been_switched_off_for_a_week_still_gets_its_backlog(sto
         store.append("tell", SENDER, READER, f"message {n}")
     _age(store)
 
-    removed, kept = store.prune(1)
+    removed, kept, kept_by = store.prune(1)
 
-    assert (removed, kept) == (0, 5)
+    assert (removed, kept, kept_by) == (0, 5, (READER,))
     assert len(store.unread(READER).messages) == 5
 
 
@@ -224,7 +224,7 @@ def test_recent_traffic_is_never_touched_however_thoroughly_it_was_read(store):
     sent = store.append("tell", SENDER, READER, "read five minutes ago")
     store.ack(READER, sent.seq)
 
-    assert store.prune(1) == (0, 0)
+    assert store.prune(1) == (0, 0, ())
     assert store.sent(SENDER)[1] == 1
 
 
@@ -240,7 +240,7 @@ def test_a_retracted_message_is_prunable_even_with_a_cursor_below_it(store):
     store.retract(pulled.seq, SENDER)
     _age(store)
 
-    assert store.prune(30) == (1, 0)
+    assert store.prune(30) == (1, 0, ())
 
 
 def test_pruning_refuses_a_window_that_reaches_today(store):
@@ -303,3 +303,99 @@ def test_pruning_nothing_is_an_answer_rather_than_a_failure(hub, monkeypatch, ca
 
     assert cli.run(["--hub", hub.base_url, "prune", "--older-than", "30"]) == 1
     assert "pruned 0 messages" in capsys.readouterr().out
+
+
+def test_a_retraction_names_the_mailboxes_it_spared_as_well_as_the_ones_it_missed(store, capsys, monkeypatch):
+    """From cut 13's acceptance run. Naming only the failures looks like an answer and is not one.
+
+    The sender's next act is deciding who still has to be caught. With the count
+    alone, a live session recovered that list by subtracting the named failures
+    from a `cairn peers` snapshot it had taken moments earlier — and the snapshot
+    was already stale, because a fourth peer had registered between the send and
+    the retraction. The names are computed inside `retract`; they were being
+    thrown away.
+    """
+    monkeypatch.setenv("CAIRN_AGENT", SENDER)
+    shout = store.append("tell", SENDER, "*", "flash rev C for the 85C segment")
+    store.ack(READER, shout.seq)
+
+    withdrawal = store.retract(shout.seq, SENDER)
+
+    assert (withdrawal.withheld, withdrawal.withheld_from, withdrawal.read_by) == (1, (THIRD,), (READER,))
+
+
+def test_the_command_prints_both_lists_end_to_end(hub, monkeypatch, capsys):
+    """Through `cli.run` against a real hub, because the names cross the wire to get here."""
+    monkeypatch.setenv("CAIRN_AGENT", SENDER)
+    shout = hub.send("tell", SENDER, "*", "flash rev C for the 85C segment")
+    hub.ack(READER, shout.seq)
+
+    assert cli.run(["--hub", hub.base_url, "retract", str(shout.seq)]) == 0
+    printed = capsys.readouterr().out
+
+    assert f"withheld from {THIRD}" in printed
+    assert f"too late for {READER}" in printed
+
+
+def test_an_older_hub_that_names_nobody_falls_back_to_the_count(monkeypatch, capsys):
+    """Half a list is worse than a count, so an absent field prints no list at all.
+
+    `withheld` stays the number of record for this reason. A caller that derived
+    the count from the names would report nothing spared against a hub that spared
+    several — this project's recurring failure, where the absence of an additive
+    field is read as a fact rather than as silence. Item 14 hit the same shape on
+    `supersedes` and had the client refuse; here there is nothing to refuse,
+    because the retraction genuinely happened and only its account is thinner.
+    """
+    from cairn.wire import Message, Withdrawal
+
+    old = Withdrawal(message=Message(seq=7, kind="tell", sender=SENDER, recipient="*", body="x"), withheld=2)
+    monkeypatch.setenv("CAIRN_AGENT", SENDER)
+
+    def hub_that_does_not_name_them(self, seq, sender):
+        """Stand in for a `/v1/retract` built before `withheld_from` existed."""
+        return old
+
+    monkeypatch.setattr("cairn.client.HubClient.retract", hub_that_does_not_name_them)
+
+    assert cli.run(["--hub", "http://127.0.0.1:1", "retract", "7"]) == 0
+    printed = capsys.readouterr().out
+
+    assert "withdrew seq 7 from 2 mailboxes" in printed
+    assert "withheld from" not in printed, "an empty list must not read as 'nobody was spared'"
+
+
+def test_pruning_names_whose_backlog_it_kept(store):
+    """The line the operator is asked about used to end in an indefinite pronoun.
+
+    The instruction this command answers is always about a particular machine
+    coming back off leave, and an indefinite pronoun does not say whether that is
+    the machine. An acceptance session preserved a backlog, ran the command
+    correctly, and had to report that it could confirm *a* backlog and not *the*
+    one.
+    """
+    read = store.append("tell", SENDER, READER, "old and read")
+    store.ack(READER, read.seq)
+    store.append("tell", SENDER, THIRD, "old and never collected")
+    _age(store)
+
+    removed, kept, kept_by = store.prune(30)
+
+    assert (removed, kept, kept_by) == (1, 1, (THIRD,))
+
+
+def test_the_names_and_the_count_come_from_one_predicate(store):
+    """They are asked in opposite directions, so two spellings would drift.
+
+    The drift shows up as a prune that keeps mail while naming nobody — the count
+    and the names disagreeing about the very thing the count exists for.
+    """
+    for reader in (READER, THIRD):
+        store.append("tell", SENDER, reader, "never collected")
+    _age(store)
+
+    removed, kept, kept_by = store.prune(30)
+
+    assert removed == 0
+    assert kept == 2
+    assert set(kept_by) == {READER, THIRD}

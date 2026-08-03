@@ -2180,6 +2180,144 @@ framework-internal orchestration, not network protocols.
     beside it. It has a test, and the test says where it came from.
 
     `PROTOCOL_VERSION` does not move: one optional field on `Message`, two new paths.
+16. **What three independent readers hit.** **Done.** Items 13, 14 and 15 shipped
+    together and were live-run only by the session that wrote them, which tests the
+    mechanism and cannot test the reading. This is the run that tested the reading, and
+    the seven things it changed.
+
+    **The method, because two details in it decided the yield.** Five `claude -p`
+    sessions in directories outside this repository, so only the installed skill was in
+    context; the verbs under test never named; reading `src/` forbidden; every prompt
+    ending in *"a smooth report is worth less to me than an honest list of what got in
+    your way"*. Then two `--continue` interview turns, which is where the sharpest
+    material came from — as in item 11's run, the interview beat the run.
+
+    **The first defect was in the handoff, not the code.** It asserted that the globally
+    installed `cairn` was `main` and that the user-level skill had been refreshed. Neither
+    held: the installed `store.py` predated item 15's own hold-predicate fix, and there
+    were *three* versions of `SKILL.md` on the disk — repo, wheel, and the copy under the
+    user's skills directory, 129 lines behind. The repository's warning about stale
+    installs is aimed at a session forgetting to reinstall; this is the other shape, where
+    a previous session's honest report of having done it is what you check against.
+    Re-observe, do not read.
+
+    **Cut 14 passed, and the evidence is the strongest kind available.** A session that had
+    never seen the rig, working a stated two-minute question with a chamber at temperature,
+    read a pile whose second entry said *"board rev C is the one to flash"* and answered
+    **rev B** — correctly — citing the `SUPERSEDED by 14` marker as what made it read on.
+    Asked afterwards what would have happened without the marker, with both notes present
+    and unlinked nine apart: *"sixteen minutes apart on the same day between two shifts
+    doesn't read as 'correction', it reads as **disagreement**"*, and it would have gone
+    back to its operator saying the pile contradicted itself — the wrong answer under the
+    framing it had been given.
+
+    That interview also produced an argument for supersession this document did not have.
+    Item 14 argues linkage as *discovery*. The reader argued it as *evidence*: the marker
+    proves the corrector had read the claim and was withdrawing it on purpose, where *"a
+    peer who contradicts a claim they haven't read is much weaker evidence than one who
+    withdraws it on purpose."* Two unlinked notes cannot distinguish those.
+
+    **Cut 15 passed, and the half it was built around is the half that worked.** A session
+    that had broadcast the rev C instruction, restarted, and learned of the withdrawal ran
+    `cairn retract` and got `withdrew seq 5 from 1 mailbox · too late for analysis`. Its
+    verdict: *"Not ceremony. It's the only subtractive thing I did all day"* — everything
+    else being *"more text, placed near the bad text, hoping to out-argue it"* — with the
+    honest limit stated unprompted: *"if both peers had read seq 5, retract buys **zero**."*
+    And on the refusal specifically: *"It made the correction mandatory rather than
+    optional. Had it said 'withdrew from 2 mailboxes', I'd have been tempted to treat the
+    message side as closed and fix only the pile. That would have been wrong and would have
+    looked completely fine."*
+
+    **Cut 13's refusal never fired, and that is the finding rather than a gap in the
+    staging.** Three sessions each opened a subject before writing to it, none was ever
+    refused, and the reason all three gave was the index: they had run `cairn notes`,
+    the descriptions told them which piles existed, and they acted. What the refusal was
+    built to produce happened without the refusal being reached. The description earned
+    itself in a way item 13 did not predict — *"writing 'fixture, standoffs, PSU, cabling'
+    is what made me decide this pile is **the rig**, not **the incident**. Without that
+    sentence I might plausibly have opened `chamber-3/cracked-standoff`, which would have
+    been actively worse"* — and picked up a failure mode nobody had recorded: the same
+    session admitted adding a word to the description *"because that's what I was writing
+    about today. That's today's incident leaking into a description meant to outlive it."*
+    Not fixed here; noted because the field is meant to be the stable half.
+
+    **The seven defects, and why each is a defect rather than a preference.**
+
+    1. **The tombstone count lied in the tombstone view, upward.** `store.notes` computed
+       `removed` as the *complement* of the page rather than the tombstones on it. In the
+       plain view those are the same set, which is why it read correctly for two cuts;
+       under `--deleted` the complement is the live notes, so a page showing one tombstone
+       carried the footnote *"15 notes have been deleted here."* All three sessions hit it,
+       two said they read it three times, and the one doing a hub tidy-up put it best:
+       *"on a housekeeping shift, that is exactly the sentence that stops you dead to work
+       out whether something has already gone missing on your watch."* The count is now
+       tombstones in both views, and the footnote is silent in the view that *is* the
+       tombstones — there the line restated the page and offered the command just run.
+    2. **`prune` was absent from `SKILL.md` entirely.** Half of item 15, invisible to the
+       only reader it has. The session whose whole job was the command searched the file,
+       found `retract` and not this, and got there through `cairn --help` — which the skill
+       also never suggests. *"Somebody doing this job without the instinct to run `--help`
+       would conclude it was impossible."*
+    3. **`retract` named the failures and not the successes**, against its own docstring's
+       promise of "a list of names". The sender's next act is deciding who still has to be
+       caught, and that was the list left out. The session recovered it by subtracting the
+       named failures from a `cairn peers` snapshot — and was already wrong to: a fourth
+       peer had registered between the send and the retraction, so the arithmetic could not
+       have been right. `prune` had the same shape in the line that matters most — *"2
+       older messages are still unread by **somebody**"* — where the operator's instruction
+       is always about one particular machine coming back off leave. Both name names now.
+    4. **`sent --limit` cuts the opposite end from `inbox --limit`**, and `SKILL.md` spends
+       a long paragraph teaching the inbox direction as a hazard. A session ran
+       `cairn sent --limit 3` specifically to verify the broadcast it had just withdrawn —
+       the oldest of four — and got a page without it. It caught that off the truncation
+       line, which is why the fix is in that line: it now names the end that is *missing*
+       as well as the end that is kept, on all three paged surfaces, and the skill records
+       the asymmetry beside the `| head` hazard it is the mirror of.
+    5. **Identity is inherited per directory and nothing said so, while `retract` is
+       owner-only.** A new session's reflex — and the skill's own instruction — is to
+       register on arrival, under the obvious variation on the last name. Doing that walks
+       away from the sent log, the read cursor, and the sole right to withdraw the previous
+       session's unread mail. One session came within a command of it while a broadcast
+       telling two machines to flash a withdrawn board sat unread on the hub, and was
+       explicit about what saved it: *"Nothing in the tool stopped me. Your instruction to
+       work out the state before changing any of it stopped me. That credit belongs to the
+       instruction, not to cairn."* `register` now says what the directory is leaving
+       behind and how to pick it back up.
+    6. **An archived pile was concealed rather than hidden.** It is out of the index by
+       design — but the index said nothing about leaving it out, while a parent's rollup
+       still printed its notes, unmarked. A session met a note filed on a subject the index
+       had never offered, inferred archiving as the reason, and wrote that had it trusted
+       the index as the map of what exists it would have concluded the note was not there.
+       Item 14's rule for tombstones, arriving a second time for piles: the index now says
+       how many it is not showing, and a note on an archived pile is marked wherever it is
+       read.
+    7. **`· new subject — `cairn notes` lists the ones that already exist`** outlived the
+       world it was written for. It was the only guard there was when a subject came into
+       being as a side effect of the first note; since item 13 the pile was opened
+       deliberately one command earlier, by a writer a duplicate name would have been
+       refused. All three sessions met it immediately after their own successful
+       `cairn subject`. Advice that cannot be acted on is what trains a reader past the
+       next line too, so it is now a report — `first note on this subject` — and nothing
+       else.
+
+    **One re-measurement of I1, and it is negative.** Two sessions independently said the
+    per-message verdict has stopped carrying information at this pile density: *"It's
+    uniform, so it carries zero information. It cannot distinguish hil-a's careful, dated,
+    self-caveated relay from note 5's bare confident assertion — and the difference between
+    those two is exactly what I needed to weigh."* The authority clause fared worse —
+    *"never once applicable today. Fully tuned out."* Both are recorded rather than acted
+    on: the tier structure is I1 and §3 carries the measurement that put it there, so
+    changing it needs its own evidence and its own cut. What the same interview shows is
+    the other side of the ledger — item 12's clock did change a decision, on its own:
+    *"note 14 was four minutes old when I read it, which is most of why I trusted it over
+    note 5."*
+
+    `PROTOCOL_VERSION` does not move. Two optional fields, `Withdrawal.withheld_from` and
+    `NoteEntry.archived`, and one additive key on the prune response. The one value that
+    *changed* rather than appeared is `removed` under `--deleted`, and it is safe in both
+    directions for the reason it was a bug: a new client suppresses the line there and
+    never reads the number, and an old client against a new hub prints a count that is now
+    right where it used to be wrong.
 
 ---
 

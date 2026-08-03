@@ -325,3 +325,43 @@ def test_an_older_hub_says_so_rather_than_reading_as_an_outage(monkeypatch):
 
     with contextlib.suppress(SystemExit):
         assert cli.run(["--hub", "http://127.0.0.1:1", "subject", "rig-a", "thermal chamber A"]) == 3
+
+
+def test_the_index_says_how_many_archived_piles_it_is_not_showing(hub, monkeypatch, capsys):
+    """From cut 13's acceptance run: hidden is fine, concealed is not.
+
+    A session read `cairn notes`, was shown two subjects, then read a parent and
+    met a note filed on a third it had never been offered. It worked out that the
+    pile must be archived and wrote afterwards that had it trusted the index as
+    the map of what exists — which is what the index looks like, and what this
+    file calls the thing to run on arrival — it would have concluded the note was
+    not there. Same rule as the tombstone count in §12 item 14: leave it out of
+    the page, say that you did.
+    """
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    hub.create_subject("rig-a", "the thermal chamber rig", SCRIBE)
+    hub.create_subject("rig-a/soak-441", "last quarter's soak, finished", SCRIBE)
+    hub.write_note(SCRIBE, "ran clean for 14 hours", subject="rig-a/soak-441")
+    hub.archive_subject("rig-a/soak-441", SCRIBE)
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "notes"]) == 0
+    printed = capsys.readouterr().out
+
+    assert "rig-a/soak-441" not in printed, "archiving still takes a finished pile out of the index"
+    assert "1 archived subject not shown" in printed
+    assert "--archived" in printed
+
+
+def test_the_index_says_it_even_when_everything_left_is_archived(hub, monkeypatch, capsys):
+    """The empty answer is the one most likely to be read as "there is nothing here"."""
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    hub.create_subject("rig-a/soak-441", "last quarter's soak, finished", SCRIBE)
+    hub.archive_subject("rig-a/soak-441", SCRIBE)
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "notes"]) == 1, "nothing to read is exit 1, as it always was"
+
+    assert "1 archived subject" in capsys.readouterr().out

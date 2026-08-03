@@ -261,8 +261,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _prune(self) -> None:
         obj = self._read()
-        removed, kept = self.store.prune(int(obj.get("older_than_days") or 0))
-        self._reply(200, {"removed": removed, "kept": kept})
+        removed, kept, kept_by = self.store.prune(int(obj.get("older_than_days") or 0))
+        self._reply(200, {"removed": removed, "kept": kept, "kept_by": list(kept_by)})
 
     def _write_note(self) -> None:
         obj = self._read()
@@ -311,7 +311,12 @@ class _Handler(BaseHTTPRequestHandler):
             200,
             {
                 "notes": [
-                    {"note": e.note.to_json(), "settled_by": e.settled_by, "superseded_by": e.superseded_by}
+                    {
+                        "note": e.note.to_json(),
+                        "settled_by": e.settled_by,
+                        "superseded_by": e.superseded_by,
+                        "archived": e.archived,
+                    }
                     for e in entries
                 ],
                 "total": total,

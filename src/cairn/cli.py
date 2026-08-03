@@ -138,9 +138,23 @@ def _artifacts(specs: Sequence[str]) -> list[Artifact]:
 
 
 def cmd_register(args: argparse.Namespace) -> int:
-    """Join the network under a name."""
+    """Join the network under a name.
+
+    **Registering under a new name in a directory that already holds one is a
+    quiet handover, and it now says so.** The pin is per-directory, so a fresh
+    session inherits the previous one's identity — its sent log, its read cursor,
+    and the only right to withdraw its unread mail, since `retract` refuses
+    anybody but the sender. A session that follows the skill's own advice and
+    registers on arrival, under the obvious `<name>-2`, walks away from all three
+    without being told. One live session came within a command of doing it while a
+    broadcast telling two machines to flash a withdrawn board sat unread on the
+    hub; what stopped it was the operator's instruction to establish state first,
+    not anything cairn said. The way back is to register the old name again in the
+    same directory, which is an ordinary returning registration.
+    """
     from cairn.adapters import default
 
+    previous = config.current_identity()
     adapter = default()
     agent = Agent(
         name=args.name,
@@ -156,6 +170,10 @@ def cmd_register(args: argparse.Namespace) -> int:
     print(f"registered as {render.oneline(joined.name)} on {render.oneline(joined.machine)}")
     print(f"  cwd          {render.oneline(joined.cwd)}")
     print(f"  capabilities {render.oneline(', '.join(joined.capabilities)) or '—'}")
+    if previous and previous != joined.name:
+        print(f"  left behind  {render.oneline(previous)} — this directory was that until now")
+        print("    its sends, its read position and the right to `cairn retract` them stay with the name;")
+        print(f"    `cairn register {render.oneline(previous)}` here picks it back up")
     print(render.arrival_note(registration), end="")
     print(_open_questions(client), end="")
     return 0
@@ -404,10 +422,21 @@ def cmd_retract(args: argparse.Namespace) -> int:
 
     A broadcast is partial by nature — one message, many mailboxes, one cursor
     each — so this reports both halves rather than picking a verdict.
+
+    **Both halves means both lists of names.** Saying only who was too late looks
+    like an answer and is not one: the sender's next act is deciding who still has
+    to be caught, and a live session recovered that list by subtracting the named
+    failures from a `cairn peers` snapshot — which had already gone stale, because
+    a peer registered between the send and the retraction. The names are printed
+    only when the hub sent as many as it says it spared; an older hub omits
+    `withheld_from` entirely, and half a list is worse than a count.
     """
     me = config.require_identity()
     withdrawal = _client(args).retract(args.seq, me)
     print(f"withdrew seq {withdrawal.message.seq} from {withdrawal.withheld} mailbox{_es(withdrawal.withheld)}")
+    if len(withdrawal.withheld_from) == withdrawal.withheld:
+        spared = ", ".join(render.oneline(name) for name in withdrawal.withheld_from)
+        print(f"  withheld from {spared} — they will never be given it")
     if withdrawal.read_by:
         names = ", ".join(render.oneline(name) for name in withdrawal.read_by)
         print(f"  too late for {names} — already read it; a correction has to be a new message")
@@ -428,13 +457,17 @@ def cmd_prune(args: argparse.Namespace) -> int:
 
     It cannot take undelivered mail. "The peer was switched off for a week and
     still got its backlog" is the premise of the product, so anything still unread
-    by a registered mailbox stays and is counted out loud.
+    by a registered mailbox stays and is **named** out loud — the operator running
+    this was told to protect one particular machine's backlog, and "somebody" does
+    not answer that. `kept_by` is empty against an older hub, and the count-only
+    wording is kept for exactly that case rather than printing an empty list.
     """
-    removed, kept = _client(args).prune(args.older_than)
+    removed, kept, kept_by = _client(args).prune(args.older_than)
     print(f"pruned {removed} message{'' if removed == 1 else 's'} older than {args.older_than} days")
     if kept:
         plural = "message is" if kept == 1 else "messages are"
-        print(f"  {kept} older {plural} still unread by somebody, so they stayed")
+        whose = f" by {', '.join(render.oneline(name) for name in kept_by)}" if kept_by else " by somebody"
+        print(f"  {kept} older {plural} still unread{whose}, so they stayed")
     if not removed:
         return EXIT_NOTHING
     return 0
@@ -508,10 +541,20 @@ def cmd_note(args: argparse.Namespace) -> int:
 
 
 def _pile(client: HubClient, subject: str) -> str:
-    """Say whether that subject already existed, and how much is on it now.
+    """Say how much is on that pile now.
 
     Counted from the index, which groups by exact subject, so writing to `rig-a`
-    when only `rig-a/chamber` has notes still reads as new — which it is.
+    when only `rig-a/chamber` has notes still reads as the first note — which it is.
+
+    **The first note used to be told "new subject — `cairn notes` lists the ones
+    that already exist", and that sentence outlived the world it was written
+    for.** It was the only guard there was when a subject came into being as a
+    side effect of the first note; since `cairn subject`, the pile was opened
+    deliberately one command earlier, by a writer that `store.create_subject`
+    would have refused had the name already been taken. Three acceptance sessions
+    in a row saw it fire immediately after their own `cairn subject` succeeded —
+    advice to go and check a decision they had just been made to take on purpose.
+    A warning that cannot be acted on is trained past, and the next one is too.
 
     Guarded like `_open_questions`, and for the same reason: this is a garnish on
     a write that already succeeded, and an older hub without the route must not
@@ -528,8 +571,10 @@ def _pile(client: HubClient, subject: str) -> str:
         match = next((s for s in client.subjects() if s.subject == subject), None)
     except (CairnError, WireError):
         return ""
-    if match is None or match.notes <= 1:
-        return " · new subject — `cairn notes` lists the ones that already exist"
+    if match is None:
+        return ""
+    if match.notes <= 1:
+        return " · first note on this subject"
     return f" · {match.notes} notes there now"
 
 
@@ -682,10 +727,17 @@ def cmd_notes(args: argparse.Namespace) -> int:
     client = _client(args)
     subject = _subject(args.subject) if args.subject is not None else None
     if subject is None and not args.open and not args.find:
-        summaries = client.subjects(archived=args.archived)
+        # Always ask for everything, then drop what was not asked for here. One
+        # round trip either way, and it is the only way to say how many piles the
+        # listing is leaving out — an index that quietly omits finished work reads
+        # as the map of what exists, and a live session drew exactly that wrong
+        # conclusion from it.
+        everything = client.subjects(archived=True)
+        summaries = everything if args.archived else [s for s in everything if not s.archived]
+        hidden = len(everything) - len(summaries)
         clock = client.hub_time
-        text = render.subjects_text(summaries, _hub(args), clock)
-        print(render.subjects_json(summaries, clock) if args.json else text, end="")
+        text = render.subjects_text(summaries, _hub(args), clock, hidden)
+        print(render.subjects_json(summaries, clock, hidden) if args.json else text, end="")
         return 0 if summaries else EXIT_NOTHING
     entries, total, removed = client.notes(
         subject, open_only=args.open, find=args.find, limit=args.limit, deleted=args.deleted
@@ -700,6 +752,11 @@ def cmd_notes(args: argparse.Namespace) -> int:
         "find": args.find,
         "now": client.hub_time,
         "removed": removed,
+        # Which page this is, not just which filter produced it. `removed` counts
+        # tombstones in scope, so it equals `total` in the tombstone view, and a
+        # renderer that could not tell the two apart printed the count as a
+        # deletion tally over a page that *was* the deletions.
+        "deleted": args.deleted,
     }
     # Only the text renderer names the hub. The "nothing" answers say who they
     # asked because a *model* reads them and may have no idea what this

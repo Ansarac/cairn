@@ -482,23 +482,46 @@ class Withdrawal:
     and "it failed" are both wrong answers. `withheld` is how many mailboxes will
     now never see it and `read_by` names the ones that already had it, because a
     sender who has just failed to unsay something needs to know exactly who heard.
+
+    **`withheld_from` names the other half, and it is not symmetry for its own
+    sake.** The sender's next question is always *who still holds this* — and for
+    two cuts the answer was a bare count, so an acceptance session recovered it by
+    subtracting the named failures from a `cairn peers` snapshot taken moments
+    earlier. That worked with two peers and it was already wrong: a third peer had
+    registered in between, and the arithmetic could not see it. The names are
+    right there in `store.retract`; withholding them made the caller reconstruct
+    them badly.
     """
 
     message: Message
     withheld: int = 0
     read_by: tuple[str, ...] = ()
+    withheld_from: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         """Return the rendering form."""
-        return {"message": self.message.to_json(), "withheld": self.withheld, "read_by": list(self.read_by)}
+        return {
+            "message": self.message.to_json(),
+            "withheld": self.withheld,
+            "read_by": list(self.read_by),
+            "withheld_from": list(self.withheld_from),
+        }
 
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> Self:
-        """Parse the rendering form."""
+        """Parse the rendering form.
+
+        `withheld_from` is absent from an older hub, which is why `withheld` stays
+        the count of record rather than becoming `len(withheld_from)`. A caller
+        that derived the count from the list would report zero spared mailboxes
+        against a hub that spared several — the failure mode this project keeps
+        naming, where the absence of an additive field is read as a fact.
+        """
         return cls(
             message=Message.from_json(_require(obj, "message", dict)),
             withheld=int(obj.get("withheld") or 0),
             read_by=tuple(str(name) for name in obj.get("read_by") or ()),
+            withheld_from=tuple(str(name) for name in obj.get("withheld_from") or ()),
         )
 
 
@@ -602,7 +625,10 @@ class NoteEntry:
     - `note` came off the wire.
     - `settled_by` is the hub's arithmetic over its own table — a fact about
       counts, not about who anybody is, so it is safe to parse for the same
-      reason `Registration` is.
+      reason `Registration` is. `archived` is the same kind of fact, about the
+      pile rather than the note: a subject read rolls up its children, so a
+      finished pile's notes arrive inside a live parent's reading, and without
+      this they arrive looking current.
     - `provenance` is **never parsed**. `from_json` ignores any `provenance` key
       the wire offers and leaves the honest default in place; only
       `checked()` may replace it, and only the code that ran a check calls that.
@@ -613,6 +639,7 @@ class NoteEntry:
     note: Note
     settled_by: int | None = None
     superseded_by: int | None = None
+    archived: bool = False
     provenance: Provenance = field(default_factory=Provenance.unverified)
 
     @property
@@ -640,6 +667,7 @@ class NoteEntry:
             **self.note.to_json(),
             "settled_by": self.settled_by,
             "superseded_by": self.superseded_by,
+            "archived": self.archived,
             "open": self.is_open,
             "current": self.is_current,
             "provenance": {
@@ -658,6 +686,7 @@ class NoteEntry:
             note=Note.from_json(_require(obj, "note", dict)),
             settled_by=int(settled_by) if settled_by is not None else None,
             superseded_by=int(superseded_by) if superseded_by is not None else None,
+            archived=bool(obj.get("archived")),
         )
 
 
