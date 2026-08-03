@@ -575,15 +575,26 @@ prints the command with your name already in it:
 ```
 cairn: no subject '441'. Subjects are opened deliberately, so that four spellings
 of one run do not become four piles nobody can find.
-  did you mean: soak-441
+  did you mean:
+    rig-a/soak-441  Overnight soak of build 441 on rig A's chamber
+    rig-b/soak-441  The same build on rig B, started later for comparison
   open it if it is genuinely new: cairn subject 441 "<one line saying what it is>"
   see them all, with what each is for: cairn notes
 ```
 
 Read the guess before you override it. If something close already exists, that is
-almost always the pile you wanted. A nested name is its own pile too —
-`rig-a/chamber` needs opening even when `rig-a` is open — though a read of the
-parent still rolls it up.
+almost always the pile you wanted — **and read the description beside it, not
+just the name.** The guess ranks on how similar the strings are, which cannot
+know which pile you meant; with two candidates the name alone is a coin flip. If
+neither description matches what you are about to write, the right answer may
+well be a new pile.
+
+When it cannot guess it lists names only. That is not the whole story either:
+`cairn notes` is what has the descriptions, which is why the last line of the
+refusal points there.
+
+A nested name is its own pile too — `rig-a/chamber` needs opening even when
+`rig-a` is open — though a read of the parent still rolls it up.
 
 ### Fixing a description that has gone wrong
 

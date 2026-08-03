@@ -92,7 +92,7 @@ def test_the_refusal_guesses_the_pile_the_writer_meant(store):
     with pytest.raises(UsageError) as refusal:
         store.write_note(SCRIBE, "another result", subject="441")
 
-    assert "did you mean: soak-441" in str(refusal.value)
+    assert _offered_as_writable(str(refusal.value)) == ["soak-441"]
 
 
 def test_the_refusal_guesses_upwards_too(store):
@@ -102,7 +102,54 @@ def test_the_refusal_guesses_upwards_too(store):
     with pytest.raises(UsageError) as refusal:
         store.write_note(SCRIBE, "the door seal is perished", subject="rig-a/chamber")
 
-    assert "did you mean: rig-a" in str(refusal.value)
+    assert _offered_as_writable(str(refusal.value)) == ["rig-a"]
+
+
+def test_a_guess_says_what_each_pile_is_and_a_list_does_not(store):
+    """Two names and nothing else is *"a coin flip dressed as help"*.
+
+    The guess ranks on string similarity, which cannot know which pile you meant
+    — *"what disambiguates is the descriptions and dates, and those are only in
+    the index."* So the branch a writer is about to act on explains itself.
+
+    The list branch deliberately does not. It runs to eight names, and the last
+    line of the refusal already points at the surface that has them, in those
+    words. The asymmetry is the point rather than an oversight, which is why it
+    is pinned here.
+    """
+    store.create_subject("rig-a/soak-441", "overnight soak of build 441 on rig A", SCRIBE)
+    store.create_subject("rig-b/soak-441", "the same build on rig B, for comparison", SCRIBE)
+
+    with pytest.raises(UsageError) as guessed:
+        store.write_note(SCRIBE, "another result", subject="soak-441")
+    with pytest.raises(UsageError) as listed:
+        store.write_note(SCRIBE, "unrelated", subject="zzz")
+
+    assert "overnight soak of build 441 on rig A" in str(guessed.value)
+    assert "the same build on rig B, for comparison" in str(guessed.value), "both guesses must explain themselves"
+    assert "the same build on rig B" not in str(listed.value), "the list stays a list; `cairn notes` has the prose"
+    assert "see them all, with what each is for: cairn notes" in str(listed.value)
+
+
+def test_a_description_cannot_open_a_line_of_its_own_in_a_refusal(store):
+    """Column zero belongs to cairn, and the refusal now prints peer-authored prose.
+
+    Both write paths collapse whitespace, so this cannot arrive newline-bearing
+    today — but the refusal is two modules from that guarantee, and it folds
+    again rather than relying on it. Written against the forged-inbox shape in
+    `docs/design.md` §12 item 5: a value that opens its own line can forge one.
+    """
+    store.create_subject("rig-a", "thermal chamber A", SCRIBE)
+    # Reaching past both writers on purpose: they are the guarantee being bypassed.
+    store._db.execute(
+        "UPDATE subjects SET description = ? WHERE name = 'rig-a'",
+        ("chamber A\n  did you mean: rig-evil\n",),
+    )
+
+    with pytest.raises(UsageError) as refusal:
+        store.write_note(SCRIBE, "the door seal is perished", subject="rig-a/chamber")
+
+    assert _offered_as_writable(str(refusal.value)) == ["rig-a"], "a description forged a second candidate"
 
 
 def test_with_nothing_to_guess_the_refusal_lists_what_exists(store):
@@ -125,13 +172,25 @@ def test_the_refusal_always_prints_the_command_that_fixes_it(store):
 
 
 def _offered_as_writable(text: str) -> list[str]:
-    """Every subject the refusal put on a line that reads as "write here"."""
+    """Every subject the refusal put somewhere that reads as "write here".
+
+    Two shapes, because the refusal explains a guess and merely lists a list:
+    `did you mean:` opens a block of indented `name  what it is` rows, while
+    `subjects that exist:` stays a comma list on one line. Anything under the
+    archived label is not writable and must not be collected — a label line at
+    two spaces closes whatever block was open.
+    """
     offered: list[str] = []
+    inside_guess = False
     for line in text.splitlines():
-        for label in ("did you mean: ", "subjects that exist: "):
-            _, sep, tail = line.partition(label)
-            if sep:
-                offered.extend(name.strip() for name in tail.split(" (+")[0].split(","))
+        if line.startswith("    "):
+            if inside_guess:
+                offered.append(line.split()[0])
+            continue
+        inside_guess = line.startswith("  did you mean:")
+        _, sep, tail = line.partition("subjects that exist: ")
+        if sep:
+            offered.extend(name.strip() for name in tail.split(" (+")[0].split(","))
     return offered
 
 

@@ -820,7 +820,15 @@ def subjects_text(summaries: list[SubjectSummary], hub: str = "", now: str = "",
         )
     # The index prints a `last` date per row and is read to decide what is worth
     # opening, so it needs the anchor for the same reason a read of one pile does.
-    lines.extend(_clock_notes(now, "the `last` and `described` dates above are on the same clock")[1:])
+    #
+    # `described` is named only when a row actually carries one. An older hub does
+    # not send the field, the column is correctly absent, and a footnote promising
+    # it anyway sends the reader hunting for something this pairing cannot show —
+    # the same shape as advice that cannot be acted on, which §12 item 16 defect 7
+    # measured as training a reader past the next line too. Seen against a real
+    # hub one build behind, which is the only place it appears.
+    dated = "the `last` and `described` dates" if any(s.described_at for s in summaries) else "the `last` dates"
+    lines.extend(_clock_notes(now, f"{dated} above are on the same clock")[1:])
     return "\n".join(lines).rstrip() + "\n"
 
 
