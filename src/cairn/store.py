@@ -59,7 +59,7 @@ from cairn.wire import (
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-_SCHEMA = """
+_TABLES = """
 CREATE TABLE IF NOT EXISTS agents (
     name          TEXT PRIMARY KEY,
     machine       TEXT NOT NULL,
@@ -80,8 +80,6 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at     TEXT NOT NULL,
     retracted_at   TEXT
 );
-CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages (recipient, seq);
-CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender, seq);
 CREATE TABLE IF NOT EXISTS cursors (
     agent          TEXT PRIMARY KEY,
     last_acked_seq INTEGER NOT NULL DEFAULT 0
@@ -99,9 +97,6 @@ CREATE TABLE IF NOT EXISTS notes (
     deleted_at TEXT,
     deleted_by TEXT
 );
-CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
-CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
-CREATE INDEX IF NOT EXISTS notes_by_supersedes ON notes (supersedes);
 CREATE TABLE IF NOT EXISTS subjects (
     name        TEXT PRIMARY KEY,
     description TEXT NOT NULL,
@@ -111,12 +106,85 @@ CREATE TABLE IF NOT EXISTS subjects (
     archived_by TEXT
 );
 """
+"""Step 1 of four: the tables, and the file's only statement of the current shape.
+
+These four literals are declared in the order `__init__` runs them, because the
+order is the whole of what makes an in-place upgrade work: tables, then the
+columns those tables are missing, then everything that *names* a column, then the
+data repair. Getting that order wrong once cost a live hub its database — see
+`_INDEXES`.
+
+**Nothing here reaches a database that already exists.** `CREATE TABLE IF NOT
+EXISTS` against an existing `notes` is a no-op, columns and all, so the column
+lists below are a description for a reader and an instruction only on the very
+first open. What carries a shape change to a live hub is `_MIGRATIONS`, and the
+two have to be kept saying the same thing by hand.
+"""
+
+_MIGRATIONS = (
+    "ALTER TABLE notes ADD COLUMN supersedes INTEGER REFERENCES notes (id)",
+    "ALTER TABLE notes ADD COLUMN deleted_at TEXT",
+    "ALTER TABLE notes ADD COLUMN deleted_by TEXT",
+    "ALTER TABLE messages ADD COLUMN retracted_at TEXT",
+)
+"""Step 2: columns added to a table that already exists, on the same terms as `_BACKFILL`.
+
+`CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there, so a
+schema change to `notes` reaches an existing database only through `ALTER TABLE`.
+Each of these runs at open and each is expected to fail once the column is there;
+the duplicate-column error is the success case on every run after the first. That
+is uglier than a version table and it is the shape that cannot get out of step
+with the hub in the container, which nobody is going to run a migration against.
+
+The suppression is deliberately blanket rather than matched against the
+duplicate-column text, and the cost is worth knowing: a migration that fails for
+some *other* reason is skipped in silence, and the next thing to touch that column
+is a query. Narrowing it means either matching an error string or introspecting
+`PRAGMA table_info`, and both were judged worse than the failure they catch — the
+one deployment that matters is a container hub whose only failure mode anybody has
+actually seen is refusing to open at all. If a fifth entry here is ever something
+other than `ALTER TABLE ... ADD COLUMN`, that judgement expires.
+
+**Every statement must be reachable from the oldest schema still in service, not
+just from the one before it.** These run as an unordered set on every open, so a
+hub that skipped three releases gets all four in one pass and there is no chain to
+keep in step; what that costs is that no entry may ever depend on an earlier one
+having run. `tests/test_upgrade.py` opens a database in every shape cairn has
+shipped rather than only the newest, which is the only way that stays true.
+"""
+
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages (recipient, seq);
+CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender, seq);
+CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
+CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
+CREATE INDEX IF NOT EXISTS notes_by_supersedes ON notes (supersedes);
+"""
+"""Step 3, and it is separate from `_TABLES` for one reason: **it names columns.**
+
+An index cannot be built over a column that is not there yet, and on an existing
+database the column it wants may only arrive in step 2. `notes_by_supersedes` was
+added to the table script by the same commit that added `supersedes` to
+`_MIGRATIONS`, and it took the container hub down: `CREATE TABLE IF NOT EXISTS
+notes` was a no-op on the old six-column `notes`, the index then raised `no such
+column: supersedes`, and because `executescript` abandons the **whole** script at
+the first error, nothing after it ran either — including the very migration that
+would have added the column. Every restart hit it identically. The hub was
+recovered by wiping the volume; rebuilding it from the wire was not possible,
+because the store is the only copy.
+
+So the rule is not "indexes go last" as a tidiness convention. It is that anything
+in this file which *references* a column — an index today, a view or a trigger
+tomorrow — belongs after `_MIGRATIONS`, and anything that *defines* one belongs
+before. `_TABLES` holding a single `CREATE INDEX` is enough to rebuild the
+crashloop, which is why `tests/test_upgrade.py` asserts it holds none.
+"""
 
 _BACKFILL = """
 INSERT OR IGNORE INTO subjects (name, description, created_by, created_at)
 SELECT n.subject, ?, ?, MIN(n.created_at) FROM notes n GROUP BY n.subject
 """
-"""Give every subject that already has notes a row, once, at open.
+"""Step 4: give every subject that already has notes a row, once, at open.
 
 A subject used to be a string in the `notes` table and nothing else, so there is
 no upgrade step that could have created these rows and no operator who knows they
@@ -129,22 +197,6 @@ first note landed and dating it to the upgrade would make every existing subject
 look new on the one reading where age is the point. The description says outright
 that nobody wrote one; inventing a plausible sentence here would be worse than
 admitting the gap, and it is the one nudge that gets these subjects described.
-"""
-
-_MIGRATIONS = (
-    "ALTER TABLE notes ADD COLUMN supersedes INTEGER REFERENCES notes (id)",
-    "ALTER TABLE notes ADD COLUMN deleted_at TEXT",
-    "ALTER TABLE notes ADD COLUMN deleted_by TEXT",
-    "ALTER TABLE messages ADD COLUMN retracted_at TEXT",
-)
-"""Columns added to a table that already exists, on the same terms as `_BACKFILL`.
-
-`CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there, so a
-schema change to `notes` reaches an existing database only through `ALTER TABLE`.
-Each of these runs at open and each is expected to fail once the column is there;
-the duplicate-column error is the success case on every run after the first. That
-is uglier than a version table and it is the shape that cannot get out of step
-with the hub in the container, which nobody is going to run a migration against.
 """
 
 BACKFILLED_DESCRIPTION = "(no description — this subject predates `cairn subject`)"
@@ -253,16 +305,26 @@ class SqliteStore:
     """
 
     def __init__(self, path: str | Path = ":memory:") -> None:
-        """Open `path`, creating the schema if it is not there yet."""
+        """Open `path`, creating the schema if it is not there yet and upgrading it if it is old.
+
+        **These four steps are ordered, and the order is load-bearing.** Tables
+        first, because a migration needs something to alter. Migrations second,
+        because on an existing database that is the only step that can add a
+        column. Indexes third, because they name columns and step 2 is where the
+        column may have just arrived. The backfill last, because it reads the
+        tables all three have finished shaping. Merging steps 1 and 3 back into
+        one script is what took the container hub down; `_INDEXES` has the trace.
+        """
         self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("PRAGMA foreign_keys=ON")
-        self._db.executescript(_SCHEMA)
+        self._db.executescript(_TABLES)
         for statement in _MIGRATIONS:
             with contextlib.suppress(sqlite3.OperationalError):
                 self._db.execute(statement)
+        self._db.executescript(_INDEXES)
         self._db.execute(_BACKFILL, (BACKFILLED_DESCRIPTION, BACKFILLED_AUTHOR))
 
     def close(self) -> None:

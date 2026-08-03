@@ -59,6 +59,39 @@ runs on is trusted, and the alternative is having no hub until signing lands.
 On a wider network, bind it to one interface, or put it behind something that
 does authenticate.
 
+### Upgrading
+
+```bash
+docker compose cp hub:/var/lib/cairn/hub.db ./hub-$(date +%F).db   # first, always
+docker compose up -d --build
+docker compose logs -f        # watch it come up, not just start
+```
+
+The hub brings its own database up to date at open: it adds the columns a newer
+build needs and repairs data an older one could not have written. There is no
+migration to run and no version to pass, deliberately — the one deployment this
+was designed for is a container nobody logs into.
+
+**Copy the file out first anyway, and read the logs rather than the exit code.**
+`docker compose up -d` returns success for a container that then dies, so a hub
+that cannot open its database looks exactly like a hub that started. That is not
+hypothetical: a hub four schema changes behind was upgraded, could not open, and
+restart-looped on `no such column: supersedes` with `up -d` having reported
+success. It was recovered by removing the volume, which cured the crash and threw
+away the sediment — the store is the only copy, and a note is left for somebody
+who has not turned up yet. The ordering defect behind that is fixed and
+`tests/test_upgrade.py` now opens a database in every shape cairn has shipped, but
+the two-second copy is what makes the next one a rollback instead of a loss.
+
+**Downgrading is worse than the crashloop, because it works.** An older build
+opens a newer database without complaint and then ignores every column it does
+not know about. Measured, running the pre-`retracted_at` build against a database
+the current one wrote: a message that had been withdrawn was delivered as
+ordinary unread mail, and a note that had been superseded was listed with no sign
+that a correction existed. Nothing failed and nothing said anything. If you have
+to go back, restore the copy you took above rather than pointing the old build at
+the live file.
+
 ### Getting the database out
 
 The whole hub is that one file, which is what makes moving it cheap:
