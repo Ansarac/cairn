@@ -642,8 +642,57 @@ def cmd_subject(args: argparse.Namespace) -> int:
     print(f"opened {pile.subject} · {render.oneline(pile.description)}")
     if pile.subject != args.name:
         print(f"  subject folded from {args.name!r}")
+    for line in _above(client, pile.subject):
+        print(line)
     print(f'  leave the first note: cairn note {pile.subject} "<what you know>"')
     return 0
+
+
+def _above(client: HubClient, subject: str) -> list[str]:
+    """Say what is already filed on the piles this one sits under.
+
+    **A read rolls up, and only downward.** `cairn notes rig-a` covers everything
+    in `rig-a/`; `cairn notes rig-a/soak-441` covers nothing above it. So a fact
+    about the rig is invisible to everyone reading the run, and the writer who
+    knows it has no way to reach a run pile that does not exist yet. An
+    acceptance session hit this filing a bench-equipment fault, worked around it
+    with three pointer notes, and named what that is worth: *"it covers the piles
+    that existed at 07:12 this morning and nothing after. It's a snapshot
+    impersonating a rule."*
+
+    This is the cheapest thing that helps and deliberately not the fix that
+    session designed. Read-time ancestor inheritance changes what a *reading* is
+    and would tip every run read into the rig's whole history; a `--subtree`
+    marker needs a new field and a decision from every writer. What this does
+    instead is fire once, at creation, which the same session picked out as the
+    one moment worth having: *"it lands at the exact moment a human is present
+    and deciding."* It is weaker on purpose — it reaches the creator and nobody
+    else — and the argument for the larger version is in `docs/design.md`.
+
+    Guarded like `_pile`, and for the same reason: this is a garnish on a write
+    that already succeeded, and an older hub without the index route must not
+    turn an opened pile into a failed command. Silent on anything that is not a
+    nested name, on an ancestor nobody opened, and on one with nothing filed —
+    there is no reading to send anybody to.
+    """
+    parts = subject.split("/")[:-1]
+    if not parts:
+        return []
+    try:
+        index = {s.subject: s for s in client.subjects(archived=True)}
+    except (CairnError, WireError):
+        return []
+    lines = []
+    for depth in range(len(parts)):
+        found = index.get("/".join(parts[: depth + 1]))
+        if found is None or found.notes == 0:
+            continue
+        counted = f"{found.notes} note{'' if found.notes == 1 else 's'}"
+        unanswered = f", {found.open_questions} unanswered" if found.open_questions else ""
+        closed = ", archived" if found.archived else ""
+        lines.append(f"  above it: {found.subject} · {counted}{unanswered}{closed}")
+        lines.append(f"    a read of this pile will not include them: cairn notes {found.subject}")
+    return lines
 
 
 def _older_hub(call, missing: str = ""):  # noqa: ANN001, ANN202 - one thunk, one catch; typing it would be longer than it is

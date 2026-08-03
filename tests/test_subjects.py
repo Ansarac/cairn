@@ -31,7 +31,7 @@ import pytest
 
 from cairn import cli
 from cairn.client import HubClient
-from cairn.errors import UsageError
+from cairn.errors import Unreachable, UsageError
 from cairn.hub import make_server
 from cairn.store import BACKFILLED_AUTHOR, SqliteStore
 from cairn.wire import Agent
@@ -601,6 +601,77 @@ def test_the_index_says_what_each_pile_is_for(hub, monkeypatch, capsys):
     assert cli.run(["--hub", hub.base_url, "notes"]) == 0
 
     assert "overnight soak of build 441 on rig A" in capsys.readouterr().out
+
+
+def test_opening_a_run_under_a_rig_puts_the_rig_in_front_of_the_person_opening_it(hub, monkeypatch, capsys):
+    """A read rolls up, and only downward — which nothing said.
+
+    `cairn notes rig-a` covers everything in `rig-a/`; a read of the run covers
+    nothing above it. So a fact about the rig is invisible to everyone reading
+    the run, and the writer who knows it cannot reach a run pile that does not
+    exist yet. An acceptance session worked around that with three pointer notes
+    and called them *"a snapshot impersonating a rule"*.
+
+    This fires once, at the one moment the same session picked out as worth
+    having — *"it lands at the exact moment a human is present and deciding."*
+    """
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "thermal chamber A"]) == 0
+    assert cli.run(["--hub", hub.base_url, "note", "rig-a", "standoffs take M3, not M2.5"]) == 0
+    assert cli.run(["--hub", hub.base_url, "note", "rig-a", "-q", "is the 85 C step really 85 C?"]) == 0
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a/soak-441", "overnight soak of build 441"]) == 0
+    printed = capsys.readouterr().out
+
+    assert "above it: rig-a · 2 notes, 1 unanswered" in printed
+    assert "a read of this pile will not include them: cairn notes rig-a" in printed
+
+
+def test_a_top_level_pile_and_an_empty_ancestor_say_nothing(hub, monkeypatch, capsys):
+    """Two silences, both deliberate.
+
+    A pile with nothing above it has nothing to report. An ancestor somebody
+    opened and never wrote on has no reading to send anybody to, and naming it
+    would spend the one line this gets on an empty pile — which is how a line
+    stops being read at all.
+    """
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-b", "thermal chamber B, nothing filed yet"]) == 0
+    capsys.readouterr()
+
+    assert cli.run(["--hub", hub.base_url, "subject", "fitbox", "the analysis box"]) == 0
+    assert "above it:" not in capsys.readouterr().out, "a top-level pile has nothing above it"
+
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-b/soak-441", "overnight soak of build 441"]) == 0
+    assert "above it:" not in capsys.readouterr().out, "an ancestor with no notes has no reading to offer"
+
+
+def test_the_ancestor_line_cannot_turn_an_opened_pile_into_a_failed_command(hub, monkeypatch, capsys):
+    """A garnish that raises is worse than no garnish.
+
+    The pile is created before this runs, so a hub too old to answer the index —
+    or any other fault in the extra round trip — must not produce a non-zero exit
+    over a subject that now exists. `cli._pile` is guarded for the same reason.
+    """
+    hub.register(Agent(name=SCRIBE, machine="bench", cwd="/w/fw"))
+    monkeypatch.setenv("CAIRN_AGENT", SCRIBE)
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a", "thermal chamber A"]) == 0
+    assert cli.run(["--hub", hub.base_url, "note", "rig-a", "standoffs take M3"]) == 0
+    capsys.readouterr()
+
+    def no_index(self, *_args, **_kwargs):
+        msg = "hub returned 404: no route /v1/subjects"
+        raise Unreachable(msg)
+
+    monkeypatch.setattr("cairn.client.HubClient.subjects", no_index)
+
+    assert cli.run(["--hub", hub.base_url, "subject", "rig-a/soak-441", "overnight soak of build 441"]) == 0
+    printed = capsys.readouterr().out
+    assert "opened rig-a/soak-441" in printed
+    assert "above it:" not in printed
 
 
 def test_an_older_hub_says_so_rather_than_reading_as_an_outage(monkeypatch):
