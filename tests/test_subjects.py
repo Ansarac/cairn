@@ -269,16 +269,24 @@ def test_an_unregistered_author_cannot_open_a_pile(store):
         store.create_subject("rig-a", "thermal chamber A", "nobody/here")
 
 
-# -- the upgrade ----------------------------------------------------------------
+# -- the backfill ----------------------------------------------------------------
 
 
-def test_an_existing_database_gets_its_subjects_backfilled(tmp_path):
-    """There is a hub running in a container with real sediment on it.
+def test_a_subject_with_notes_but_no_row_is_backfilled_and_dated_to_its_first_note(tmp_path):
+    """What the backfill *decides*, given that it runs: the dating and the wording.
 
     Nothing could have created these rows and nobody knows they are needed, so the
     schema repairs itself at open. Dated to the first note rather than to the
     upgrade, because the pile genuinely started then and dating it to now would
     make every existing subject look new on the one reading where age is the point.
+
+    **This is not an upgrade test, and it read as one for three builds.** The
+    fixture is written by `SqliteStore` and then has one table dropped, so `notes`
+    is left entirely modern — which is the half of an old database that actually
+    breaks. A real pre-`subjects` store also has a six-column `notes`, the store
+    could not open one at all, and this test was green throughout. A fixture built
+    by the code under test can only represent the schema the code under test
+    writes. `tests/test_upgrade.py` has the schemas older builds really wrote.
     """
     path = tmp_path / "old.db"
     store = SqliteStore(path)
