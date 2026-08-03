@@ -529,6 +529,36 @@ reads the parent gets it in the rollup, and the one who reads just the child get
 it at all. A correction filed on the parent is invisible to everybody reading the
 child, which for a narrow question is everybody who matters.
 
+That rule covers the case where you have a choice. The harder one is a fact that
+genuinely belongs to the rig and that every run on it needs — there, the deepest
+relevant subject *is* the parent, and nothing carries it down. A session filing a
+bench-equipment fault put the limit plainly: there is no way to put anything in
+front of whoever opens next month's run, because that pile does not exist yet.
+
+Two things follow, and neither is a workaround you should skip:
+
+- **Opening a pile under another one shows you what is already above it**, so
+  the moment you are most likely to miss the rig's sediment is the moment you
+  are told about it:
+
+  ```
+  opened rig-a/soak-441 · Overnight soak of build 441 on rig A's chamber
+    above it: rig-a · 2 notes, 1 unanswered
+      a read of this pile will not include them: cairn notes rig-a
+    leave the first note: cairn note rig-a/soak-441 "<what you know>"
+  ```
+
+  Read it before you start. It fires once, for the person opening the pile, and
+  nobody after them gets it.
+
+- **Read the parent at the start of work on a child**, even when somebody handed
+  you the child's name. `cairn notes rig-a` when you are working `rig-a/soak-441`
+  costs one command and is the only way to see rig-level facts that the run's own
+  reading will never show you.
+
+A pointer note on the child is the third option and the weakest: it reaches the
+piles that exist when you write it and nothing opened afterwards.
+
 The number on each line is the note's id, and it is the only number there:
 `settle` takes an id, and a position marker printed beside one would be a single
 typo away from settling a different question. Ids are global rather than
