@@ -1328,17 +1328,21 @@ class SqliteStore:
             raise UsageError(_no_such_subject(subject, self._subject_names()))
         return found
 
-    def _subject_names(self) -> list[tuple[str, bool]]:
-        """Every subject name, paired with whether it is archived.
+    def _subject_names(self) -> list[tuple[str, bool, str]]:
+        """Every subject name, whether it is archived, and what it says it is.
 
         Archived piles are included on purpose, and this is the one reader of
         the table that must not filter them out. The index hides them because
         it is a list of live work; this is a list of *what already exists*, and
         a pile the writer is not shown is a pile they open a second copy of —
         which is the exact failure `_no_such_subject` is here to prevent.
+
+        The description rides along because the refusal is the moment a writer
+        decides which pile they meant, and a bare name cannot answer that when
+        there is more than one candidate. See `_no_such_subject`.
         """
-        rows = self._db.execute("SELECT name, archived_at FROM subjects ORDER BY name").fetchall()
-        return [(r["name"], bool(r["archived_at"])) for r in rows]
+        rows = self._db.execute("SELECT name, archived_at, description FROM subjects ORDER BY name").fetchall()
+        return [(r["name"], bool(r["archived_at"]), r["description"] or "") for r in rows]
 
     def _touch(self, name: str) -> None:
         """Record that `name` was heard from just now.
@@ -1416,7 +1420,23 @@ def _listed(label: str, names: Sequence[str], limit: int) -> str:
     return f"  {label}: {shown}{more}"
 
 
-def _no_such_subject(subject: str, names: Sequence[tuple[str, bool]]) -> str:
+def _explained(label: str, names: Sequence[str], describing: dict[str, str]) -> list[str]:
+    """Render a label and one indented `name  what it is` line per candidate.
+
+    **Descriptions are folded here rather than trusted from the write path.**
+    Both writers collapse whitespace, so a stored description cannot open a line
+    of its own today — but this function is two modules away from the code that
+    guarantees it, and column zero belonging to cairn is not a property worth
+    holding at that distance. The collapse is one call and removes the question.
+    """
+    width = max(len(name) for name in names)
+    return [
+        f"  {label}:",
+        *(f"    {name:<{width}}  {' '.join(describing.get(name, '').split())}".rstrip() for name in names),
+    ]
+
+
+def _no_such_subject(subject: str, names: Sequence[tuple[str, bool, str]]) -> str:
     """Return the refusal a writer meets when the pile does not exist yet.
 
     **This text is the feature.** Requiring subjects to be opened deliberately
@@ -1437,13 +1457,31 @@ def _no_such_subject(subject: str, names: Sequence[tuple[str, bool]]) -> str:
     rejected it, which is `docs/design.md` §12 item 16 defect 6 a third time,
     at a surface that fix did not reach.
 
-    Every value here is a normalized subject, so it cannot contain whitespace and
-    cannot open a line of its own — the one place in this file where peer-authored
-    text reaches a message, and the reason `normalize_subject` refuses whitespace
-    outright rather than folding it. See `render.oneline`.
+    **A guess says what each pile is; a list does not.** Two candidates named and
+    nothing else is, in an acceptance session's words, *"a coin flip dressed as
+    help"* — the guess ranks on string similarity, which cannot know which pile
+    is the one you meant, and *"what disambiguates is the descriptions and dates,
+    and those are only in the index."* So the branch a writer is about to act on
+    explains itself. The list branch does not: it can run to eight names, and the
+    last line of the refusal already points at the surface that has them, saying
+    so in those words.
+
+    Worth being precise about why this is safe here and was rejected on
+    `cairn subject`. There, a volunteered near-name would arrive beside an
+    operator's belief that the pile exists and read as independent confirmation
+    of it — *"persuasive prompts don't usually flip a decision; they blur it."*
+    Here the writer has already asserted a name that does not exist and the tool
+    has to answer. A description makes a wrong guess easier to **reject**, which
+    is the opposite pressure.
+
+    The subject strings are normalized, so they cannot contain whitespace and
+    cannot open a line of their own — the reason `normalize_subject` refuses
+    whitespace outright rather than folding it. Descriptions are not normalized
+    that way and are folded by `_explained` instead. See `render.oneline`.
     """
-    all_names = [name for name, _ in names]
-    archived = {name for name, is_archived in names if is_archived}
+    all_names = [name for name, _, _ in names]
+    archived = {name for name, is_archived, _ in names if is_archived}
+    describing = {name: text for name, _, text in names}
 
     opening = (
         f"no subject {subject!r}. Subjects are opened deliberately, so that four spellings of one run "
@@ -1451,15 +1489,19 @@ def _no_such_subject(subject: str, names: Sequence[tuple[str, bool]]) -> str:
     )
     lines = [opening]
     near = _nearest(subject, all_names, archived)
+    guessing = bool(near)
     candidates, label, limit = (
-        (near, "did you mean", NEAREST_SHOWN) if near else (all_names, "subjects that exist", SUBJECTS_SHOWN)
+        (near, "did you mean", NEAREST_SHOWN) if guessing else (all_names, "subjects that exist", SUBJECTS_SHOWN)
     )
+    reopen_label = "archived, so writing needs `cairn subject <name> --reopen` first"
     live = [name for name in candidates if name not in archived]
     closed = [name for name in candidates if name in archived]
     if live:
-        lines.append(_listed(label, live, limit))
+        lines.extend(_explained(label, live[:limit], describing) if guessing else [_listed(label, live, limit)])
     if closed:
-        lines.append(_listed("archived, so writing needs `cairn subject <name> --reopen` first", closed, limit))
+        lines.extend(
+            _explained(reopen_label, closed[:limit], describing) if guessing else [_listed(reopen_label, closed, limit)]
+        )
     lines.append(f'  open it if it is genuinely new: cairn subject {subject} "<one line saying what it is>"')
     lines.append("  see them all, with what each is for: cairn notes")
     return "\n".join(lines)
