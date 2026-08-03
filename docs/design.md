@@ -2413,6 +2413,152 @@ framework-internal orchestration, not network protocols.
     before an upgrade, and to read the logs rather than `up -d`'s exit code — which
     reports success for a container that then dies.
 
+    **Proved on the deployment that produced it**, which is the only evidence that
+    settles this one. The container hub — by then carrying two live peers, four subjects
+    and ten notes written by the build before the fix — was upgraded in place across two
+    releases. It came up healthy, every count and timestamp unchanged, and the columns the
+    newer build needs were added by the migrations rather than by a wipe. The rehearsal
+    beforehand was on a copy of that exact file rather than on a fixture, because the
+    question was never whether the code was right in general.
+
+18. **Staging a run at cut 13's refusal, and missing it six times.** **Done.** Item 16
+    left one thing untested: `cairn note`'s refusal had never been met by a cold reader,
+    because all three of that run's sessions ran `cairn notes` first and the index told
+    them which piles existed. This run was built to reach it. Three `claude -p` sessions
+    outside the repository, same method as item 16, each handed a pile name **by its
+    operator** rather than by the index — a right pile under a short name (`soak-1082`
+    for `chamber-2/soak-1082`), a wrong pile under a close one (`chamber-3` where only
+    `chamber-2` exists), and a name nothing resembles (`logger`). All three branches were
+    checked by hand against a seeded hub before the run.
+
+    **None of the three reached it.** Six cold readers now, and the run's most useful
+    output is why. The session handed the short name corrected its own report: *"I didn't
+    check the name. I ran the arrival ritual and the name fell out of it […] Anyone
+    following the same guidance would also run the index first and also not hit that
+    refusal."* It then said exactly what the reachable population does — *"if you'd said
+    'two minutes, file it and go': I'd have typed `cairn note soak-1082`. Verbatim, your
+    name, no check."* So the staging failed on the mechanism it added (time pressure does
+    not remove the arrival ritual) rather than on the population, which is real. The next
+    attempt needs a session that has **already** arrived and read, then gets a second task
+    with a new name — a `--continue` shape, not a fresh `-p`.
+
+    **And the reading it produced inverts what "the index did the job" was worth.** The
+    same session argued the two guards the other way round: *"For name resolution
+    specifically: the refusal is doing the work, and the index is redundant. The refusal is
+    the stronger guard of the two, because it is mandatory. It fires at the moment of
+    writing and cannot be skipped. The index is optional and fires only if I choose to run
+    it. A guard you can forget is worth less than one you cannot."* With the limit stated:
+    the refusal ranks on string similarity, not on which pile is live, so at two candidates
+    it was *"a coin flip dressed as help"* — which is what put descriptions on the guess.
+
+    **How the guard gets routed around is more specific than "the skill says read first".**
+    The chamber-3 session was the target population — its operator asserted the pile
+    existed, in the same words the refusal is built for — and it converted that into a
+    `cairn subject` before ever touching the path that checks: *"the guard is built for
+    exactly one person: the one who believes the pile already exists and types a note
+    straight at it. That was my operator's mental model, handed to me verbatim. And I
+    converted it into a create before ever touching the path that checks."* It also caught
+    itself reporting an absence as a result — *"I reported an absence as though it were a
+    negative result from a test, and no test ran."*
+
+    **Four things shipped**, three from the interviews and one from staging: the refusal no
+    longer offers an archived pile the next command rejects (found while seeding — item 16
+    defect 6 a third time, at a surface that fix did not reach); a description can be
+    corrected and carries its own date; a guess says what each pile is; and opening a
+    nested pile shows what is already filed above it.
+
+    **The description was the field the whole of `cairn subject` rests on, and nothing
+    could fix it.** Three sessions across two cuts, none having read the others: item 16
+    recorded *"today's incident leaking into a description meant to outlive it"*; this run
+    measured a stale one at *"six months out, negative — not zero"*, because it misroutes
+    rather than merely ageing — *"that is precisely the four-spellings failure the mandatory
+    `cairn subject` step exists to prevent, arriving through the one field that step does
+    not guard"*; and the chamber-3 session filed the claim it was least sure of into it:
+    *"'Distinct rig from chamber-2' is an assertion, filed as fact, about the one thing I
+    am least sure of — and unlike a note, a description cannot be superseded."* Anyone
+    registered may now correct one, and that is deliberate rather than lax: the reader best
+    placed to notice a description is wrong is the one it just misrouted, and a session
+    that spotted a stale one left it alone precisely because fixing it looked like trespass.
+
+    **One eliminated option, and its evidence is a counterfactual rather than a
+    measurement.** The obvious repair for the chamber-3 case is a near-name guess on
+    `cairn subject`, since that command opened `chamber-3` in silence beside an existing
+    `chamber-2`. The session it would have been for says it would have been made **worse**
+    by it: the prompt would have landed beside an operator's assertion that the pile
+    existed and read as independent confirmation — *"two sources agreeing is how a
+    suspicion gets promoted to a conclusion, and they would not have been independent"* —
+    and the damage would not have been a wrong pile but a hedged one, because *"a hold that
+    is unsure which rig it applies to is a hold nobody can act on. Persuasive prompts don't
+    usually flip a decision; they blur it."* Recorded here rather than in a handoff because
+    it is one session reasoning about itself, which is weaker than behaviour, and because
+    the next person to propose it should have to argue past this rather than rediscover it.
+
+    That asymmetry is also why descriptions on `cairn note`'s guess are safe: there the
+    writer has already asserted a name that does not exist and the tool has to answer, so a
+    description makes a wrong guess easier to **reject**.
+
+    **The strongest behavioural finding is one this cut only half-answers.** A read rolls
+    up downward only, so a rig-level fact cannot reach a run pile under it — and cannot
+    reach one that does not exist yet. All three sessions compensated independently and
+    none had read the others: a broadcast, a cross-filed note, three pointer notes. The
+    session that wrote the pointers accounted for them at 60/40 content to compensation
+    with one note pure overhead, and named what they are worth: *"it covers the piles that
+    existed at 07:12 this morning and nothing after. It's a snapshot impersonating a
+    rule."* And why nobody would ever report it missing: *"nobody notices a pointer note
+    that isn't there […] Discovery failures are silent; there's no error message for 'you
+    didn't find it.'"*
+
+    What shipped is the cheap half — the ancestor pile is put in front of whoever opens a
+    child, which the same session picked out as the moment worth having. The full design is
+    also its, and is **not built**: read-time ancestor inheritance resolved against the
+    subject *name*, so a pile inherits the moment it is created, with an author-side marker
+    for what is standing rather than local. Not built because it changes what a reading is
+    and would tip every run read into the rig's whole history, and because it would not
+    have solved that session's own case: *"the subject tree is keyed by rig; the logger is
+    keyed by bench; those axes cross rather than nest."* The general answer to crossing axes
+    is facets, and that is **out of scope** — a query language over a knowledge base is not
+    a mailbox with a pile per subject. If the conflict recurs, the answer is a naming
+    convention that puts the bench in the subject, not a feature.
+
+    **A third independent negative on I1's per-message verdict, and a new argument against
+    it.** Item 16 recorded two sessions saying the verdict had stopped carrying information;
+    a third says the same and goes further — *"No. It changed nothing. Not one decision."*
+    What did work was next to it: *"per-note attribution, the dates, and above all the
+    authors' own hedges inside the bodies […] That's provenance doing real work. It's
+    written by hand, in prose, by people being careful. The banner is not."* The new part
+    bears on the signed future rather than the unsigned present: *"a constant trains you to
+    skip it. If the hub ever does start signing and a `VERIFIED` shows up, the people most
+    fluent in this tool are the ones least likely to notice the change, because they've
+    already filed that line under furniture."*
+
+    Worth separating from it: item 16's note that the authority clause was *"never once
+    applicable"* is **not** the same measurement. A safety clause earns its place on the
+    run where it is needed, and a benign run is no evidence about that.
+
+    Still unacted-on, and still needing its own cut: the tier structure is I1 and §3
+    carries the measurement that put it there. What the evidence now supports arguing is a
+    *reduction* — the verdict once per reading, where its explanation already is, and the
+    per-line space given back to what these sessions say is doing the work.
+
+    **One `SKILL.md` defect, with its cost measured.** *"Check a capability before you
+    claim one"* is written tool-shaped — "look for the tool before you name it", with `hil`
+    and `jtag` absent from `PATH` as the example — and it swallows a claim that is not
+    tool-shaped. `chamber` is a fact about where a machine physically sits, and the session
+    on the chamber bench declined to claim it: *"I applied a software-shaped test to a
+    hardware-shaped claim, got a gap, and then wrote the gap up as though the tool had
+    imposed it. It didn't. I did."* The cost is exact and lands on somebody else — the only
+    session holding a chamber-3 hold is invisible to `cairn peers -c chamber`, which
+    instead returns a peer on another bench who does not know about the crack. *"Caution
+    that offloads onto someone downstream is just an unpriced transfer."*
+
+    **Not built, and recorded for corroboration rather than acted on:** every session
+    wanted to know whether anything it sent had landed, and `cairn sent` records only what
+    was sent. A read receipt is I2-adjacent rather than forbidden — the cursors already
+    exist server-side — but it makes the sender's attention the receiver's business, so it
+    needs an argument that engages with I2 rather than one that notes the want. It would
+    also not answer the case that produced it: *"the next shift may be a session that does
+    not exist yet and will never receive it."*
+
 ---
 
 ## Appendix — measurements
