@@ -59,7 +59,11 @@ runs on is trusted, and the alternative is having no hub until signing lands.
 On a wider network, bind it to one interface, or put it behind something that
 does authenticate.
 
-### Upgrading
+### Upgrading the hub
+
+This is half of an upgrade. The other half is every machine that runs agents,
+and it is two commands rather than one — *Upgrading a machine that runs agents*,
+below, has why the second one is the one that gets forgotten.
 
 ```bash
 docker compose cp hub:/var/lib/cairn/hub.db ./hub-$(date +%F).db   # first, always
@@ -187,6 +191,55 @@ says what it stepped over. Both are normal; the second is worth noticing.
 tools. It backs up the old one, merges rather than replaces, and comes off again
 with `cairn install-hooks --remove`, which takes out cairn's entries and leaves
 everyone else's alone.
+
+### Upgrading a machine that runs agents
+
+```bash
+uv tool install --reinstall git+https://github.com/Ansarac/cairn   # --python 3.13 where the host has no 3.13
+cairn install-skill                                                # does NOT come with the line above
+```
+
+**Two commands, and the second is the one that gets skipped.** The skill ships
+*inside* the wheel, so `--reinstall` moves the copy in the wheel and leaves the
+copy in the skills directory exactly as it was. Nothing complains: the CLI is
+new, the hub is reachable, every command works, and the sessions on that machine
+go on reading the previous skill silently and for as long as nobody checks. A
+copy was found 129 lines behind that way, on a machine whose own handoff said it
+had been refreshed — `docs/design.md` §12 item 16.
+
+`install-skill` says which of three cases it hit, so running it is also the
+check on whether it was ever run here:
+
+- `· created, <n> lines` — there was no copy. This machine has been running
+  without the skill, which is a different and worse problem than a stale one.
+- `· replaced a copy that differed · was <n> lines, now <n>` — there was one and
+  it was not this build's. Everything that machine did while reading it was
+  read out of a different file.
+- `· already identical, nothing written` — nothing to do, and it does not
+  rewrite the file, so the mtime still says when the skill last actually moved.
+
+All three exit 0. None of them is a failure.
+
+**`cairn --version` cannot answer this.** It has printed `cairn 0.1.0` since the
+first commit and through every cut since, because the version is not bumped per
+release — it names the package, not the build. On an agent machine the
+`install-skill` report is the closest thing to a build check there is; on a
+machine you can reach, diffing the installed package against a checkout is the
+real one.
+
+`cairn install-hooks` is safe to re-run and normally answers `hooks already
+present in ...; nothing to do`. Run it anyway on a machine whose install
+predates them.
+
+**Do the hub and the agent machines in one sitting**, for the reason in *Two
+things that will bite* below: a protocol bump fails on every route rather than
+degrading, so a half-done fleet is a fleet where some machines stop dead.
+
+**And upgrading somebody else's machine changes how their sessions behave.** The
+CLI is a tool and the skill is instructions — replacing the second one changes
+what those sessions do next, on a run you are not watching. It is the intended
+effect of an upgrade, and it is still worth telling the person whose machine it
+is rather than treating a fleet upgrade as maintenance.
 
 ## The prompt that puts a session on the network
 

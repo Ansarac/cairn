@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from cairn import cli
 from cairn.adapters import claude_code
 from cairn.errors import UsageError
 from cairn.skill import install_skill, locate_skill
@@ -44,9 +45,71 @@ def test_a_broken_build_says_so(tmp_path, monkeypatch):
 
 
 def test_install_skill_writes_where_it_is_told(tmp_path):
-    target = install_skill(tmp_path / "skills" / "cairn")
-    assert target.is_file()
-    assert "cairn inbox" in target.read_text(encoding="utf-8")
+    done = install_skill(tmp_path / "skills" / "cairn")
+    assert done.path.is_file()
+    assert "cairn inbox" in done.path.read_text(encoding="utf-8")
+
+
+def test_a_first_install_says_it_created(tmp_path):
+    done = install_skill(tmp_path / "skills" / "cairn")
+    assert done.outcome == "created"
+    assert done.previous_lines == 0
+    assert done.lines > 0
+
+
+def test_installing_over_a_stale_copy_says_what_it_replaced(tmp_path):
+    """The 129-lines-behind case, which is the one that went unnoticed for a cut."""
+    dest = tmp_path / "skills" / "cairn"
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("---\nname: cairn\n---\nold\n", encoding="utf-8")
+    done = install_skill(dest)
+    assert done.outcome == "replaced"
+    assert done.previous_lines == 4
+    assert done.lines == len(locate_skill().read_text(encoding="utf-8").splitlines())
+    assert "cairn inbox" in done.path.read_text(encoding="utf-8")
+
+
+def test_an_identical_copy_is_not_rewritten(tmp_path):
+    """`unchanged` leaves the mtime alone, so it still says when the skill last moved.
+
+    Written as an mtime assertion rather than an outcome assertion because the
+    outcome is the easy half: a version that wrote the same bytes back would
+    report `unchanged` correctly and still destroy the only evidence of how long
+    a machine has been reading the wrong thing.
+    """
+    dest = tmp_path / "skills" / "cairn"
+    first = install_skill(dest)
+    os.utime(first.path, (1_000_000, 1_000_000))
+    again = install_skill(dest)
+    assert again.outcome == "unchanged"
+    assert again.previous_lines == again.lines
+    assert first.path.stat().st_mtime == 1_000_000
+
+
+@pytest.mark.parametrize(
+    ("prepare", "expected"),
+    [
+        (None, "· created"),
+        ("---\nname: cairn\n---\nold\n", "· replaced a copy that differed · was 4 lines, now "),
+        ("same", "· already identical, nothing written"),
+    ],
+)
+def test_the_command_says_which_case_it_was(tmp_path, monkeypatch, capsys, prepare, expected):
+    """Asserted through `cli.run`, because the case is only useful once it is printed.
+
+    All three exit 0. `unchanged` is an answer, not a warning — somebody
+    re-running this after an upgrade is asking exactly that question.
+    """
+    dest = tmp_path / "skills" / "cairn"
+    if prepare == "same":
+        install_skill(dest)
+    elif prepare is not None:
+        dest.mkdir(parents=True)
+        (dest / "SKILL.md").write_text(prepare, encoding="utf-8")
+    monkeypatch.setattr(claude_code, "skills_dir", lambda: dest)
+    capsys.readouterr()
+    assert cli.run(["install-skill"]) == 0
+    assert expected in capsys.readouterr().out
 
 
 def _hook_input(event: str) -> str:
