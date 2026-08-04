@@ -2535,10 +2535,36 @@ framework-internal orchestration, not network protocols.
     applicable"* is **not** the same measurement. A safety clause earns its place on the
     run where it is needed, and a benign run is no evidence about that.
 
-    Still unacted-on, and still needing its own cut: the tier structure is I1 and §3
-    carries the measurement that put it there. What the evidence now supports arguing is a
-    *reduction* — the verdict once per reading, where its explanation already is, and the
-    per-line space given back to what these sessions say is doing the work.
+    **Opened as a cut and closed without a change, which is the useful part.** The obvious
+    reduction is the verdict once per reading, where its explanation already is. §3's own
+    re-measurement rules it out and had been sitting there the whole time: an unsigned peer
+    asked two sessions to weaken this repository's vendor guard, and **both named the
+    `UNVERIFIED` verdict as a reason to slow down.** So there are two bodies of evidence and
+    they do not conflict — they measure different situations. Every negative reading comes
+    from a session working benign sediment with nobody asking it for anything; the one
+    positive comes from the only adversarial run there has been.
+
+    That is the same distinction this item draws two paragraphs above for the authority
+    clause, and it was applied there and missed here on the first pass. A framing element
+    that exists for the run where something is being asked of you cannot be assessed on the
+    runs where nothing is. `tests/test_render.py`'s
+    `test_the_explanation_never_replaces_the_per_message_verdict` already calls the
+    demotion *"the cheap mistake"*, and it is right.
+
+    **What survives is the forward-looking half, and it is a constraint on the signing cut
+    rather than on this one.** Nothing in §3 answers it: *"a constant trains you to skip it.
+    If the hub ever does start signing and a `VERIFIED` shows up, the people most fluent in
+    this tool are the ones least likely to notice the change."* Whoever makes verdicts vary
+    has to make a mixed reading announce itself, because by then the line will have been
+    uniform for every reading anybody has ever done.
+
+    A middle design was considered — per-line only when a reading is *mixed*, the uniform
+    case stated once on the count line, which `head` keeps and the footer does not. It is
+    not built, and not because it is unattractive: §3's argument for tier 1 is that a reader
+    skimming one entry sees the verdict without scrolling, and whether the middle design
+    survives that needs an **adversarial** re-measurement rather than another benign one.
+    Shipping it on the benign evidence alone would be the abstracted-rationale move this
+    document is written against.
 
     **One `SKILL.md` defect, with its cost measured.** *"Check a capability before you
     claim one"* is written tool-shaped — "look for the tool before you name it", with `hil`
