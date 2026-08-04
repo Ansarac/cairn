@@ -2199,7 +2199,7 @@ framework-internal orchestration, not network protocols.
     user's skills directory, 129 lines behind. The repository's warning about stale
     installs is aimed at a session forgetting to reinstall; this is the other shape, where
     a previous session's honest report of having done it is what you check against.
-    Re-observe, do not read.
+    Re-observe, do not read. Item 19 takes the hand-diff out of that re-observation.
 
     **Cut 14 passed, and the evidence is the strongest kind available.** A session that had
     never seen the rig, working a stated two-minute question with a chamber at temperature,
@@ -2592,6 +2592,46 @@ framework-internal orchestration, not network protocols.
     needs an argument that engages with I2 rather than one that notes the want. It would
     also not answer the case that produced it: *"the next shift may be a session that does
     not exist yet and will never receive it."*
+
+19. **An install that never said whether it had done anything.** **Done.**
+    `cairn install-skill` overwrote `SKILL.md` unconditionally and printed the same
+    `skill installed at <path>` in all three cases, so the one question anybody runs it to
+    answer — *is this machine reading the current skill?* — was answerable only by
+    hand-diffing three copies. It now reports which case it hit: `· created, N lines`,
+    `· replaced a copy that differed · was N lines, now N`, or `· already identical,
+    nothing written`. All three exit 0, because none of them is a failure and `unchanged`
+    is the answer somebody re-running it after an upgrade is asking for.
+
+    **The identical case does not write**, which is the half worth defending: it leaves the
+    file's mtime saying when the skill last actually moved rather than when somebody last
+    ran the command, and that mtime is the only evidence available to whoever is working
+    out how long a machine has been reading the wrong thing. A version that wrote the same
+    bytes back would report `unchanged` correctly and destroy it, so the test asserts the
+    mtime rather than the verdict.
+
+    This is item 16's first defect, which lived in a handoff rather than in code — three
+    copies of `SKILL.md` on one disk, one 129 lines behind, while the handoff that should
+    have caught it asserted the install had been refreshed. The fix is not another check
+    somebody has to remember: it is that the command they were already running now answers
+    it.
+
+    **A backup of the overwritten file was considered and rejected**, and the reasoning
+    sits in `skill.install_skill`'s docstring rather than here, because that is where
+    somebody would re-propose it. In one line: the whole file is cairn's, where
+    `settings.json` has neighbours, so what the silent overwrite was missing is the report
+    and not a merge.
+
+    **`cairn --version` cannot stand in for any of this.** It has printed `cairn 0.1.0`
+    since the first commit and through every cut since — the version names the package, not
+    the build — so on a machine you cannot reach, the `install-skill` report is the closest
+    thing to a build check that exists. `docs/deployment.md` gains *Upgrading a machine that
+    runs agents* beside the hub's own section for the same reason: `uv tool install
+    --reinstall` moves the copy inside the wheel and deliberately leaves the installed skill
+    alone, so the CLI is new, the hub is reachable, every command works, and the sessions on
+    that machine go on reading the previous skill for as long as nobody looks. Two commands,
+    and the second is the one that gets skipped.
+
+    Nothing in this cut crosses the hub, so `PROTOCOL_VERSION` does not move.
 
 ---
 
