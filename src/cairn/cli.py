@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
-from cairn import __version__, config, nudge, provenance, render, skill
+from cairn import __version__, config, notify, nudge, provenance, render, skill
 from cairn.client import HubClient
 from cairn.errors import CairnError, UsageError
 from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, SentEntry, WireError, normalize_subject
@@ -903,6 +903,55 @@ def _hook_input() -> str:
         return ""
 
 
+BELL_TEST_COUNT = 1
+"""The count `cairn bell --test` pretends to have.
+
+One rather than a rounder number because one is the count whose sentence was
+ungrammatical from the first commit through three cuts — `1 unread message …
+read them`. If an operator is going to see this line once before trusting it,
+it may as well be the reading that has been wrong before."""
+
+
+def _bell_test() -> int:
+    """Run the configured bell command in the foreground and say what happened.
+
+    The operator's half of this feature, and the reason `notify.fire` is allowed
+    to be silent. Three exit codes, so a script can tell the three states apart:
+    `0` a notification would go out, `1` nothing is configured, `3` something is
+    configured and does not work — malformed, missing, stuck, or exiting
+    non-zero. `1` rather than `3` for the absent case keeps the house meaning of
+    both: an unset optional key is "asked, nothing to report", not a refusal.
+    """
+    command = config.bell_command()
+    if not command:
+        print(f"cairn: no bell_command in {config.config_path()}; nothing runs when the bell rings")
+        return EXIT_NOTHING
+    me = config.current_identity() or "nobody"
+    reason = render.bell_reason(BELL_TEST_COUNT)
+    argv = notify.build_argv(command, BELL_TEST_COUNT, me, reason)
+    result = notify.probe(argv, notify.bell_env(BELL_TEST_COUNT, me, reason))
+    print(render.bell_test_report(result, BELL_TEST_COUNT))
+    return 0 if result.ok else 3
+
+
+def _fire_bell_command(count: int, me: str, reason: str) -> None:
+    """Hand the same ring to a person, if the operator asked for that. Never raises.
+
+    Placed after `latch_belled` and before the payload is printed, which pins two
+    properties. It rings on the same latch as the agent's bell — once per new
+    head, both audiences at once, never one without the other. And it cannot stop
+    the payload reaching stdout: `notify.fire` swallows its own failures, so there
+    is no path where a broken notification command costs the session its bell.
+
+    A `UsageError` from a malformed `bell_command` is left to `cmd_bell`'s own
+    catch, which prints `{}` and exits 0 — a hook may not fail loudly, even about
+    its own configuration. `cairn bell --test` is where that is said out loud.
+    """
+    command = config.bell_command()
+    if command:
+        notify.fire(notify.build_argv(command, count, me, reason), notify.bell_env(count, me, reason))
+
+
 def cmd_bell(args: argparse.Namespace) -> int:
     """Emit a bell for whichever agent product invoked us, in that event's shape.
 
@@ -926,6 +975,12 @@ def cmd_bell(args: argparse.Namespace) -> int:
     ring that reached nobody also silenced the one that would have. The
     adapter's `bell_payload` carries the measurement.
 
+    **The same ring may also reach a person**, when the operator has configured
+    `bell_command`. That is one call, `_fire_bell_command`, and it changes none
+    of the four properties above: same latch, same count, same absence of
+    content. `notify.py` argues why routing a bell through a channel cairn does
+    not trust is safe, and names the thing nobody may build on top of it.
+
     It reads a local counter when a nudger is maintaining one, and asks the hub
     only when nobody is. This runs at every single turn boundary, so the common
     case has to cost a `stat` and a small read rather than a round trip — but
@@ -934,6 +989,8 @@ def cmd_bell(args: argparse.Namespace) -> int:
     """
     from cairn.adapters import default
 
+    if args.test:
+        return _bell_test()
     try:
         me = config.current_identity()
         if not me:
@@ -953,8 +1010,10 @@ def cmd_bell(args: argparse.Namespace) -> int:
         if not count or head <= nudge.read_belled(me):
             print("{}")
             return 0
-        payload = default().bell_payload(_hook_input(), render.bell_reason(count))
+        reason = render.bell_reason(count)
+        payload = default().bell_payload(_hook_input(), reason)
         nudge.latch_belled(me, head)
+        _fire_bell_command(count, me, reason)
         # ensure_ascii=False so the reason reads as itself in the hook log rather
         # than as \uXXXX escapes; hook stdout is UTF-8 and render owns the wording.
         print(json.dumps(payload, ensure_ascii=False))
@@ -1360,6 +1419,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
 
     p = sub.add_parser("bell", help="turn-boundary hook entrypoint; prints hook JSON")
     p.add_argument("--limit", type=int, default=50)
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="run the configured bell_command now and report it, instead of ringing",
+    )
     p.set_defaults(func=cmd_bell)
 
     # `nudge` is **withdrawn**: no subparser, so there is no way to start the

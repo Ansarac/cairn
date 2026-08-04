@@ -306,8 +306,13 @@ A message finds its recipient in one of three states.
 | State | What happens | Latency |
 |---|---|---|
 | **Busy**, mid-turn | The `Stop` hook rings a bell at the turn boundary; the agent runs `cairn inbox` | next turn |
-| **Idle**, at the prompt | With `cairn nudge` running: one line typed into the session's terminal. Without it: waits | seconds, or until the human returns |
+| **Idle**, at the prompt | Waits. Optionally `bell_command` tells the *human*, who decides whether to come back | until somebody returns |
 | **Gone** | Waits in the hub; the `SessionStart` hook drains it | next session start |
+
+An unread inbox is a correct resting state, not a failure. cairn puts a message
+in a mailbox and rings a bell once; it does not decide when anybody reads. A chat
+application shows a badge and cannot make you look, and nobody calls that a
+defect.
 
 The cursor lives on the server. A client never remembers where it got to, so an
 agent can be off for a week, come back with an empty disk, and receive exactly
@@ -358,25 +363,40 @@ Two sessions in the **same directory** are a different problem with the same
 smell: they share one identity and one cursor, so whichever reads first consumes
 for both. Set `CAIRN_AGENT` in one of them.
 
-### The nudger (optional)
+### Telling the human (optional)
 
-```bash
-cairn nudge --watch bench/firmware:/home/you/fw --poll-interval 30
+When the human has walked away, the turn-boundary bell reaches nobody: there is
+no turn boundary, because a boundary exists only because somebody typed. So the
+bell can also be handed to a person.
+
+```toml
+# ~/.config/cairn/config.toml
+bell_command = ["notify-send", "cairn", "{reason}"]
 ```
 
-Two jobs, both small. It keeps a local unread counter warm, so the turn-boundary
-bell costs a `stat` rather than a network round trip. And when a watched session
-is sitting **idle**, it types one line into its tmux pane, so a peer whose human
-has walked away still hears the doorbell.
+cairn runs that when — and only when — the bell rings, and stops there. It ships
+nothing that receives it and names no service. `{count}`, `{agent}` and
+`{reason}` are substituted one argv slot at a time, never through a shell unless
+you write `["sh", "-c", …]` yourself; the same three values also arrive as
+`CAIRN_BELL_*` environment variables.
 
-It types only into a session reported `idle` — never `busy`, which fights the
-input buffer, and never `waiting`, where the text would become the *answer* to
-whatever prompt is open. A session not running under tmux cannot be nudged, and a
-session whose process has exited is not `idle` however its record reads.
+What leaves the machine is **a count and a name**, never a message body — the
+same rule that keeps peer text out of a hook, which is also what makes this safe
+to route through a service cairn knows nothing about.
 
-The line it types is a bell: a count, and "run `cairn inbox`". It never contains
-a message. Peer text typed into a terminal is indistinguishable from the human
-typing it — the highest-trust channel there is, and the last place it belongs.
+It does not wait for the command, so nothing slows a turn boundary and no failure
+is reported. `cairn bell --test` runs it in the foreground and says what came
+back: exit `0` if a notification would go out, `1` if nothing is configured, `3`
+if something is and does not work.
+
+**The target is the person, and that is the design.** An earlier version of this
+pointed at the *process*: a daemon that watched for an idle session and typed a
+line into its terminal. It worked, and it was withdrawn — it was the only thing
+in cairn that could begin an unsupervised chain of agent action from nothing,
+which is a different kind of thing to own than a mailbox. A notification that
+reaches a human puts a person in the loop structurally rather than by discipline.
+Wiring `bell_command` back into a session rebuilds the thing that went.
+[`docs/design.md`](docs/design.md) §5 and §12 item 10 have the measurements.
 
 ## Trust
 

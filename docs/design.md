@@ -1748,8 +1748,14 @@ framework-internal orchestration, not network protocols.
    had two talking sessions, which is exactly why the evidence is not there.
 9. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
    which is the honest answer rather than a gap to paper over.
-10. **A bell somebody can receive when they are not at the machine.** Not built, and
-    written down here because it is the successor to the withdrawn nudger rather than a
+10. **A bell somebody can receive when they are not at the machine.** **Done.**
+    `bell_command` in `config.toml` is an argv list that `cli.cmd_bell` runs when — and
+    only when — it rings. `cairn bell --test` runs it on demand and says what came back.
+    The design below was written before it was built and survived contact; what follows
+    it are the four decisions taken while building, each of which could have gone the
+    other way.
+
+    It is the successor to the withdrawn nudger rather than a
     new idea — §5 has why that went. The shape is one line of cairn: **run an
     operator-configured command when the bell rings**, and stop there. cairn ships
     nothing that receives it, names no service, and needs no pid, no multiplexer and no
@@ -1779,6 +1785,63 @@ framework-internal orchestration, not network protocols.
     a session is the nudger again, with a third party added to the path and worse latency.
     If cairn ever grows this, it emits and stops; what picks it up is not cairn's, and
     cairn should not ship it.
+
+    That hazard now lives in `notify.py`'s module docstring, which is where somebody
+    would be standing when they thought of building the bridge. Nothing here receives a
+    bell, no service is named, and no relay is offered as an option.
+
+    **An argv list, never a shell string.** The obvious form is a string run through a
+    shell, which is what every notification hook in the world looks like. It is not what
+    shipped. Values reach the command in two ways that do not involve parsing anything:
+    `{count}`, `{agent}` and `{reason}` are substituted **per argv slot**, so a value
+    lands inside one element and cannot change the shape of the command, and the same
+    three ride as `CAIRN_BELL_*` for a command that is a script rather than a line. A
+    shell is still available — `["sh", "-c", "…"]` — and is then a choice visible in the
+    config file rather than an implicit default, which also settles what happens on a
+    machine whose shell is `cmd.exe`. `terminal.py` already kept this rule for tmux and
+    the payoff is the same.
+
+    The substitution is three `str.replace` calls and **not** `str.format`, which has a
+    test. `["curl", "-d", '{"topic":"cairn"}']` is an ordinary thing to write and
+    `format` raises `KeyError` on it; `format` also reaches attributes, so
+    `{count.__class__.__mro__}` would be a template an operator did not know they had
+    written. Reaching for `format` is the obvious tidy-up and the test exists to refuse
+    it.
+
+    **It detaches and does not wait**, with `start_new_session=True` so a host that
+    tidies up after a hook by killing its process group does not kill a notification
+    still in flight. A bounded wait was the alternative and looked more careful; it is
+    worse in both directions. A turn boundary would pay the latency, and a phone
+    notification crossing a slow link would be killed at the deadline — which is
+    precisely the case this feature exists for. The argument that a wait buys diagnosis
+    does not survive contact with `cmd_bell`'s contract: a hook may not fail loudly, so
+    there is nowhere to report an error even after waiting for one.
+
+    **`stdout`, `stderr` and `stdin` all go to `DEVNULL`, and that is not hygiene.**
+    `cmd_bell`'s stdout *is* the hook payload the host parses. A notification tool that
+    prints one progress line would write it into cairn's response, and the host would
+    parse the pair. It has its own test.
+
+    **So the silence is paid for by `cairn bell --test`**, which is the one place this
+    feature is allowed to be loud. It waits, captures, and reports the argv, the exit
+    code and a few lines of stderr, and it exits `0` only when a notification would
+    actually go out — `1` when nothing is configured, `3` when something is and does not
+    work. Three codes because there are three states and an operator's script wants to
+    tell them apart. `config.bell_command` raises on a malformed value for the same
+    reason: a feature whose hook path is silent by construction must not also disable
+    itself quietly, and a config file that reads `bell_command = "notify-send cairn"` is
+    a plausible thing to write and would otherwise do nothing forever.
+
+    **What `--test` does not prove, and says so in its own output.** It runs the command
+    in the foreground with a terminal attached; the real path detaches with all three
+    streams closed. A command that needs a tty passes the test and does nothing when it
+    matters. The report carries that sentence rather than leaving it to this document,
+    because the person reading a green result is not reading this.
+
+    Nothing crosses the hub, so `PROTOCOL_VERSION` does not move, and **`SKILL.md` is
+    untouched** — this surface belongs to the operator and no agent's behaviour changes,
+    so no machine on the network needs a skill reinstall for this cut.
+
 11. **A way through a backlog that is not "raise the limit".** **Done.**
     `cairn inbox --since SEQ` shows only mail after that seq, marks nothing read, and
     refuses to be combined with `--wait`.

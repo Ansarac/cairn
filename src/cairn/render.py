@@ -65,6 +65,7 @@ from cairn.wire import now as wire_now
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from cairn.notify import Probe
     from cairn.wire import (
         Agent,
         Artifact,
@@ -405,6 +406,13 @@ def _inbox_empty(total: int, available: int, *, since: int | None, hub: str, ine
 
 FIND_ECHO_CHARS = 60
 """How much of a search term is echoed back in the header."""
+
+BELL_TEST_STDERR_LINES = 5
+"""How much of a failing bell command's stderr `bell_test_report` shows.
+
+Enough for the usual one-line complaint and a short traceback's first frames.
+The operator can run the command themselves for the rest; this is a check, not a
+log viewer."""
 
 
 def _echo(term: str) -> str:
@@ -877,6 +885,36 @@ def bell_reason(count: int) -> str:
     plural = "message" if count == 1 else "messages"
     pronoun = "it" if count == 1 else "them"
     return f"cairn: {count} unread {plural} from peer agents. Run `cairn inbox` to read {pronoun} — {CLAIM_CLAUSE}."
+
+
+def bell_test_report(probe: Probe, count: int) -> str:
+    """Say what `cairn bell --test` ran and what came back.
+
+    Every argv element goes through `oneline`. A config file is a third source of
+    values alongside argv and the wire, and column zero belongs to cairn whichever
+    of the three a newline arrived in — an operator who pasted a command out of a
+    web page has no idea there is one in it, and the forged line would be printed
+    by the one command they are running to find out whether things work.
+
+    The line saying this is not the real spawn mode is not a hedge. `notify.probe`
+    waits with a terminal attached and `notify.fire` detaches with all three
+    streams closed, so a green result here is evidence about the command and not
+    about the path. Somebody reading a passing test as proof the bell works is the
+    predictable mistake, so the report says it rather than the docs alone.
+    """
+    argv = " ".join(oneline(part) for part in probe.argv)
+    lines = [f"cairn: ran bell_command with a test count of {count}", f"  {argv}"]
+    if probe.returncode is None:
+        lines.append(f"  {probe.detail}")
+    elif probe.ok:
+        lines.append("  exited 0")
+    else:
+        lines.append(f"  exited {probe.returncode}")
+    if probe.returncode is not None and probe.detail:
+        lines.extend(f"  {oneline(line)}" for line in probe.detail.splitlines()[:BELL_TEST_STDERR_LINES])
+    lines.append("— this proves the command, not the spawn mode: the real bell detaches with stdin, stdout")
+    lines.append("  and stderr closed, so a command needing a terminal passes here and does nothing there")
+    return "\n".join(lines)
 
 
 def arrival_note(registration: Registration) -> str:

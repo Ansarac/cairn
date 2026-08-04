@@ -16,6 +16,12 @@ recovering the name recovers the backlog.
 Known limit, stated rather than papered over: two sessions in the *same*
 directory would share one identity. Set `CAIRN_AGENT` in one of them.
 
+**What to run when the bell rings** is configuration too, and file-only on
+purpose — no environment override. An env var would mean anything able to set
+one in a session's environment could choose a command cairn then runs at every
+turn boundary; a file under the operator's own config directory is a much
+smaller door for a setting nobody changes per invocation. See `bell_command`.
+
 **Which peers I have talked to** is also state, also keyed by working directory.
 A name is an address and re-registering one is how a restarted session recovers
 its mail, so nothing on the network distinguishes "the same session came back"
@@ -33,7 +39,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from cairn.errors import NameMoved, NotRegistered
+from cairn.errors import NameMoved, NotRegistered, UsageError
 
 DEFAULT_HUB = "http://127.0.0.1:7777"
 
@@ -69,6 +75,33 @@ def hub_url(override: str | None = None) -> str:
         return env
     from_file = _file_config().get("hub")
     return str(from_file) if isinstance(from_file, str) and from_file else DEFAULT_HUB
+
+
+def bell_command() -> list[str] | None:
+    """Return the command the operator wants run when the bell rings, if any.
+
+    Three answers, not two. `None` means the key is absent, which is the normal
+    case and says nothing is wrong. A list means it is usable. Anything else
+    **raises**, and that is the decision worth defending: this feature's hook
+    path is silent by construction — `notify.fire` detaches and `cli.cmd_bell`
+    may not fail loudly — so a config file that silently disabled itself would be
+    indistinguishable from a quiet week for as long as nobody looked. The
+    exception is a `CairnError`, so `cmd_bell` swallows it exactly as it swallows
+    everything else, and `cairn bell --test` is where an operator meets it.
+
+    An argv list rather than a shell string, and `notify.PLACEHOLDERS` has why.
+    """
+    value = _file_config().get("bell_command")
+    if value is None:
+        return None
+    if isinstance(value, list) and value and all(isinstance(part, str) for part in value):
+        return [str(part) for part in value]
+    shape = "an empty list" if value == [] else f"a {type(value).__name__}"
+    msg = (
+        f"bell_command in {config_path()} must be a non-empty list of strings, but it is {shape}. "
+        'A shell string is not accepted: write ["sh", "-c", "…"] if that is what you want.'
+    )
+    raise UsageError(msg)
 
 
 def _slug(path: Path) -> str:
@@ -182,7 +215,17 @@ def write_default_config(hub: str = DEFAULT_HUB) -> Path:
     path.write_text(
         "# cairn configuration.\n"
         "# Precedence: --hub flag, then $CAIRN_HUB, then this file, then the default.\n"
-        f'hub = "{hub}"\n',
+        f'hub = "{hub}"\n'
+        "\n"
+        "# Optional: a command to run when the bell rings, so a human who is not at\n"
+        "# this machine hears it. An argv list, never a shell string. It carries a\n"
+        "# count and a name and never a message body. Check it with `cairn bell --test`.\n"
+        '# bell_command = ["notify-send", "cairn", "{reason}"]\n'
+        "#\n"
+        "# Placeholders: {count} {agent} {reason}\n"
+        "# Also passed as: CAIRN_BELL_COUNT / CAIRN_BELL_AGENT / CAIRN_BELL_REASON\n"
+        "# A shell is available if you ask for one, and then it is visible here:\n"
+        '# bell_command = ["sh", "-c", "curl -sS -d \\"$CAIRN_BELL_REASON\\" https://example/…"]\n',
         encoding="utf-8",
     )
     return path
