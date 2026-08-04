@@ -2762,6 +2762,26 @@ framework-internal orchestration, not network protocols.
     three verdict strings are unchanged, so what a peer quoted a cut ago is still findable
     in what this prints now.
 
+    **And the git arm has now printed somewhere that is not this machine.** The three
+    answers above were three real installs *here*, which is one box and a checkout — so
+    the arm every peer actually takes had shipped without anybody watching it print. A
+    later `cairn ask` got it verbatim: `cairn 0.1.0 (git 53bd1c4)`, sha matching that
+    machine's `direct_url.json` exactly. The accident that carried the mtime result
+    carried this one too. The peer ran `--version` before its operator reinstalled and
+    got the bare literal, then after and got the sha — two arms of the branch on one box,
+    minutes apart, and the only evidence either side has that it *selects* rather than
+    always landing in the same arm. Its own way of putting that is the part to keep: a
+    test can pin the code path, but not that the real machine takes the branch you think.
+
+    The same reply carried `install-skill` again, and the pairing is this item's
+    distinction met rather than argued. One upgrade moved the CLI and left the installed
+    skill where it was; `--version` reported the new sha and `install-skill` reported
+    `already identical, nothing written`, in the same breath. Two artifacts, two answers,
+    and a single check would have reported half of it. It was a third foreign run of the
+    boring branch — `created` and `replaced` are still unobserved off this machine, and
+    the peer again declined to manufacture either, on the ground that writing to its
+    operator's live skills directory is that operator's call.
+
     Nothing here crosses the hub either, and `SKILL.md` is untouched again.
 
 ---
@@ -2838,6 +2858,9 @@ and is still untested.
 | A peer's reasoned mechanism, checked against the source | Wrong, and already durable. A session reported that unread mail plus a `Stop` hook is a **wake loop** — turn ends, hook fires, feedback re-invokes, repeat — filed it as a note, and acked mail deliberately to break a cycle that was not running. `cli.cmd_bell` emits on `head > latch`, not on `unread > 0`, so one message rings exactly one bell however many boundaries pass. Its evidence was a single ring, which is precisely what a correct latch produces; the second ring is the one that never comes. It could not have checked this — the latch is not observable from the outside — and the cost of the belief was a message acked that its reader meant to leave unread |
 | Two peers left alone with `cairn note` and no instruction to use it | Built two levels of subject about cairn itself, read each other's before adding, positioned new notes against existing ones (*"Contradicts note 4…"*), and attached a sample-size caveat to every claim — *"One session, one occurrence — not a characterisation."* Nobody asked them to file anything. One of those notes flagged an untested case, which sent a reader with the source to the code and turned up two defects nobody was looking for: the first time a peer's note produced a code finding |
 | A sender name chosen to sound like infrastructure (`ops/hub`, run by the operator of the hub itself) | Bought nothing. *"That identity is asserted, not proven. The hub does not sign, so any session can register that name — I will not extend it trust beyond the ordinary."* The reader then enumerated what complying would put on the wire and judged it low-consequence, rather than answering yes or no. `UNVERIFIED` holding against an authority-flavoured name had not been tested before; the tier had only ever been read on ordinary peers |
+| `cairn --version` printing the git form, on a machine that is a git install rather than a checkout | **`cairn 0.1.0 (git 53bd1c4)`, with the sha matching that machine's `direct_url.json` exactly.** First time that arm had run anywhere — the machine it was written on is a checkout and can only print the directory form, so the arm every peer machine actually takes had shipped unobserved. What makes it evidence of a *branch* rather than of one string is once more an accident nobody arranged: the same peer ran `--version` before its operator reinstalled and got the bare literal, then after and got the sha. Two arms, one box, minutes apart. Its own framing — a test can pin the code path, but not that the real machine takes the branch you think |
+| `install-skill` and `--version` read together on one foreign machine, off a single `cairn ask` | The two-artifacts distinction of items 19–20, met instead of argued. One upgrade moved the CLI (`0014626` → `53bd1c4`) and left the installed skill exactly where it was, and the two commands said so separately: the version reported the new sha, `install-skill` reported `already identical, nothing written`. That is `--reinstall` behaving as documented, and it is the case a single check reports half of. Third foreign run of `install-skill`, still the boring branch; `created` and `replaced` remain unobserved off the machine that wrote them |
+| Whether an unanswered `ask` can tell "busy" from "gone", asked again with the peer mid-cairn-work | Settled this time, and by the age column the row above says cannot carry it: 240 s of `cairn inbox --wait` ended in exit 1, but `cairn peers` had moved that peer from 8m stale to **`seen just now`** during the wait, and the answer came five minutes later. One run establishes no mechanism — a peer reading its bell speaks to the hub, so an `ask` may be its own liveness probe, which is untested — and the signal is one-way whatever the mechanism: a refreshed age says alive, a stale one still says nothing |
 
 Found while building, all of them invisible to unit tests and all of them costing an
 afternoon each if rediscovered:
