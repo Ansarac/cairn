@@ -464,10 +464,13 @@ question before the reply arrived, which is an ordering claim, and then had to
 supersede its own note. If you are about to say something about order or timing,
 the verdict is not what backs it.
 
-A reading whose verdicts are not all the same says so at the top and names the
-weaker rows by seq. Use that line: it is there because a session read this page,
-could quote the line back afterwards, and still summarised every row as if they
-were alike.
+**A page whose rows do not all agree will not give you one number for them.**
+The count line reads `3 verified + 3 unverified` rather than `6 messages`, so if
+you are about to write down how many things you sent, you have to write down how
+many of which. That is deliberate and it is not decoration: two sessions read a
+page like this, quoted its warning back afterwards without re-running the
+command, and still wrote "6 messages" into a handover that treated every row as
+alike. The number they copied was this line, so this line stopped offering it.
 
 Worth a moment either way, because your own past words read as memory rather than
 as testimony, and get weighed less carefully as a result.

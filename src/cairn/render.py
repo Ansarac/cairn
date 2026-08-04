@@ -118,19 +118,16 @@ cannot reach. It found the error itself when asked and named the cause:
     maximally far from the rows whose sequence I was about to quote. Nothing
     appears at the point of use.
 
-So it moved up beside the banner, and it moved rather than being copied: tier 3
-is one explanation per reading, and `assess_sent`'s detail was trimmed in the
-same change so this is still said exactly once — four lines from the rows
-instead of twenty.
+So it moved up under the count line, and it moved rather than being copied: tier
+3 is one explanation per reading, and `assess_sent`'s detail was trimmed in the
+same change so this is still said exactly once — two lines from the rows instead
+of twenty.
+
+It rides only a page whose verdicts differ. A clause printed on every reading is
+a clause read on none, which is the whole of item 18's argument turned on this
+file's own output.
 """
 
-_NAMED_SEQS = 6
-"""How many weaker seqs the banner lists before it starts counting instead.
-
-Six because the banner has to stay one line to stay read, and a page whose
-unsigned rows outnumber that is one where the count is the story anyway. What is
-not optional is saying how many were left out; see `_weaker_seqs`.
-"""
 RECORD_CLAUSE = (
     "not every row here is signed, so this is the hub's account of what you sent rather than proof you sent it"
 )
@@ -272,77 +269,67 @@ def _provenance_notes(provenances: Iterable[Provenance]) -> list[str]:
     return list(notes)
 
 
-def _verdict_change(entries: Sequence[SentEntry]) -> list[str]:
-    """Say, at the top, that this page's verdicts are not the ones they always were.
+def _split(entries: Sequence[SentEntry]) -> dict[str, int]:
+    """Tally the page's verdicts, or return empty when they are all the same.
 
-    This is the constraint docs/design.md §12 item 18 left on the signing cut,
-    and it is here rather than in a footnote because of what it is defending
-    against. Three independent sessions reported the per-message verdict as
-    having stopped carrying information, and the third one said what that costs
-    later rather than now: *"a constant trains you to skip it. If the hub ever
-    does start signing and a `VERIFIED` shows up, the people most fluent in this
-    tool are the ones least likely to notice the change, because they've already
-    filed that line under furniture."*
-
-    So the reader this is written for is the one who will not read it. That
-    decides two things.
-
-    **It fires on any page that is not uniformly `UNVERIFIED`** — mixed *or*
-    entirely verified. Item 18's wording says "a mixed reading", and this is
-    deliberately broader: an all-verified page is the largest change this surface
-    has ever undergone, and it is the page on which every line looks reassuring
-    and nothing announces that the meaning of the line moved.
-
-    **It is a head line, not a footnote.** Item 18 noted in passing that the
-    count line is what `head` keeps and the footer is what it cuts. The skill
-    tells readers never to pipe `cairn inbox` through `head`, which is evidence
-    that they do, and the same reader on the same day is the audience here.
-
-    It does not replace the per-row verdict. That is I1 tier 1, `test_render.py`
-    calls moving it into the footnote *"the cheap mistake"*, and adding a summary
-    that makes the rows look redundant is the same mistake with a friendlier
-    face — which is why this counts the rows rather than standing in for them.
+    Empty means "nothing here differs from what this surface has always
+    printed", which is what `sent_text` reads it as. An all-`UNVERIFIED` page is
+    every page from every build before signing landed and needs no comment.
     """
     tally: dict[str, int] = {}
     for entry in entries:
         token = entry.provenance.token()
         tally[token] = tally.get(token, 0) + 1
-    if not tally or list(tally) == ["UNVERIFIED"]:
-        return []
-    spread = ", ".join(f"{n} {token}" for token, n in tally.items())
-    lead = "these are not all the same" if len(tally) > 1 else "this is not the verdict this surface used to print"
-    return [f"  ⚠ {lead}: {spread}{_weaker_seqs(entries)}", f"    {COVERAGE_CLAUSE}", ""]
+    return {} if list(tally) == ["UNVERIFIED"] else tally
 
 
-def _weaker_seqs(entries: Sequence[SentEntry]) -> str:
-    """Name the rows a reader may claim least about, rather than only counting them.
+def _sent_count(entries: Sequence[SentEntry]) -> str:
+    """Return the page's size — refusing to fuse it into one number when the rows differ.
 
-    The tally says *three of these are unsigned*. It does not say **which**, and
-    an acceptance reader said what that costs:
+    **This replaces a warning banner that was measured twice and moved nothing.**
+    Two fresh sessions read a mixed page, one of them with the weaker rows named
+    by seq and the limit on the line below, and both wrote handovers treating
+    every row as one uniform block. The second could quote the banner back
+    afterwards without re-running the command, and said where it went:
 
-        the warning tells you 3 and 3 but not which three — you have to scan
-        rows to learn that the unsigned ones were the substance.
+        the warning was built to survive a row-by-row read; I did a whole-page
+        read and summarised, and the summary is where the metadata died.
 
-    They were the substance, on that page: the failure report, the question and
-    the workaround were the unsigned three, and the reader summarised all six as
-    one uniform block.
+    That rules out a class of fix rather than one wording. Anything *added* to
+    the page is another input to the summary, and summarising is the operation
+    that discards annotation. So this removes instead: both readers wrote **"6
+    messages"**, which was not an inference but a copy of this line, and a page
+    whose rows are not alike no longer offers the fused form to copy.
 
-    **Enumerated, never a range.** `seq 1-3` is shorter and is the exact move
-    that reader was caught making — *"collapsing an enumeration into a range is
-    an assertion of uniformity, and I did it over rows the output had told me
-    four lines earlier were not uniform."* This line exists to deny that
-    assertion, so it must not make it in its own words.
+    `3 verified + 3 unverified` hides nothing and reorders nothing — the log
+    stays chronological, because a reader reconstructing an exchange needs order
+    more than grouping. It just cannot be quoted without saying which kind.
 
-    Long pages get a cap, and the cap says what it dropped. A page about how much
-    can be trusted is the last place to truncate quietly; `_truncation` in this
-    file sets the same house style for the same reason.
+    Structural rather than disciplinary, which is the choice this repository
+    makes in five other places (`wire.py` on the missing `verified` field,
+    `notify.py` on the human in the loop, §12 items 3 and 10). A banner asks the
+    reader to carry something. This one leaves nothing to carry it *from*.
     """
-    weaker = [e.message.seq for e in entries if not e.provenance.verified]
-    if not weaker:
-        return ""
-    named = ", ".join(str(seq) for seq in weaker[:_NAMED_SEQS])
-    rest = len(weaker) - _NAMED_SEQS
-    return f" — seq {named}" + (f" and {rest} more" if rest > 0 else "")
+    total = len(entries)
+    tally = _split(entries)
+    if not tally:
+        return f"{total} message{'' if total == 1 else 's'}"
+    verified = sum(n for token, n in tally.items() if token.startswith("verified("))
+    return " + ".join(part for part in (f"{verified} verified" if verified else "", _unverified_part(tally)) if part)
+
+
+def _unverified_part(tally: dict[str, int]) -> str:
+    """Name the weaker rows by their own verdict, never folded into one word.
+
+    `MISMATCH` and `UNVERIFIED` are different findings — one is a check that
+    failed, the other is no check at all — and a count line that called both
+    "unverified" would undo the distinction `Provenance.mismatch` exists to
+    draw, in the one place on the page a reader is most likely to quote.
+    """
+    weaker = {verdict: n for verdict, n in tally.items() if not verdict.startswith("verified(")}
+    return " + ".join(
+        f"{n} {'unverified' if verdict == 'UNVERIFIED' else verdict.lower()}" for verdict, n in weaker.items()
+    )
 
 
 def oneline(text: str) -> str:
@@ -854,9 +841,9 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
     """
     if not entries:
         return f"cairn sent: nothing sent from here yet{_asked(hub)}.\n"
-    count = f"{len(entries)} message{'' if len(entries) == 1 else 's'}"
-    lines = [f"cairn sent · {count} · {SENT_CLAUSE}", ""]
-    lines.extend(_verdict_change(entries))
+    lines = [f"cairn sent · {_sent_count(entries)} · {SENT_CLAUSE}"]
+    lines.extend(["", f"  {COVERAGE_CLAUSE}"] if _split(entries) else [])
+    lines.append("")
     lines.extend(_truncation(len(entries), total))
     for entry in entries:
         message = entry.message

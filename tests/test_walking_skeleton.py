@@ -1137,7 +1137,14 @@ def test_a_send_signed_here_reads_back_verified_and_an_older_one_does_not(hub, t
     assert len(rows) == 2, "the two sends did not both come back"
     assert sum(f"verified({signing.METHOD})" in row for row in rows) == 1, "the signed send did not verify end to end"
     assert sum("UNVERIFIED" in row for row in rows) == 1, "the older send did not read as unsigned"
-    assert "⚠" in page.splitlines()[2], "a genuinely mixed page did not announce itself above the rows"
+    # The claim is unchanged from when a banner carried it — a genuinely mixed page
+    # has to say so above the rows — and only the mechanism moved. Two blind readings
+    # copied the old header's `N messages` into a handover that treated every row as
+    # alike, so the fused total is gone rather than annotated. See docs/design.md's
+    # appendix rows on the two readings.
+    header = page.splitlines()[0]
+    assert "1 verified + 1 unverified" in header, "a genuinely mixed page still offered one number for all of it"
+    assert "2 messages" not in header
 
 
 def test_a_hub_that_predates_the_sent_log_says_so_as_a_refusal_not_an_outage(hub, hub_server, tmp_path, monkeypatch):

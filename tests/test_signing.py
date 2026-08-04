@@ -222,84 +222,72 @@ _VERIFIED = Provenance(verified=True, method=signing.METHOD, detail="covers the 
 _MISMATCH = Provenance.mismatch(signing.METHOD, "this directory's key does not reproduce it")
 
 
-def test_a_page_that_is_all_unverified_says_nothing_new():
-    """Silence on the case that has always been the case. A warning on every page is furniture again."""
-    assert "⚠" not in _page(_UNSIGNED, _UNSIGNED)
+def test_a_page_that_is_all_unverified_still_counts_the_ordinary_way():
+    """Silence on the case that has always been the case, and it is now silence by shape.
 
-
-def test_a_mixed_page_announces_itself_before_the_first_row():
-    """The constraint docs/design.md §12 item 18 left on this cut.
-
-    Above the rows, not in the footer: item 18 noted the count line is what
-    `head` keeps and the footer is what it cuts, and `SKILL.md` telling readers
-    not to pipe through `head` is evidence that they do.
+    Every page from every build before signing landed looks like this. A header
+    that split them anyway would be the furniture item 18 warns about, arriving
+    by a different door.
     """
-    lines = _page(_UNSIGNED, _VERIFIED, _MISMATCH).splitlines()
-    warning = next(i for i, line in enumerate(lines) if "⚠" in line)
-    first_row = next(i for i, line in enumerate(lines) if line.startswith("seq "))
-
-    assert warning < first_row
-    assert "1 UNVERIFIED" in lines[warning]
-    assert f"1 verified({signing.METHOD})" in lines[warning]
-    assert "1 MISMATCH" in lines[warning]
+    assert "2 messages" in _page(_UNSIGNED, _UNSIGNED)
 
 
-def test_an_all_verified_page_announces_itself_too():
-    """Broader than item 18's literal wording, and deliberately.
+def test_a_mixed_page_refuses_to_offer_one_number():
+    """The whole of this arm, and it is a removal rather than an addition.
 
-    The risk it recorded is a reader missing the *change*: *"the people most
-    fluent in this tool are the ones least likely to notice"*. An all-verified
-    page is the largest change this surface has ever undergone and the one where
-    every line looks reassuring.
+    Two blind readings wrote `6 messages` into a handover that treated six rows
+    as alike. That was not an inference — it is this line, copied. A warning
+    beside it was measured twice and moved nothing, because *"the summary is
+    where the metadata died"* and a summary's inputs are exactly what a warning
+    adds to. So the fused number is gone: a reader that wants to say how many
+    has to say how many of which.
     """
-    assert "⚠" in _page(_VERIFIED, _VERIFIED)
+    header = _page(_UNSIGNED, _UNSIGNED, _UNSIGNED, _VERIFIED, _VERIFIED, _VERIFIED).splitlines()[0]
+
+    assert "3 verified + 3 unverified" in header
+    assert "6 message" not in header, "the fused total is the thing both readers copied"
 
 
-def test_the_warning_names_which_rows_are_weaker_not_just_how_many():
-    """A count tells a reader to go and scan. The acceptance run measured what that costs.
+def test_the_header_does_not_fold_a_mismatch_into_the_word_unverified():
+    """Different findings, and the count line is the most-quoted place to lose one.
 
-    The first blind reading quoted the warning back verbatim and still summarised
-    six rows as one uniform block, because *"the warning tells you 3 and 3 but not
-    which three — you have to scan rows to learn that the unsigned ones were the
-    substance"*. They were: on that page the failure report, the question and the
-    workaround were the unsigned three.
+    A check that failed and no check at all share a page but not a meaning.
+    `Provenance.mismatch` exists to keep them apart; a header calling both
+    "unverified" would undo that where a reader is most likely to copy it.
     """
-    warning = next(line for line in _page(_UNSIGNED, _UNSIGNED, _VERIFIED).splitlines() if "⚠" in line)
+    header = _page(_UNSIGNED, _MISMATCH, _VERIFIED).splitlines()[0]
 
-    assert warning.endswith("seq 1, 2"), "the list is the rows a reader may claim least about, and only those"
+    assert "1 verified" in header
+    assert "1 unverified" in header
+    assert "1 mismatch" in header
 
 
-def test_the_warning_enumerates_and_never_collapses_to_a_range():
-    """`seq 1-3` is shorter and is the exact error this line exists to deny.
+def test_an_all_verified_page_says_so_rather_than_counting_messages():
+    """Broader than item 18's literal "a mixed reading", and deliberately.
 
-    The acceptance reader named it against itself: *"collapsing an enumeration
-    into a range is an assertion of uniformity, and I did it over rows the output
-    had told me four lines earlier were not uniform."* A line whose job is to
-    refuse that assertion must not make it in its own words.
+    The risk it recorded is a reader missing the *change*. An all-verified page
+    is the largest change this surface has ever undergone and the one where every
+    line looks reassuring, so it does not get to render as an ordinary count.
     """
-    warning = next(line for line in _page(_UNSIGNED, _UNSIGNED, _UNSIGNED, _VERIFIED).splitlines() if "⚠" in line)
+    header = _page(_VERIFIED, _VERIFIED).splitlines()[0]
 
-    assert "seq 1, 2, 3" in warning
-    assert "1-3" not in warning
-    assert "1\u20133" not in warning, "an en dash is still a range"
-
-
-def test_a_long_page_caps_the_list_and_says_what_it_dropped():
-    """Silent truncation, on the page about how much can be trusted, of all places."""
-    warning = next(line for line in _page(*([_UNSIGNED] * 10), _VERIFIED).splitlines() if "⚠" in line)
-
-    assert "seq 1, 2, 3, 4, 5, 6 and 4 more" in warning
+    assert "2 verified" in header
+    assert "2 messages" not in header
 
 
-def test_the_coverage_limit_is_beside_the_warning_and_said_once():
-    """Fix 3: the footer was maximally far from the rows whose sequence was being quoted."""
+def test_the_coverage_limit_sits_under_the_header_and_is_said_once():
+    """Above the rows whose sequence it qualifies, not in the footer twenty lines away."""
     lines = _page(_UNSIGNED, _VERIFIED).splitlines()
-    warning = next(i for i, line in enumerate(lines) if "⚠" in line)
-    first_row = next(i for i, line in enumerate(lines) if line.startswith("seq "))
     coverage = next(i for i, line in enumerate(lines) if "never the sequence or the time" in line)
+    first_row = next(i for i, line in enumerate(lines) if line.startswith("seq "))
 
-    assert warning < coverage < first_row, "the limit is not between the warning and the rows it qualifies"
+    assert coverage < first_row
     assert "\n".join(lines).count("never the sequence or the time") == 1
+
+
+def test_a_uniform_page_does_not_carry_the_coverage_limit():
+    """It qualifies a verdict that is not on this page. A clause printed always is read never."""
+    assert "never the sequence or the time" not in _page(_UNSIGNED, _UNSIGNED)
 
 
 def test_the_summary_does_not_replace_the_per_row_verdict():
