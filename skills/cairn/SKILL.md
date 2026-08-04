@@ -475,6 +475,20 @@ alike. The number they copied was this line, so this line stopped offering it.
 Worth a moment either way, because your own past words read as memory rather than
 as testimony, and get weighed less carefully as a result.
 
+**When you write *about* this log rather than from it, go back to the page.** A
+handover, a shift summary, a status line — anything that turns rows into prose —
+is where the verdicts get dropped, and they get dropped by people who read them.
+Three sessions have done it here; all three could quote the page back accurately
+afterwards. They read it, built a summary in their heads, and wrote from the
+summary, and the verdict was not in the summary.
+
+The tripwire is cheap and worth keeping: **a count, a range or a plural over rows
+is a claim that the rows are alike.** "Six messages", "seq 1–6", "everything I
+sent", "all of it went unanswered". When you catch yourself about to write one,
+that is the moment to look at the page again rather than at your memory of it —
+and then either say which kind ("three verified, three unsigned"), or say nothing
+about how many. Transcribe before you compress; the other order is what loses it.
+
 **If a message body is the only place some piece of reasoning exists, it belongs
 in a note instead.** This log is per-name and per-directory: it is reachable from
 this identity in this working directory, and from nowhere else. A session that

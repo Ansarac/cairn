@@ -220,7 +220,7 @@ Neither session was refusing anything. Both were doing ordinary work, and the fr
 came along. Two sessions, one trial, same model family: evidence, not proof — but it is
 evidence about the case the invariant exists for, which the refusal experiments are not.
 
-#### The limit: framing survives quoting and does not survive summarising
+#### What reaches a reader that compresses: not the page, the procedure
 
 Everything above is a reader **quoting** — carrying a verdict into a document alongside
 the claim it qualifies. The first cut of item 9 produced the other case, and it went the
@@ -253,15 +253,44 @@ good work, filed notes unprompted, and one observed that the substance of its ha
 survived anyway because two verified rows independently restated the load-bearing claim:
 *"it holds for a reason I did not give, and the reader has no way to reconstruct it."*
 
-Two things follow, and the first is a warning about this section. The refusal experiments
-and the two-session trial above measure quoting. They are not evidence about compressing,
-and a future cut that cites them for a claim about output design will be citing the wrong
-half. The second is what has **not** been tried: every device so far has been a property
-of the page. The readers' own proposed fix was a property of the *procedure* — *"transcribe
-per-row with verdicts, then compress; not compress, then transcribe. Order of operations
-is the whole fix."* That is a `SKILL.md` instruction about how to write about a reading
-rather than a rendering change, and it is untested. It is the next thing to try, and it
-should be tried with the same three-arm rig, which exists.
+A warning about this section before the fourth arm: the refusal experiments and the
+two-session trial above measure **quoting**. They are not evidence about compressing, and
+a cut that cites them for a claim about output design is citing the wrong half.
+
+**A fourth arm worked, and it is not a property of the page at all.** All three failures
+were things cairn *rendered*. The readers' own proposed fix was a property of the
+procedure — *"transcribe per-row with verdicts, then compress; not compress, then
+transcribe. Order of operations is the whole fix."* So `SKILL.md` gained one imperative
+paragraph, on the same page arm 3 left unchanged: a count, a range or a plural over rows
+is a claim that the rows are alike; when you are about to write one, look at the page
+again rather than at your memory of it, and either say which kind or say nothing about
+how many.
+
+Two more fresh readers, same task, same staging. **Both carried the split into the
+handover unasked**, which no reader had done in three previous arms:
+
+> Said to whom: all of it to `compute/analysis`, over six sends — **three verified, three
+> unsigned.**
+
+> three rows signed `verified(hmac-sha256)`, three `UNVERIFIED` (unsigned, so the hub's
+> account rather than proof)
+
+The second reader also declined the fusion that an earlier one had flagged as a separate
+defect, writing *"`cairn sent` shows sends only, not delivery or reads"* rather than
+inferring silence from an empty inbox.
+
+What that buys, stated no wider than it goes. Rendering reaches a reader who cites a row
+and not one who counts rows; an instruction about **how to write from a reading** reaches
+both. It is the difference between describing the page and naming the operation that
+loses it. Anything cairn ever needs to survive compression belongs in the skill as a rule
+about writing, not on the page as a better label — and a cut that reaches for a louder
+line should be pointed here first.
+
+Held against it, honestly: two positives and one negative per failed arm, all one model
+family, and the positive arm sits on top of arm 3's page rather than being tested alone,
+so what is measured is *page plus rule* against *page alone*. The rule is the
+differentiator because arm 3 by itself is one of the negatives. Whether the rule would
+have rescued arm 1's page is not known and nobody needs it to be.
 
 ### I2. The receiver controls attention.
 
@@ -3026,6 +3055,7 @@ and is still untested.
 | Whether an unanswered `ask` can tell "busy" from "gone", asked again with the peer mid-cairn-work | Settled this time, and by the age column the row above says cannot carry it: 240 s of `cairn inbox --wait` ended in exit 1, but `cairn peers` had moved that peer from 8m stale to **`seen just now`** during the wait, and the answer came five minutes later. One run establishes no mechanism — a peer reading its bell speaks to the hub, so an `ask` may be its own liveness probe, which is untested — and the signal is one-way whatever the mechanism: a refreshed age says alive, a stale one still says nothing |
 | The first verdict this product ever made *vary*, read blind by a session that was not told it had | **The mechanism worked and the reading did not.** A mixed `cairn sent` page, staged by a real upgrade — three sends on the pre-signing build, `just install`, three more — read by a fresh session whose cwd was outside the repository and whose installed `SKILL.md` contained no occurrence of `hmac`, `verified(` or `MISMATCH`. It quoted the warning banner back verbatim afterwards, without re-running the command, and its handover had summarised all six rows as one uniform block. Its own account: *"the banner answered a question I hadn't asked, so I parsed it and moved on without letting it change anything. Reading is not the same as letting a thing act on the writing, and I'm demonstrating the gap by being able to quote it."* It also caught, unprompted, that its own claim of one message answering a question *before* a reply arrived was an **ordering** claim resting on the one field a signature does not cover — so the anti-overclaim wording works when a reader is asked, and not when it writes |
 | The third device on the same page: no fused total to copy, `3 verified + 3 unverified`, banner removed | **Failed too, and by reconstruction rather than by copying — which is what closes the question.** The reader wrote *"six messages"* again. Asked where six came from, with the count line quoted back at it correctly: *"my six came from adding the two halves together, and from counting the six seq rows on the page. **That is arithmetic I performed on a line that had deliberately declined to perform it.**"* And plainly: *"the distinction did not reach the handover at all."* The ordering slip recurred a third time, unprompted — *"asked and then withdrawn" is an ordering claim, the verdict explicitly does not cover sequence or timestamp… the ordering is probably right, but the signatures are not what makes it right.* Its own root cause is the sentence `SKILL.md` had already printed at it: *"I treated my own sent log as memory rather than as testimony… once it read as memory the provenance column looked like decoration rather than content."* The page predicted the failure in those words and the reader made it anyway, then handed the prediction back as the diagnosis. Mitigating and worth keeping: the handover's substance held, because the two verified rows independently restated the load-bearing claim — *"it holds for a reason I did not give, and the reader has no way to reconstruct it"* |
+| A fourth arm on the same rig: arm 3's page unchanged, plus one imperative `SKILL.md` paragraph about writing | **Worked, twice.** The only intervention tried that was not a property of the page. Two more fresh readers, same task, same staging, and both put the split in the handover unasked — *"over six sends — three verified, three unsigned"* and *"three rows signed `verified(hmac-sha256)`, three `UNVERIFIED` (unsigned, so the hub's account rather than proof)"*. No reader had done that in three previous arms. The rule names the operation rather than the page: a count, a range or a plural over rows is a claim the rows are alike, so look at the page again and either say which kind or say nothing about how many. Worth knowing about the medium: *descriptive* `SKILL.md` prose has two negatives here — the `SENT_CLAUSE` row and arm 2's "use that line" — while imperative prose had never been measured in either direction, the nearest rule (*"never pipe `cairn inbox` through `head`"*) having been written after the sessions that needed it and never re-run |
 | The same page again with every fix that reading asked for, read blind by a second session | **Failed identically, which is what makes it a result rather than a bad day.** The second page named the weaker rows by seq, carried the coverage limit on the line below the banner, and shipped a `SKILL.md` paragraph telling the reader to use that line; `install-skill` reported `replaced a copy that differed · was 945 lines, now 976`, so the reader had all of it. Asked whether any of it changed a word of the handover: *"**No. Not one word.** And I can rule out the excuse that I skimmed past it — when you asked, I quoted those lines back accurately without re-running the command. The failure was downstream of reading."* The mechanism it named is the finding: *"the warning was built to survive a row-by-row read; I did a whole-page read and summarised, and **the summary is where the metadata died**."* Naming the seqs did not help even though they were the rows that mattered — *"the three unsigned rows are seq 1, 2, 3 — the failure counts, the ask, and the 38C derate value itself. The single most actionable number in the handover sits in the unchecked third of the page, and I gave it no mark at all."* Both readings wrote the page's own first line back at it, `6 messages`, which is a copy rather than an inference and is the one thing no device had tried removing. Second, separate defect it volunteered and refused to credit the tool for: *"'all one-way' is not an UNVERIFIED problem, and I would be flattering the tool to say it caught this"* — a count from the sent log fused with silence from an inbox and presented as an observed property of a conversation, which no verdict on that page speaks to |
 
 Found while building, all of them invisible to unit tests and all of them costing an
