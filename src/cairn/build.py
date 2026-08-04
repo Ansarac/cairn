@@ -1,11 +1,18 @@
 """Which build this is, derived from the artifact rather than declared.
 
-`__version__` has read `0.1.0` since the first commit and through every cut
-since, because the version names the *package* and nothing bumps it between
-releases. The question anybody actually asks — "is that machine running the code
-I think it is?" — has therefore had no answer at all, and `docs/design.md` §12
-item 19 concluded that the `install-skill` report was the closest thing to a
-build check that existed.
+`__version__` names the *package* and moves only when a release is cut, which
+until `v0.2.0` had never happened: it read `0.1.0` from the first commit through
+twenty-seven merges and twenty-one cuts. The question anybody actually asks — "is
+that machine running the code I think it is?" — therefore had no answer at all,
+and `docs/design.md` §12 item 19 concluded that the `install-skill` report was the
+closest thing to a build check that existed.
+
+**Releases did not change that, and the version line is more misleading now than
+it was when it was a constant.** Every peer machine installs from a git URL with
+no tag in it, so its `__version__` is whatever the last release declared while its
+code is whatever `main` said the morning it reinstalled. A reader who sees
+`cairn 0.2.0` and stops there has read the one field on the line that cannot go
+out of date, because it is not tracking anything. The parenthesis is the answer.
 
 It was not. **The installer already wrote down which build it installed.** A
 modern pip or uv drops `direct_url.json` beside the package metadata, recording

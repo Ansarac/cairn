@@ -226,6 +226,14 @@ go on reading the previous skill silently and for as long as nobody checks. A
 copy was found 129 lines behind that way, on a machine whose own handoff said it
 had been refreshed — `docs/design.md` §12 item 16.
 
+**Releases name the thing you are asking somebody to move to; they are not what
+gets installed.** There are tagged releases from `v0.2.0` on, and *"upgrade to
+v0.2.0"* is a far better thing to say to somebody than *"reinstall from main"* —
+but the command above resolves `main`, not the tag, so what actually lands is
+whatever `main` is at that moment. That is deliberate: pinning would mean every
+machine sits still until somebody cuts a release, on a two-machine tool where the
+fix you need is often an hour old. Say the release, expect the sha.
+
 `install-skill` says which of three cases it hit, so running it is also the
 check on whether it was ever run here:
 
@@ -260,15 +268,17 @@ cairn --version
 ```
 
 ```
-cairn 0.1.0 (git 0014626)
+cairn 0.2.0 (git 1a2b3c4)
 ```
 
-The version literal has not moved since the first commit — it names the package —
-so what matters is the part in brackets, which is read back out of what the
-installer recorded. A git install names its commit, a local checkout names its
-directory (`0.1.0 (/home/you/dev/cairn, editable)`, because a working tree is
-whatever it is right now), and anything installed by a tool that records nothing
-prints the bare literal.
+**The version literal is the part that cannot tell you anything.** It names the
+package and moves only when a release is cut, and no machine here installs a
+release — the command above tracks `main`. A box that reinstalled this morning and
+one that reinstalled a month ago both say `0.2.0`. What separates them is the part
+in brackets, read back out of what the installer recorded: a git install names its
+commit, a local checkout names its directory (`0.2.0 (/home/you/dev/cairn,
+editable)`, because a working tree is whatever it is right now), and anything
+installed by a tool that records nothing prints the bare literal.
 
 **This and `install-skill` answer different questions, and you need both.**
 `--version` says which build the *CLI* is. It says nothing about whether the
