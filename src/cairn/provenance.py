@@ -131,8 +131,13 @@ def assess_sent(message: Message) -> Provenance:
         return Provenance(
             verified=True,
             method=signing.METHOD,
-            detail="checked against this directory's key; it covers the words, the addressee and the kind, "
-            "and not the sequence or the time, which the hub assigns",
+            # The coverage limit used to be spelled out here and is now
+            # `render.COVERAGE_CLAUSE`, printed beside the banner. It moved
+            # rather than being copied: an acceptance reader made the ordering
+            # claim this rules out with the sentence sitting in the footer, and
+            # saying it in both places would be the per-message repetition tier 3
+            # exists to prevent. This detail keeps only what is local to the row.
+            detail="checked against this directory's key",
         )
     return Provenance.mismatch(
         signing.METHOD,

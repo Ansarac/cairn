@@ -161,12 +161,23 @@ def test_a_send_this_directory_made_reads_back_verified(tmp_path, monkeypatch):
 
 
 def test_a_pass_still_says_what_it_did_not_check(tmp_path, monkeypatch):
-    """A verdict with its qualification dropped is the overclaim this surface exists to avoid."""
-    monkeypatch.chdir(tmp_path)
-    verdict = provenance.assess_sent(_signed(_draft()))
+    """A verdict with its qualification dropped is the overclaim this surface exists to avoid.
 
-    assert "not the sequence or the time" in verdict.detail
-    assert verdict.detail in verdict.label(), "the footnote printed the verdict without its limit"
+    Asserted against the **rendered page** rather than against `detail`, and the
+    move is the point. This first pinned the sentence to one field, and when the
+    acceptance run showed the footer was too far from the rows to stop an
+    ordering claim, the sentence moved to the banner and this went red — a test
+    reporting a relocation as a regression. What has to hold is that a reader
+    sees the limit somewhere on the page they are reading, not that a particular
+    string sits in a particular slot, so it now pins the guarantee where the
+    reader meets it and any future move stays free.
+    """
+    monkeypatch.chdir(tmp_path)
+    signed = _signed(_draft(seq=1))
+    page = render.sent_text([SentEntry(message=signed, provenance=provenance.assess_sent(signed))], 1)
+
+    assert "never the sequence or the time" in page, "the page printed a pass without its limit"
+    assert page.count("never the sequence or the time") == 1, "said twice; tier 3 is once per reading"
 
 
 def test_the_inbox_and_notes_verdicts_did_not_move(tmp_path, monkeypatch):
@@ -242,6 +253,53 @@ def test_an_all_verified_page_announces_itself_too():
     every line looks reassuring.
     """
     assert "⚠" in _page(_VERIFIED, _VERIFIED)
+
+
+def test_the_warning_names_which_rows_are_weaker_not_just_how_many():
+    """A count tells a reader to go and scan. The acceptance run measured what that costs.
+
+    The first blind reading quoted the warning back verbatim and still summarised
+    six rows as one uniform block, because *"the warning tells you 3 and 3 but not
+    which three — you have to scan rows to learn that the unsigned ones were the
+    substance"*. They were: on that page the failure report, the question and the
+    workaround were the unsigned three.
+    """
+    warning = next(line for line in _page(_UNSIGNED, _UNSIGNED, _VERIFIED).splitlines() if "⚠" in line)
+
+    assert warning.endswith("seq 1, 2"), "the list is the rows a reader may claim least about, and only those"
+
+
+def test_the_warning_enumerates_and_never_collapses_to_a_range():
+    """`seq 1-3` is shorter and is the exact error this line exists to deny.
+
+    The acceptance reader named it against itself: *"collapsing an enumeration
+    into a range is an assertion of uniformity, and I did it over rows the output
+    had told me four lines earlier were not uniform."* A line whose job is to
+    refuse that assertion must not make it in its own words.
+    """
+    warning = next(line for line in _page(_UNSIGNED, _UNSIGNED, _UNSIGNED, _VERIFIED).splitlines() if "⚠" in line)
+
+    assert "seq 1, 2, 3" in warning
+    assert "1-3" not in warning
+    assert "1\u20133" not in warning, "an en dash is still a range"
+
+
+def test_a_long_page_caps_the_list_and_says_what_it_dropped():
+    """Silent truncation, on the page about how much can be trusted, of all places."""
+    warning = next(line for line in _page(*([_UNSIGNED] * 10), _VERIFIED).splitlines() if "⚠" in line)
+
+    assert "seq 1, 2, 3, 4, 5, 6 and 4 more" in warning
+
+
+def test_the_coverage_limit_is_beside_the_warning_and_said_once():
+    """Fix 3: the footer was maximally far from the rows whose sequence was being quoted."""
+    lines = _page(_UNSIGNED, _VERIFIED).splitlines()
+    warning = next(i for i, line in enumerate(lines) if "⚠" in line)
+    first_row = next(i for i, line in enumerate(lines) if line.startswith("seq "))
+    coverage = next(i for i, line in enumerate(lines) if "never the sequence or the time" in line)
+
+    assert warning < coverage < first_row, "the limit is not between the warning and the rows it qualifies"
+    assert "\n".join(lines).count("never the sequence or the time") == 1
 
 
 def test_the_summary_does_not_replace_the_per_row_verdict():

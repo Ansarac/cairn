@@ -103,6 +103,34 @@ one surface where the gap is measured in months rather than minutes.
 """
 
 SENT_CLAUSE = "your own sends, as this hub recorded them"
+COVERAGE_CLAUSE = (
+    "a verdict here is about the words and the addressee — never the sequence or the time, which the hub assigns"
+)
+"""What a positive verdict does *not* cover, said where the rows are.
+
+It used to live only in `provenance.assess_sent`'s detail string, which renders
+at the foot of the page. An acceptance reader walked straight past it and made
+exactly the claim it rules out — that one message answered a question *before* a
+reply arrived, which is an ordering claim, and ordering is the half a signature
+cannot reach. It found the error itself when asked and named the cause:
+
+    the caveat that would have stopped my ordering claim sits in a footer,
+    maximally far from the rows whose sequence I was about to quote. Nothing
+    appears at the point of use.
+
+So it moved up beside the banner, and it moved rather than being copied: tier 3
+is one explanation per reading, and `assess_sent`'s detail was trimmed in the
+same change so this is still said exactly once — four lines from the rows
+instead of twenty.
+"""
+
+_NAMED_SEQS = 6
+"""How many weaker seqs the banner lists before it starts counting instead.
+
+Six because the banner has to stay one line to stay read, and a page whose
+unsigned rows outnumber that is one where the count is the story anyway. What is
+not optional is saying how many were left out; see `_weaker_seqs`.
+"""
 RECORD_CLAUSE = (
     "not every row here is signed, so this is the hub's account of what you sent rather than proof you sent it"
 )
@@ -244,7 +272,7 @@ def _provenance_notes(provenances: Iterable[Provenance]) -> list[str]:
     return list(notes)
 
 
-def _verdict_change(provenances: Iterable[Provenance]) -> list[str]:
+def _verdict_change(entries: Sequence[SentEntry]) -> list[str]:
     """Say, at the top, that this page's verdicts are not the ones they always were.
 
     This is the constraint docs/design.md §12 item 18 left on the signing cut,
@@ -276,14 +304,45 @@ def _verdict_change(provenances: Iterable[Provenance]) -> list[str]:
     face — which is why this counts the rows rather than standing in for them.
     """
     tally: dict[str, int] = {}
-    for provenance in provenances:
-        token = provenance.token()
+    for entry in entries:
+        token = entry.provenance.token()
         tally[token] = tally.get(token, 0) + 1
     if not tally or list(tally) == ["UNVERIFIED"]:
         return []
     spread = ", ".join(f"{n} {token}" for token, n in tally.items())
     lead = "these are not all the same" if len(tally) > 1 else "this is not the verdict this surface used to print"
-    return [f"  ⚠ {lead}: {spread}", ""]
+    return [f"  ⚠ {lead}: {spread}{_weaker_seqs(entries)}", f"    {COVERAGE_CLAUSE}", ""]
+
+
+def _weaker_seqs(entries: Sequence[SentEntry]) -> str:
+    """Name the rows a reader may claim least about, rather than only counting them.
+
+    The tally says *three of these are unsigned*. It does not say **which**, and
+    an acceptance reader said what that costs:
+
+        the warning tells you 3 and 3 but not which three — you have to scan
+        rows to learn that the unsigned ones were the substance.
+
+    They were the substance, on that page: the failure report, the question and
+    the workaround were the unsigned three, and the reader summarised all six as
+    one uniform block.
+
+    **Enumerated, never a range.** `seq 1-3` is shorter and is the exact move
+    that reader was caught making — *"collapsing an enumeration into a range is
+    an assertion of uniformity, and I did it over rows the output had told me
+    four lines earlier were not uniform."* This line exists to deny that
+    assertion, so it must not make it in its own words.
+
+    Long pages get a cap, and the cap says what it dropped. A page about how much
+    can be trusted is the last place to truncate quietly; `_truncation` in this
+    file sets the same house style for the same reason.
+    """
+    weaker = [e.message.seq for e in entries if not e.provenance.verified]
+    if not weaker:
+        return ""
+    named = ", ".join(str(seq) for seq in weaker[:_NAMED_SEQS])
+    rest = len(weaker) - _NAMED_SEQS
+    return f" — seq {named}" + (f" and {rest} more" if rest > 0 else "")
 
 
 def oneline(text: str) -> str:
@@ -797,7 +856,7 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
         return f"cairn sent: nothing sent from here yet{_asked(hub)}.\n"
     count = f"{len(entries)} message{'' if len(entries) == 1 else 's'}"
     lines = [f"cairn sent · {count} · {SENT_CLAUSE}", ""]
-    lines.extend(_verdict_change(e.provenance for e in entries))
+    lines.extend(_verdict_change(entries))
     lines.extend(_truncation(len(entries), total))
     for entry in entries:
         message = entry.message
