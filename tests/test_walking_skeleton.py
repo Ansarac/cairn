@@ -706,6 +706,27 @@ def _cli(hub: HubClient, *argv: str) -> int:
     return cli.run(["--hub", hub.base_url, *argv])
 
 
+def _pile_only(reading: str) -> str:
+    """Return a notes reading without its anchor line, which is the part a second reader must match.
+
+    `notes` ends on `— hub clock <now>`, and that `now` comes from the response
+    rather than from the page, so two reads of an **unchanged** pile differ
+    whenever they straddle a second boundary. Comparing the whole string is
+    therefore a coin weighted by machine load: measured at two failures in five
+    full-suite runs and none in twelve runs of the test alone, which is the worst
+    possible frequency — often enough to interrupt, rare enough to re-run and
+    call infrastructure. Forced with a 1.1 s gap between the reads it is 100% and
+    the diff is one digit of a timestamp, 696 identical characters in.
+
+    Strip only that line. The claim being kept is that the *pile* is
+    byte-identical, and the anchor is per-reading by construction —
+    `tests/test_clock.py` is where its content is pinned, and the caller asserts
+    it is still present so that a regression deleting the footer cannot pass
+    here by looking like a clock tick.
+    """
+    return "\n".join(line for line in reading.splitlines() if not line.startswith("— hub clock "))
+
+
 def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatch, capsys):  # noqa: PLR0915 - see the docstring
     """The exchange this cut exists for: the session goes, its open loop does not.
 
@@ -879,7 +900,8 @@ def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path,
     read_second = capsys.readouterr().out
 
     assert "OPEN" in read_first
-    assert read_second == read_first, "the second reader did not find what the first one read"
+    assert "— hub clock " in read_second, "the anchor the dates on the page are read against went missing"
+    assert _pile_only(read_second) == _pile_only(read_first), "the second reader did not find what the first one read"
     assert {name: [m.seq for m in hub.inbox(name).messages] for name in waiting_mail} == waiting_mail
 
 
