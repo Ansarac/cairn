@@ -103,9 +103,36 @@ one surface where the gap is measured in months rather than minutes.
 """
 
 SENT_CLAUSE = "your own sends, as this hub recorded them"
-RECORD_CLAUSE = "cairn does not sign, so this is the hub's account of what you sent rather than proof you sent it"
+RECORD_CLAUSE = (
+    "not every row here is signed, so this is the hub's account of what you sent rather than proof you sent it"
+)
+"""Printed only on a page with an unsigned or mismatching row, which it did not used to be.
+
+It said `cairn does not sign` and was printed unconditionally, and both halves
+stopped being true in the same cut. cairn signs its own sends now, so on a page
+where every row verified, the old line contradicted the three verdicts above it
+while sounding like the careful thing to say — a footnote reassuring the reader
+that nothing was proven, directly under the proof.
+
+The clause is kept rather than reworded away because on a page that still has an
+unsigned row it is exactly right, and that page is most of them for as long as
+anybody's log predates this build. What changed is that it is now a statement
+about *this page* instead of about the product.
+"""
 UNANSWERED_CLAUSE = "this is what you sent, not what anyone read and not what anyone answered"
-SENT_NOTICE = f"These are {SENT_CLAUSE}: {RECORD_CLAUSE}. And {UNANSWERED_CLAUSE}."
+RECORD_RULE = (
+    "cairn does not authenticate the hub, so a row whose signature did not verify is the hub's account "
+    "of what you sent rather than proof you sent it"
+)
+"""The same point as `RECORD_CLAUSE`, stated as a rule rather than as a fact about one page.
+
+`SENT_NOTICE` is a constant that goes into every `--json` payload, so it cannot
+say what this page happens to contain — a parser reading `nothing on this page is
+signed` off a page of verified rows would be reading a contradiction cairn wrote
+itself. The rule is true on every page, and the per-row `provenance` object in
+the same payload is what says which rows it applies to.
+"""
+SENT_NOTICE = f"These are {SENT_CLAUSE}: {RECORD_RULE}. And {UNANSWERED_CLAUSE}."
 """The sent log's framing, and it is deliberately **not** `CLAIM_CLAUSE`.
 
 Two reasons, and both are load-bearing rather than a nicety of wording.
@@ -195,17 +222,68 @@ def _provenance_notes(provenances: Iterable[Provenance]) -> list[str]:
     """Return each distinct provenance explanation present, in first-seen order.
 
     Distinct, because a build that verifies some items and not others should say
-    so once per reason rather than once per item. Today there is exactly one
-    reason per surface and it is "nothing was checked".
+    so once per reason rather than once per item. That was written before
+    anything could verify and it is now load-bearing: `cairn sent` is the first
+    surface where one reading holds more than one reason, and it gets one line
+    each rather than a footnote per row.
 
-    Shared by the inbox and by notes deliberately: these two footnotes must not
-    be allowed to drift into saying the same thing two ways.
+    **A pass has a reason too**, and the filter used to drop it. A verified row's
+    detail is where the limit of the check lives — the signature covers the words
+    and the addressee, not the sequence or the time — so skipping it would print
+    a `verified(…)` with its qualification silently removed, on the one surface
+    written to stop cairn claiming more than it checked. Inbox and notes are
+    unaffected: nothing verifies there yet, so the branch never fires for them.
+
+    Shared by the inbox and by notes deliberately: these footnotes must not be
+    allowed to drift into saying the same thing several ways.
     """
     notes: dict[str, None] = {}
     for provenance in provenances:
-        if not provenance.verified and provenance.detail:
+        if provenance.detail:
             notes.setdefault(f"provenance: {provenance.label()}", None)
     return list(notes)
+
+
+def _verdict_change(provenances: Iterable[Provenance]) -> list[str]:
+    """Say, at the top, that this page's verdicts are not the ones they always were.
+
+    This is the constraint docs/design.md §12 item 18 left on the signing cut,
+    and it is here rather than in a footnote because of what it is defending
+    against. Three independent sessions reported the per-message verdict as
+    having stopped carrying information, and the third one said what that costs
+    later rather than now: *"a constant trains you to skip it. If the hub ever
+    does start signing and a `VERIFIED` shows up, the people most fluent in this
+    tool are the ones least likely to notice the change, because they've already
+    filed that line under furniture."*
+
+    So the reader this is written for is the one who will not read it. That
+    decides two things.
+
+    **It fires on any page that is not uniformly `UNVERIFIED`** — mixed *or*
+    entirely verified. Item 18's wording says "a mixed reading", and this is
+    deliberately broader: an all-verified page is the largest change this surface
+    has ever undergone, and it is the page on which every line looks reassuring
+    and nothing announces that the meaning of the line moved.
+
+    **It is a head line, not a footnote.** Item 18 noted in passing that the
+    count line is what `head` keeps and the footer is what it cuts. The skill
+    tells readers never to pipe `cairn inbox` through `head`, which is evidence
+    that they do, and the same reader on the same day is the audience here.
+
+    It does not replace the per-row verdict. That is I1 tier 1, `test_render.py`
+    calls moving it into the footnote *"the cheap mistake"*, and adding a summary
+    that makes the rows look redundant is the same mistake with a friendlier
+    face — which is why this counts the rows rather than standing in for them.
+    """
+    tally: dict[str, int] = {}
+    for provenance in provenances:
+        token = provenance.token()
+        tally[token] = tally.get(token, 0) + 1
+    if not tally or list(tally) == ["UNVERIFIED"]:
+        return []
+    spread = ", ".join(f"{n} {token}" for token, n in tally.items())
+    lead = "these are not all the same" if len(tally) > 1 else "this is not the verdict this surface used to print"
+    return [f"  ⚠ {lead}: {spread}", ""]
 
 
 def oneline(text: str) -> str:
@@ -719,6 +797,7 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
         return f"cairn sent: nothing sent from here yet{_asked(hub)}.\n"
     count = f"{len(entries)} message{'' if len(entries) == 1 else 's'}"
     lines = [f"cairn sent · {count} · {SENT_CLAUSE}", ""]
+    lines.extend(_verdict_change(e.provenance for e in entries))
     lines.extend(_truncation(len(entries), total))
     for entry in entries:
         message = entry.message
@@ -743,7 +822,8 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
             "— a WITHDRAWN message was pulled back before anyone read it; anybody whose cursor had already "
             "passed it still has it"
         )
-    lines.append(f"— {RECORD_CLAUSE}")
+    if not all(e.provenance.verified for e in entries):
+        lines.append(f"— {RECORD_CLAUSE}")
     lines.extend(f"— {note}" for note in _provenance_notes(e.provenance for e in entries))
     return "\n".join(lines).rstrip() + "\n"
 

@@ -24,7 +24,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from cairn import cli, render, waiting
+from cairn import cli, render, signing, waiting
 from cairn.client import HubClient
 from cairn.errors import UsageError
 from cairn.hub import make_server
@@ -706,27 +706,6 @@ def _cli(hub: HubClient, *argv: str) -> int:
     return cli.run(["--hub", hub.base_url, *argv])
 
 
-def _pile_only(reading: str) -> str:
-    """Return a notes reading without its anchor line, which is the part a second reader must match.
-
-    `notes` ends on `— hub clock <now>`, and that `now` comes from the response
-    rather than from the page, so two reads of an **unchanged** pile differ
-    whenever they straddle a second boundary. Comparing the whole string is
-    therefore a coin weighted by machine load: measured at two failures in five
-    full-suite runs and none in twelve runs of the test alone, which is the worst
-    possible frequency — often enough to interrupt, rare enough to re-run and
-    call infrastructure. Forced with a 1.1 s gap between the reads it is 100% and
-    the diff is one digit of a timestamp, 696 identical characters in.
-
-    Strip only that line. The claim being kept is that the *pile* is
-    byte-identical, and the anchor is per-reading by construction —
-    `tests/test_clock.py` is where its content is pinned, and the caller asserts
-    it is still present so that a regression deleting the footer cannot pass
-    here by looking like a clock tick.
-    """
-    return "\n".join(line for line in reading.splitlines() if not line.startswith("— hub clock "))
-
-
 def test_a_question_outlives_the_session_that_asked_it(hub, tmp_path, monkeypatch, capsys):  # noqa: PLR0915 - see the docstring
     """The exchange this cut exists for: the session goes, its open loop does not.
 
@@ -863,7 +842,7 @@ def test_a_note_rings_no_bell_though_a_message_still_does(hub):
     assert author[0] == [], "writing a note rang a bell"
 
 
-def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path, monkeypatch, capsys):
+def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path, monkeypatch, capsys, pile_only):
     """A pile is not a queue: the next reader has to find exactly what this one did.
 
     Two failures at once, because notes and messages share a hub, a client and a
@@ -901,7 +880,7 @@ def test_reading_the_pile_consumes_none_of_it_and_moves_no_cursor(hub, tmp_path,
 
     assert "OPEN" in read_first
     assert "— hub clock " in read_second, "the anchor the dates on the page are read against went missing"
-    assert _pile_only(read_second) == _pile_only(read_first), "the second reader did not find what the first one read"
+    assert pile_only(read_second) == pile_only(read_first), "the second reader did not find what the first one read"
     assert {name: [m.seq for m in hub.inbox(name).messages] for name in waiting_mail} == waiting_mail
 
 
@@ -1109,6 +1088,56 @@ def test_reading_the_sent_log_consumes_nothing_and_rings_nobody(hub, tmp_path, m
     assert peer[0][0].get("seq") == rung.seq, "the first bell on the peer's stream was a sent read"
     still_unread = [m.seq for m in hub.inbox("bench/night-shift").messages]
     assert still_unread == unread_before, "reading the log moved the mail cursor"
+
+
+def test_a_send_signed_here_reads_back_verified_and_an_older_one_does_not(hub, tmp_path, monkeypatch, capsys):
+    """The first verdict on this network that is not `UNVERIFIED`, across every module it touches.
+
+    The check runs in `provenance`, the key is in `signing`, the bytes are fixed
+    in `wire`, the column is in `store`, the passthrough is in `hub`, and the
+    reading is in `render`. Six modules, and the only thing that proves they
+    agree is a real message going out over a socket and coming back — a unit
+    test on any one of them passes with the field dropped somewhere else.
+
+    The unsigned row is posted the way an **older client** would post it: the
+    same route with no `signature` key. That is not a contrivance, it is the case
+    every existing log is in, and it is what makes this page mixed rather than a
+    demonstration of the happy path. `PROTOCOL_VERSION` did not move precisely so
+    that this POST would still be accepted.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+    _register(hub, "compute/traces", machine="compute", cwd="/w/compute")
+    assert _cli(hub, "register", "bench/night-shift", "--machine", "bench") == 0
+    capsys.readouterr()
+
+    # Straight at the route, because every public way in now signs. This is the
+    # POST an older build made, and it has to keep being accepted.
+    hub._call(
+        "POST",
+        "/v1/messages",
+        {
+            "kind": "tell",
+            "sender": "bench/night-shift",
+            "recipient": "compute/traces",
+            "body": "sent by a build that had never heard of signing",
+            "correlation_id": None,
+            "artifacts": [],
+        },
+    )
+    assert _cli(hub, "tell", "compute/traces", "and this one was signed on the way out") == 0
+    capsys.readouterr()
+
+    assert _cli(hub, "sent") == 0
+    page = capsys.readouterr().out
+    rows = [line for line in page.splitlines() if line.startswith("seq ")]
+
+    assert len(rows) == 2, "the two sends did not both come back"
+    assert sum(f"verified({signing.METHOD})" in row for row in rows) == 1, "the signed send did not verify end to end"
+    assert sum("UNVERIFIED" in row for row in rows) == 1, "the older send did not read as unsigned"
+    assert "⚠" in page.splitlines()[2], "a genuinely mixed page did not announce itself above the rows"
 
 
 def test_a_hub_that_predates_the_sent_log_says_so_as_a_refusal_not_an_outage(hub, hub_server, tmp_path, monkeypatch):

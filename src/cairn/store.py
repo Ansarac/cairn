@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS messages (
     correlation_id TEXT,
     artifacts      TEXT NOT NULL,
     created_at     TEXT NOT NULL,
-    retracted_at   TEXT
+    retracted_at   TEXT,
+    signature      TEXT
 );
 CREATE TABLE IF NOT EXISTS cursors (
     agent          TEXT PRIMARY KEY,
@@ -130,6 +131,7 @@ _MIGRATIONS = (
     "ALTER TABLE messages ADD COLUMN retracted_at TEXT",
     "ALTER TABLE subjects ADD COLUMN described_at TEXT",
     "ALTER TABLE subjects ADD COLUMN described_by TEXT",
+    "ALTER TABLE messages ADD COLUMN signature TEXT",
 )
 """Step 2: columns added to a table that already exists, on the same terms as `_BACKFILL`.
 
@@ -151,7 +153,7 @@ other than `ALTER TABLE ... ADD COLUMN`, that judgement expires.
 
 **Every statement must be reachable from the oldest schema still in service, not
 just from the one before it.** These run as an unordered set on every open, so a
-hub that skipped three releases gets all four in one pass and there is no chain to
+hub that skipped three releases gets all of them in one pass and there is no chain to
 keep in step; what that costs is that no entry may ever depend on an earlier one
 having run. `tests/test_upgrade.py` opens a database in every shape cairn has
 shipped rather than only the newest, which is the only way that stays true.
@@ -230,8 +232,15 @@ class Store(Protocol):
         body: str,
         correlation_id: str | None = None,
         artifacts: Sequence[Artifact] = (),
+        signature: str = "",
     ) -> Message:
-        """Durably record a message and return it with its assigned sequence."""
+        """Durably record a message and return it with its assigned sequence.
+
+        `signature` is stored and handed back untouched. The hub does not verify
+        it and could not: the key is the sender's and lives on the sender's
+        machine. Storing something it cannot check is the whole shape of this —
+        the hub carries evidence, the reader runs the check.
+        """
         ...
 
     def unread(self, agent: str, limit: int = 50, since: int = 0) -> InboxPage:
@@ -437,7 +446,7 @@ class SqliteStore:
 
     # -- messages -------------------------------------------------------------
 
-    def append(  # noqa: PLR0913, PLR0917 - these six are the message schema; collapsing them would hide the contract
+    def append(  # noqa: PLR0913, PLR0917 - these are the message schema; collapsing them would hide the contract
         self,
         kind: MessageKind,
         sender: str,
@@ -445,6 +454,7 @@ class SqliteStore:
         body: str,
         correlation_id: str | None = None,
         artifacts: Sequence[Artifact] = (),
+        signature: str = "",
     ) -> Message:
         """Insert the message, refusing an unknown kind, sender, or misaddressed recipient.
 
@@ -473,9 +483,18 @@ class SqliteStore:
         self._touch(sender)
         created = now()
         cursor = self._db.execute(
-            """INSERT INTO messages (kind, sender, recipient, body, correlation_id, artifacts, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (kind, sender, recipient, body, correlation_id, json.dumps([a.to_json() for a in artifacts]), created),
+            """INSERT INTO messages (kind, sender, recipient, body, correlation_id, artifacts, created_at, signature)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                kind,
+                sender,
+                recipient,
+                body,
+                correlation_id,
+                json.dumps([a.to_json() for a in artifacts]),
+                created,
+                signature,
+            ),
         )
         return Message(
             seq=int(cursor.lastrowid or 0),
@@ -486,6 +505,7 @@ class SqliteStore:
             correlation_id=correlation_id,
             artifacts=tuple(artifacts),
             created_at=created,
+            signature=signature,
         )
 
     def unread(self, agent: str, limit: int = 50, since: int = 0) -> InboxPage:
@@ -1558,4 +1578,5 @@ def _message_from_row(row: sqlite3.Row) -> Message:
         artifacts=tuple(Artifact.from_json(a) for a in json.loads(row["artifacts"])),
         created_at=row["created_at"],
         retracted_at=row["retracted_at"] or "",
+        signature=row["signature"] or "",
     )

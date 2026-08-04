@@ -46,6 +46,18 @@ What *does* bump: changing or removing a field on an existing shape, changing
 what a field means, or making an old payload parse differently. If you cannot
 say which existing exchange breaks without the bump, you probably do not need
 one — and if you do bump, both ends have to be upgraded together, so say so.
+
+**Second worked example, and the harder one: `Message.signature` did not bump.**
+Cut 4 added new shapes at new paths, which is the easy case. This added a field
+to the most-used existing shape, which is the case a reader will be least sure
+about — so the test was applied out loud rather than assumed. New client, old
+hub: the extra key is ignored on the way in, nothing is stored, and the message
+comes back unsigned, so the sender's own `cairn sent` reads `UNVERIFIED` — the
+answer that surface gave for every build before this one. Old client, new hub:
+`from_json` reads with `obj.get` and never looks for the key. Neither direction
+loses an exchange that worked; one of them loses a feature it never had, which
+is not the same thing. Bumping would have disconnected every peer to deliver a
+verdict that only ever concerns the machine reading it.
 """
 
 BROADCAST = "*"
@@ -213,6 +225,26 @@ class Message:
     artifacts: tuple[Artifact, ...] = ()
     created_at: str = field(default_factory=now)
     retracted_at: str = ""
+    signature: str = ""
+    """Evidence, not a verdict — which is the distinction that keeps I1 intact.
+
+    `test_a_sender_cannot_claim_its_own_message_is_verified` forbids `verified`,
+    `verified_by`, `trusted`, `signature_ok` and `origin_is_human`, and the
+    absence of `signature` from that list is a decision the test's author already
+    made rather than an omission this field slipped through. A sender asserting
+    *"I am trustworthy"* is unfalsifiable and is what I1 exists to prevent. A
+    sender attaching bytes that a reader's own key either reproduces or does not
+    is the opposite: it is a claim that can fail, and `provenance` is still the
+    only thing allowed to say whether it did.
+
+    Empty on anything sent before docs/design.md §12 item 9's first cut, and on
+    anything that crossed a hub too old to store it. Empty means *nobody signed
+    this*, which is not the same finding as a signature that does not check out —
+    see `Provenance.mismatch`.
+
+    What it covers is decided by `signing.canonical`, and it is not everything:
+    the hub assigns `seq` and `created_at`, so neither is inside it.
+    """
 
     @property
     def retracted(self) -> bool:
@@ -231,6 +263,7 @@ class Message:
             "artifacts": [a.to_json() for a in self.artifacts],
             "created_at": self.created_at,
             "retracted_at": self.retracted_at,
+            "signature": self.signature,
         }
 
     @classmethod
@@ -254,6 +287,7 @@ class Message:
             artifacts=tuple(Artifact.from_json(a) for a in obj.get("artifacts") or ()),
             created_at=obj.get("created_at") or now(),
             retracted_at=str(obj.get("retracted_at") or ""),
+            signature=str(obj.get("signature") or ""),
         )
 
 
@@ -277,18 +311,61 @@ class Provenance:
         """Return the honest default: nothing was checked."""
         return cls(verified=False, method="none", detail=detail)
 
+    @classmethod
+    def mismatch(cls, method: str, detail: str) -> Self:
+        """Return the verdict for a signature that was checked and did not match.
+
+        A third state, because two were hiding a distinction that matters more
+        than the one they drew. `unverified` means *nothing was checked* — no
+        scheme, or no signature on this row — and it is evidence of nothing.
+        This means a check ran and **failed**, which is evidence of something.
+        Flattening them gives the row that should be loudest the same word as
+        the row that is merely ordinary.
+
+        It is deliberately not called forgery. The common cause is benign and
+        `provenance.assess_sent` puts it in the detail: a name taken over from
+        another working directory is signed by a key this one does not hold, so
+        the predecessor's sends cannot verify here and should not. cairn reports
+        the check it ran; what the failure means is the reader's to decide, which
+        is I3 with a hash attached.
+        """
+        return cls(verified=False, method=method, detail=detail)
+
     def token(self) -> str:
         """Return the verdict alone, with no explanation attached.
 
         This is what rides every message. The explanation is worth saying once
         per reading, not once per message — but the verdict itself has to sit
         next to the content it describes, so `UNVERIFIED` stays shouted.
+
+        `MISMATCH` is shouted too and is a *different word* rather than a
+        qualifier on this one, because the reader this is written for is
+        skimming: `UNVERIFIED (mismatch)` shares its first and longest token
+        with the line that means nothing happened, on a surface where every line
+        said exactly that for every build until now.
         """
-        return f"verified({self.method})" if self.verified else "UNVERIFIED"
+        if self.verified:
+            return f"verified({self.method})"
+        return "UNVERIFIED" if self.method == "none" else "MISMATCH"
 
     def label(self) -> str:
-        """Return the verdict and why, for somewhere it is said only once."""
-        return self.token() if self.verified else f"UNVERIFIED — {self.detail}"
+        """Return the verdict and why, for somewhere it is said only once.
+
+        Built from `token` rather than from the literal it used to hard-code, so
+        that a `MISMATCH` row's footnote says `MISMATCH — …` and not
+        `UNVERIFIED — …`. The old form spelled the word out, which is exactly how
+        a new verdict gets rendered under the old one's name in the one place
+        that explains it.
+
+        **A pass has an explanation too, and dropping it was the old shape's
+        other assumption.** While nothing could verify, a verified label had
+        nothing to say and returned the bare verdict. Now that one thing can, the
+        detail is where the *limit* of that pass lives — a signature covers the
+        words and the addressee and not the sequence or the time — and that is
+        the last sentence a surface built to avoid overclaiming should throw
+        away.
+        """
+        return f"{self.token()} — {self.detail}" if self.detail else self.token()
 
 
 @dataclass(frozen=True, slots=True)

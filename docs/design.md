@@ -866,6 +866,17 @@ or messaging. Not competitors; potentially complementary.
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
 
+   **Still open, and §12 item 21 narrowed it rather than answering it.** Signing your
+   own sends needs no key exchange, so it shipped with stdlib HMAC and a key per
+   working directory. Everything that makes this question hard is in the part that
+   did not: a peer's signature is checkable only with the peer's key, and the stdlib
+   has no asymmetric primitive — verified in cairn's own environment, not recalled.
+   So the first move here is not code. It is deciding whether `dependencies = []`
+   survives, and that decision has never been made because nothing had forced it;
+   the alternative is a secret distributed out of band between two machines, which
+   is a worse answer that needs no argument to reject only until somebody has to
+   actually run it.
+
 ### Why bespoke, not A2A
 
 **A2A is the wrong shape.** Its roles are hardcoded asymmetric (`ROLE_USER` =
@@ -1754,8 +1765,15 @@ framework-internal orchestration, not network protocols.
    times now, out of cut 5, cut 6 and cut 7. Item 5 records the evidence and what would
    trigger it: a live exchange where two agents **could not** negotiate. Every run so far
    had two talking sessions, which is exactly why the evidence is not there.
-9. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
-   which is the honest answer rather than a gap to paper over.
+9. **Signing** — **the local third is done; see item 21.** `cairn sent` verifies
+   your own sends against a key on your own machine, which needs no key exchange
+   and so was reachable years before the rest of this is. What is still open is
+   the part the word usually means: `cairn inbox` and `cairn notes` still print
+   `UNVERIFIED` on every message and every note, because checking a peer's
+   signature needs a key this machine does not have. That is still the honest
+   answer rather than a gap to paper over — and it is now the answer on two
+   surfaces out of three rather than three out of three, which is a thing a
+   reader has to be told rather than left to notice.
 10. **A bell somebody can receive when they are not at the machine.** **Done.**
     `bell_command` in `config.toml` is an argv list that `cli.cmd_bell` runs when — and
     only when — it rings. `cairn bell --test` runs it on demand and says what came back.
@@ -2791,6 +2809,99 @@ framework-internal orchestration, not network protocols.
     operator's live skills directory is that operator's call.
 
     Nothing here crosses the hub either, and `SKILL.md` is untouched again.
+
+21. **The first verdict that is not `UNVERIFIED`.** **Done, and it is the local
+    third of item 9 rather than item 9.** `cairn sent` now verifies your own sends
+    against a key on your own machine, and reports `verified(hmac-sha256)`,
+    `UNVERIFIED` or `MISMATCH`. Peer verification is untouched; `cairn inbox` and
+    `cairn notes` say exactly what they said before.
+
+    **The way in was written down before there was anything to put in it.**
+    `provenance.assess_sent` has argued since cut 5 that verifying your own send
+    is *"the one check that can succeed before any key exchange exists at all,
+    because both halves are on this machine"*, and that the three assess
+    functions were separate so that this would be visible rather than hidden
+    behind an `isinstance`. That turned out to be the whole design: the cut is
+    one function changing.
+
+    **And the constraint that made it worth doing now is not cryptographic.**
+    Item 18 left one: *"a constant trains you to skip it. If the hub ever does
+    start signing and a `VERIFIED` shows up, the people most fluent in this tool
+    are the ones least likely to notice the change."* Whoever makes verdicts vary
+    has to make a non-uniform reading announce itself — and the cheapest surface
+    on which to get that wrong is the one where the reader is looking at their
+    own words. So a `cairn sent` page whose verdicts are not all `UNVERIFIED`
+    opens with a count of what it holds, above the first row rather than in the
+    footer, because item 18 had already noticed that the count line is what
+    `head` keeps. It fires on an all-verified page too, which is broader than
+    item 18's wording and deliberate: that is the largest change this surface has
+    ever undergone and the one where every line looks reassuring.
+
+    **HMAC and not Ed25519, and that is a consequence rather than a preference.**
+    `dependencies = []` is a decision with a reason (§9), and the Python standard
+    library has no asymmetric primitive at all — checked in cairn's own
+    environment rather than recalled. A shared secret is useless between machines
+    and exactly right within one, which is another way of saying the dependency
+    constraint and the local-half scope are the same fact seen twice. §11 item 4
+    stays open and still needs the dependency argument before it can be answered.
+
+    **What a pass claims is narrower than the word suggests, and the reading says
+    so.** The hub assigns `seq` and `created_at`, so a sender cannot sign either:
+    a hub that re-dated or re-ordered your sends hands back rows that verify.
+    That is in `signing.canonical`, in the detail of every verified verdict, and
+    in a test that asserts editing `seq` leaves the signature intact — the test
+    most likely to be read as a bug and "fixed".
+
+    **Three verdicts rather than two, because two flattened the finding that
+    matters.** An absent signature is evidence of nothing: that row predates the
+    build or crossed an older hub. A failing one is evidence of something. Giving
+    both the word `UNVERIFIED` would hand the loudest row on the page the
+    vocabulary of the most ordinary one. `MISMATCH` is deliberately not called
+    forgery — the common cause is benign and is named in the detail: the key is
+    per working directory, so a name taken over from elsewhere is signed by a key
+    the new directory does not hold.
+
+    **The cut re-opened the failure this whole module was built from, and closed
+    it in the same commit.** `provenance`'s docstring rests on an agent refusing a
+    `verified_by: "cairn-hub"` field because nothing verified it. Putting a real
+    signature on the wire hands `cairn inbox` a cryptographic-looking field that
+    nobody on this machine can check — the same shape in better clothes. So a
+    peer row that carries one now says which it is, and only when it does, since
+    a clause on every reading is the furniture item 18 measured. Found by asking
+    what the new field looks like on the surface the cut was not touching.
+
+    **`PROTOCOL_VERSION` did not move**, and this is the harder worked example
+    the docstring did not have: cut 4 added new shapes at new paths, while this
+    added a field to the most-used existing one. Old hub, new client: the key is
+    ignored on the way in, nothing is stored, the row comes back unsigned and
+    reads `UNVERIFIED` — which is what that surface printed for every build
+    before this one. New hub, old client: `from_json` never looks for it. Neither
+    direction loses an exchange that worked. The hub in the container is on the
+    old schema and needs no attention for this; when it is upgraded, one
+    `ALTER TABLE ... ADD COLUMN` carries it, and `tests/test_upgrade.py` gained
+    that build's verbatim schema.
+
+    **Two things the suite was doing wrong turned up on the way.** The first send
+    in any test created a **real signing key** under the maintainer's
+    `~/.local/state/cairn/` — observed, mode 0600 — because only three test files
+    had ever redirected `XDG_STATE_HOME` and nothing else had needed to. A suite
+    run and a real `cairn tell` from the same checkout would have shared a secret
+    the suite wrote. There is now a `conftest.py` and it is autouse. The second
+    was the clock flake from item 20's cut turning out to have a **second copy**,
+    in `test_notes.py`, which the sweep for it had missed because it named its
+    variables differently; both now use one fixture. Neither is about signing,
+    and both were found by it.
+
+    The live run produced all three verdicts against a real hub: a signed send, a
+    send posted the way a build with no signing would, and a genuine takeover from
+    a second directory reading the first one's sends as `MISMATCH`. The takeover
+    is the one worth keeping — `register` already reports *"this name was
+    previously held at …"*, and the sent log arrives at the same conclusion from
+    the other end, independently. Neither was built to corroborate the other.
+
+    **`SKILL.md` is untouched, deliberately.** The reading has been confirmed to
+    work by the session that wrote it, which item 18 is precisely the record of
+    not being enough. It needs an independent reader first.
 
 ---
 

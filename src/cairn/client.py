@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
+from cairn import signing
 from cairn.errors import Unreachable, UsageError
 from cairn.wire import (
     Agent,
@@ -162,7 +163,24 @@ class HubClient:
         correlation_id: str | None = None,
         artifacts: Sequence[Artifact] = (),
     ) -> Message:
-        """Post one message and return it with its assigned sequence."""
+        """Post one message and return it with its assigned sequence.
+
+        The draft is built before the POST so there is one description of what
+        was sent and `signing.canonical` reads it, rather than a second copy of
+        the field list living in this payload dict. `seq=0` is what
+        `Message.from_json` already means by "the hub has not assigned one yet",
+        and it is outside the signature for the same reason `created_at` is: the
+        hub sets both.
+        """
+        draft = Message(
+            seq=0,
+            kind=kind,
+            sender=sender,
+            recipient=recipient,
+            body=body,
+            correlation_id=correlation_id,
+            artifacts=tuple(artifacts),
+        )
         payload = {
             "kind": kind,
             "sender": sender,
@@ -170,6 +188,7 @@ class HubClient:
             "body": body,
             "correlation_id": correlation_id,
             "artifacts": [a.to_json() for a in artifacts],
+            "signature": signing.sign(draft),
         }
         answer = self._call("POST", "/v1/messages", payload)
         with self._readable():
