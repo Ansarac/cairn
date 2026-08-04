@@ -188,10 +188,71 @@ CREATE TABLE IF NOT EXISTS subjects (
 );
 """
 
+# Verbatim from `git show 16ef818:src/cairn/store.py`, which is the build every
+# machine on the network was running when signing landed — including the hub in
+# the container. `messages` has `retracted_at` and no `signature`; `subjects` has
+# `described_at` and `described_by`. This is the newest shape here and so the one
+# an upgrade will actually meet, which is exactly why it is the easiest to skip.
+_BEFORE_SIGNATURES = """
+CREATE TABLE IF NOT EXISTS agents (
+    name          TEXT PRIMARY KEY,
+    machine       TEXT NOT NULL,
+    cwd           TEXT NOT NULL,
+    capabilities  TEXT NOT NULL,
+    session_id    TEXT,
+    registered_at TEXT NOT NULL,
+    last_seen     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind           TEXT NOT NULL,
+    sender         TEXT NOT NULL,
+    recipient      TEXT NOT NULL,
+    body           TEXT NOT NULL,
+    correlation_id TEXT,
+    artifacts      TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    retracted_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS cursors (
+    agent          TEXT PRIMARY KEY,
+    last_acked_seq INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject    TEXT NOT NULL,
+    author     TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    question   INTEGER NOT NULL DEFAULT 0,
+    settles    INTEGER REFERENCES notes (id),
+    supersedes INTEGER REFERENCES notes (id),
+    artifacts  TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT,
+    deleted_by TEXT
+);
+CREATE TABLE IF NOT EXISTS subjects (
+    name         TEXT PRIMARY KEY,
+    description  TEXT NOT NULL,
+    created_by   TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    archived_at  TEXT,
+    archived_by  TEXT,
+    described_at TEXT,
+    described_by TEXT
+);
+CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages (recipient, seq);
+CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender, seq);
+CREATE INDEX IF NOT EXISTS notes_by_subject ON notes (subject, id);
+CREATE INDEX IF NOT EXISTS notes_by_settles ON notes (settles);
+CREATE INDEX IF NOT EXISTS notes_by_supersedes ON notes (supersedes);
+"""
+
 SHIPPED = {
     "before subjects": _BEFORE_SUBJECTS,
     "before supersedes": _BEFORE_SUPERSEDES,
     "before retraction": _BEFORE_RETRACTION,
+    "before signatures": _BEFORE_SIGNATURES,
 }
 """Every schema shape cairn has put on somebody's disk, oldest first.
 
@@ -344,12 +405,21 @@ def test_an_upgraded_hub_takes_the_writes_its_new_columns_are_for(tmp_path):
     store.delete_note(doomed.id, SCRIBE, "had a serial number in it")
     sent = store.append("tell", SCRIBE, PEER, "ignore that last one")
     withdrawal = store.retract(sent.seq, SCRIBE)
+    signed = store.append("tell", SCRIBE, PEER, "and this one is signed", signature="deadbeef")
 
     described, replaced = store.describe_subject("rig-a", "thermal chamber A, and its fixture", SCRIBE)
 
     assert correction.supersedes == 1, "`supersedes` did not survive the round trip"
     assert store.get_note(doomed.id).deleted, "`deleted_at` did not survive the round trip"
     assert withdrawal.withheld == 1, "`retracted_at` did not survive the round trip"
+    # Read back through `sent` rather than trusting what `append` returned: the
+    # return value is built in Python and would carry the signature even if the
+    # INSERT had dropped it on the floor, which is the whole failure an upgraded
+    # column is capable of.
+    stored, _ = store.sent(SCRIBE)
+    assert next(m.signature for m in stored if m.seq == signed.seq) == "deadbeef", (
+        "`signature` did not survive the round trip"
+    )
     # `described_at`/`described_by` alter `subjects`, which the oldest shape does not
     # have at all — the ALTER is suppressed there and `_TABLES` supplies the columns
     # instead, while a mid-age database gets them from the ALTER. Both routes have to

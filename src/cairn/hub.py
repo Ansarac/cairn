@@ -187,6 +187,10 @@ class _Handler(BaseHTTPRequestHandler):
             body=obj.get("body", ""),
             correlation_id=obj.get("correlation_id"),
             artifacts=[Artifact.from_json(a) for a in obj.get("artifacts") or ()],
+            # Carried, never checked. The key that would check it belongs to the
+            # sender and lives on the sender's machine, which is exactly what
+            # makes this a signature rather than a hub stamp — see `signing`.
+            signature=str(obj.get("signature") or ""),
         )
         self._reply(200, {"message": message.to_json()})
         # Store first, ring second. If this process dies between the two, the

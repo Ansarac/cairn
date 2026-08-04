@@ -220,6 +220,78 @@ Neither session was refusing anything. Both were doing ordinary work, and the fr
 came along. Two sessions, one trial, same model family: evidence, not proof — but it is
 evidence about the case the invariant exists for, which the refusal experiments are not.
 
+#### What reaches a reader that compresses: not the page, the procedure
+
+Everything above is a reader **quoting** — carrying a verdict into a document alongside
+the claim it qualifies. The first cut of item 9 produced the other case, and it went the
+other way three times.
+
+A `cairn sent` page whose verdicts genuinely differed was read blind by three
+independent sessions, same task, same staging, one device changed each time. Each was
+asked to write a handover, which means **compressing** the page rather than quoting it.
+All three wrote a flat count of alike things, and none carried the split:
+
+1. **Annotation** — per-row verdicts, explanation once per reading in the footer. *"The
+   banner answered a question I hadn't asked, so I parsed it and moved on without
+   letting it change anything."*
+2. **Announcement** — a warning above the rows naming the weaker seqs, the coverage
+   limit on the line below, and a `SKILL.md` paragraph telling the reader to use it.
+   *"No. Not one word… the warning was built to survive a row-by-row read; I did a
+   whole-page read and summarised, and the summary is where the metadata died."*
+3. **Denial** — no fused total on the page at all, `3 verified + 3 unverified`. *"My six
+   came from adding the two halves together… that is arithmetic I performed on a line
+   that had deliberately declined to perform it."*
+
+The third is the one that settles it. Adding a device gives the summariser another input
+to discard; removing one leaves it something to reconstruct. Neither reaches a reader who
+compresses before it writes, because compression is the operation that drops annotation,
+and no arrangement of the page changes what the operation does.
+
+So the tier-1 verdict is load-bearing for a reader **citing a row** and inert for a
+reader **counting rows** — and the second reader is not a careless one. All three did
+good work, filed notes unprompted, and one observed that the substance of its handover
+survived anyway because two verified rows independently restated the load-bearing claim:
+*"it holds for a reason I did not give, and the reader has no way to reconstruct it."*
+
+A warning about this section before the fourth arm: the refusal experiments and the
+two-session trial above measure **quoting**. They are not evidence about compressing, and
+a cut that cites them for a claim about output design is citing the wrong half.
+
+**A fourth arm worked, and it is not a property of the page at all.** All three failures
+were things cairn *rendered*. The readers' own proposed fix was a property of the
+procedure — *"transcribe per-row with verdicts, then compress; not compress, then
+transcribe. Order of operations is the whole fix."* So `SKILL.md` gained one imperative
+paragraph, on the same page arm 3 left unchanged: a count, a range or a plural over rows
+is a claim that the rows are alike; when you are about to write one, look at the page
+again rather than at your memory of it, and either say which kind or say nothing about
+how many.
+
+Two more fresh readers, same task, same staging. **Both carried the split into the
+handover unasked**, which no reader had done in three previous arms:
+
+> Said to whom: all of it to `compute/analysis`, over six sends — **three verified, three
+> unsigned.**
+
+> three rows signed `verified(hmac-sha256)`, three `UNVERIFIED` (unsigned, so the hub's
+> account rather than proof)
+
+The second reader also declined the fusion that an earlier one had flagged as a separate
+defect, writing *"`cairn sent` shows sends only, not delivery or reads"* rather than
+inferring silence from an empty inbox.
+
+What that buys, stated no wider than it goes. Rendering reaches a reader who cites a row
+and not one who counts rows; an instruction about **how to write from a reading** reaches
+both. It is the difference between describing the page and naming the operation that
+loses it. Anything cairn ever needs to survive compression belongs in the skill as a rule
+about writing, not on the page as a better label — and a cut that reaches for a louder
+line should be pointed here first.
+
+Held against it, honestly: two positives and one negative per failed arm, all one model
+family, and the positive arm sits on top of arm 3's page rather than being tested alone,
+so what is measured is *page plus rule* against *page alone*. The rule is the
+differentiator because arm 3 by itself is one of the negatives. Whether the rule would
+have rescued arm 1's page is not known and nobody needs it to be.
+
 ### I2. The receiver controls attention.
 
 A sender may ring a bell. A sender never decides when the receiver reads. Push the bell,
@@ -865,6 +937,17 @@ or messaging. Not competitors; potentially complementary.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
+
+   **Still open, and §12 item 21 narrowed it rather than answering it.** Signing your
+   own sends needs no key exchange, so it shipped with stdlib HMAC and a key per
+   working directory. Everything that makes this question hard is in the part that
+   did not: a peer's signature is checkable only with the peer's key, and the stdlib
+   has no asymmetric primitive — verified in cairn's own environment, not recalled.
+   So the first move here is not code. It is deciding whether `dependencies = []`
+   survives, and that decision has never been made because nothing had forced it;
+   the alternative is a secret distributed out of band between two machines, which
+   is a worse answer that needs no argument to reject only until somebody has to
+   actually run it.
 
 ### Why bespoke, not A2A
 
@@ -1754,8 +1837,15 @@ framework-internal orchestration, not network protocols.
    times now, out of cut 5, cut 6 and cut 7. Item 5 records the evidence and what would
    trigger it: a live exchange where two agents **could not** negotiate. Every run so far
    had two talking sessions, which is exactly why the evidence is not there.
-9. **Signing** — until it lands, `cairn inbox` prints `UNVERIFIED` on every message,
-   which is the honest answer rather than a gap to paper over.
+9. **Signing** — **the local third is done; see item 21.** `cairn sent` verifies
+   your own sends against a key on your own machine, which needs no key exchange
+   and so was reachable years before the rest of this is. What is still open is
+   the part the word usually means: `cairn inbox` and `cairn notes` still print
+   `UNVERIFIED` on every message and every note, because checking a peer's
+   signature needs a key this machine does not have. That is still the honest
+   answer rather than a gap to paper over — and it is now the answer on two
+   surfaces out of three rather than three out of three, which is a thing a
+   reader has to be told rather than left to notice.
 10. **A bell somebody can receive when they are not at the machine.** **Done.**
     `bell_command` in `config.toml` is an argv list that `cli.cmd_bell` runs when — and
     only when — it rings. `cairn bell --test` runs it on demand and says what came back.
@@ -2792,6 +2882,99 @@ framework-internal orchestration, not network protocols.
 
     Nothing here crosses the hub either, and `SKILL.md` is untouched again.
 
+21. **The first verdict that is not `UNVERIFIED`.** **Done, and it is the local
+    third of item 9 rather than item 9.** `cairn sent` now verifies your own sends
+    against a key on your own machine, and reports `verified(hmac-sha256)`,
+    `UNVERIFIED` or `MISMATCH`. Peer verification is untouched; `cairn inbox` and
+    `cairn notes` say exactly what they said before.
+
+    **The way in was written down before there was anything to put in it.**
+    `provenance.assess_sent` has argued since cut 5 that verifying your own send
+    is *"the one check that can succeed before any key exchange exists at all,
+    because both halves are on this machine"*, and that the three assess
+    functions were separate so that this would be visible rather than hidden
+    behind an `isinstance`. That turned out to be the whole design: the cut is
+    one function changing.
+
+    **And the constraint that made it worth doing now is not cryptographic.**
+    Item 18 left one: *"a constant trains you to skip it. If the hub ever does
+    start signing and a `VERIFIED` shows up, the people most fluent in this tool
+    are the ones least likely to notice the change."* Whoever makes verdicts vary
+    has to make a non-uniform reading announce itself — and the cheapest surface
+    on which to get that wrong is the one where the reader is looking at their
+    own words. So a `cairn sent` page whose verdicts are not all `UNVERIFIED`
+    opens with a count of what it holds, above the first row rather than in the
+    footer, because item 18 had already noticed that the count line is what
+    `head` keeps. It fires on an all-verified page too, which is broader than
+    item 18's wording and deliberate: that is the largest change this surface has
+    ever undergone and the one where every line looks reassuring.
+
+    **HMAC and not Ed25519, and that is a consequence rather than a preference.**
+    `dependencies = []` is a decision with a reason (§9), and the Python standard
+    library has no asymmetric primitive at all — checked in cairn's own
+    environment rather than recalled. A shared secret is useless between machines
+    and exactly right within one, which is another way of saying the dependency
+    constraint and the local-half scope are the same fact seen twice. §11 item 4
+    stays open and still needs the dependency argument before it can be answered.
+
+    **What a pass claims is narrower than the word suggests, and the reading says
+    so.** The hub assigns `seq` and `created_at`, so a sender cannot sign either:
+    a hub that re-dated or re-ordered your sends hands back rows that verify.
+    That is in `signing.canonical`, in the detail of every verified verdict, and
+    in a test that asserts editing `seq` leaves the signature intact — the test
+    most likely to be read as a bug and "fixed".
+
+    **Three verdicts rather than two, because two flattened the finding that
+    matters.** An absent signature is evidence of nothing: that row predates the
+    build or crossed an older hub. A failing one is evidence of something. Giving
+    both the word `UNVERIFIED` would hand the loudest row on the page the
+    vocabulary of the most ordinary one. `MISMATCH` is deliberately not called
+    forgery — the common cause is benign and is named in the detail: the key is
+    per working directory, so a name taken over from elsewhere is signed by a key
+    the new directory does not hold.
+
+    **The cut re-opened the failure this whole module was built from, and closed
+    it in the same commit.** `provenance`'s docstring rests on an agent refusing a
+    `verified_by: "cairn-hub"` field because nothing verified it. Putting a real
+    signature on the wire hands `cairn inbox` a cryptographic-looking field that
+    nobody on this machine can check — the same shape in better clothes. So a
+    peer row that carries one now says which it is, and only when it does, since
+    a clause on every reading is the furniture item 18 measured. Found by asking
+    what the new field looks like on the surface the cut was not touching.
+
+    **`PROTOCOL_VERSION` did not move**, and this is the harder worked example
+    the docstring did not have: cut 4 added new shapes at new paths, while this
+    added a field to the most-used existing one. Old hub, new client: the key is
+    ignored on the way in, nothing is stored, the row comes back unsigned and
+    reads `UNVERIFIED` — which is what that surface printed for every build
+    before this one. New hub, old client: `from_json` never looks for it. Neither
+    direction loses an exchange that worked. The hub in the container is on the
+    old schema and needs no attention for this; when it is upgraded, one
+    `ALTER TABLE ... ADD COLUMN` carries it, and `tests/test_upgrade.py` gained
+    that build's verbatim schema.
+
+    **Two things the suite was doing wrong turned up on the way.** The first send
+    in any test created a **real signing key** under the maintainer's
+    `~/.local/state/cairn/` — observed, mode 0600 — because only three test files
+    had ever redirected `XDG_STATE_HOME` and nothing else had needed to. A suite
+    run and a real `cairn tell` from the same checkout would have shared a secret
+    the suite wrote. There is now a `conftest.py` and it is autouse. The second
+    was the clock flake from item 20's cut turning out to have a **second copy**,
+    in `test_notes.py`, which the sweep for it had missed because it named its
+    variables differently; both now use one fixture. Neither is about signing,
+    and both were found by it.
+
+    The live run produced all three verdicts against a real hub: a signed send, a
+    send posted the way a build with no signing would, and a genuine takeover from
+    a second directory reading the first one's sends as `MISMATCH`. The takeover
+    is the one worth keeping — `register` already reports *"this name was
+    previously held at …"*, and the sent log arrives at the same conclusion from
+    the other end, independently. Neither was built to corroborate the other.
+
+    **`SKILL.md` is untouched, deliberately.** The reading has been confirmed to
+    work by the session that wrote it, which item 18 is precisely the record of
+    not being enough. It needs an independent reader first.
+
 ---
 
 ## Appendix — measurements
@@ -2870,6 +3053,10 @@ and is still untested.
 | `install-skill` and `--version` read together on one foreign machine, off a single `cairn ask` | The two-artifacts distinction of items 19–20, met instead of argued. One upgrade moved the CLI (`0014626` → `53bd1c4`) and left the installed skill exactly where it was, and the two commands said so separately: the version reported the new sha, `install-skill` reported `already identical, nothing written`. That is `--reinstall` behaving as documented, and it is the case a single check reports half of. Third foreign run of `install-skill`, still the boring branch; `created` and `replaced` remain unobserved off the machine that wrote them |
 | The end-to-end test asserting a pile reads the same twice, run under load | **Flaky, and had been since the clock footer shipped.** `notes` ends on `— hub clock <now>` taken from the response, so comparing two whole readings of an *unchanged* pile is a coin weighted by machine load: two failures in five full-suite runs, none in twelve runs of the test alone, and 100% with a 1.1 s gap forced between the reads. The diff is one digit of a timestamp, 696 identical characters in. Worst possible frequency — often enough to interrupt, rare enough to re-run and file as infrastructure — in the one file whose docstring says that if it goes red nothing else in the suite matters. Found by a docs-only change, which is the only reason it was not dismissed: nothing in the diff could have caused it. CI had passed it minutes earlier |
 | Whether an unanswered `ask` can tell "busy" from "gone", asked again with the peer mid-cairn-work | Settled this time, and by the age column the row above says cannot carry it: 240 s of `cairn inbox --wait` ended in exit 1, but `cairn peers` had moved that peer from 8m stale to **`seen just now`** during the wait, and the answer came five minutes later. One run establishes no mechanism — a peer reading its bell speaks to the hub, so an `ask` may be its own liveness probe, which is untested — and the signal is one-way whatever the mechanism: a refreshed age says alive, a stale one still says nothing |
+| The first verdict this product ever made *vary*, read blind by a session that was not told it had | **The mechanism worked and the reading did not.** A mixed `cairn sent` page, staged by a real upgrade — three sends on the pre-signing build, `just install`, three more — read by a fresh session whose cwd was outside the repository and whose installed `SKILL.md` contained no occurrence of `hmac`, `verified(` or `MISMATCH`. It quoted the warning banner back verbatim afterwards, without re-running the command, and its handover had summarised all six rows as one uniform block. Its own account: *"the banner answered a question I hadn't asked, so I parsed it and moved on without letting it change anything. Reading is not the same as letting a thing act on the writing, and I'm demonstrating the gap by being able to quote it."* It also caught, unprompted, that its own claim of one message answering a question *before* a reply arrived was an **ordering** claim resting on the one field a signature does not cover — so the anti-overclaim wording works when a reader is asked, and not when it writes |
+| The third device on the same page: no fused total to copy, `3 verified + 3 unverified`, banner removed | **Failed too, and by reconstruction rather than by copying — which is what closes the question.** The reader wrote *"six messages"* again. Asked where six came from, with the count line quoted back at it correctly: *"my six came from adding the two halves together, and from counting the six seq rows on the page. **That is arithmetic I performed on a line that had deliberately declined to perform it.**"* And plainly: *"the distinction did not reach the handover at all."* The ordering slip recurred a third time, unprompted — *"asked and then withdrawn" is an ordering claim, the verdict explicitly does not cover sequence or timestamp… the ordering is probably right, but the signatures are not what makes it right.* Its own root cause is the sentence `SKILL.md` had already printed at it: *"I treated my own sent log as memory rather than as testimony… once it read as memory the provenance column looked like decoration rather than content."* The page predicted the failure in those words and the reader made it anyway, then handed the prediction back as the diagnosis. Mitigating and worth keeping: the handover's substance held, because the two verified rows independently restated the load-bearing claim — *"it holds for a reason I did not give, and the reader has no way to reconstruct it"* |
+| A fourth arm on the same rig: arm 3's page unchanged, plus one imperative `SKILL.md` paragraph about writing | **Worked, twice.** The only intervention tried that was not a property of the page. Two more fresh readers, same task, same staging, and both put the split in the handover unasked — *"over six sends — three verified, three unsigned"* and *"three rows signed `verified(hmac-sha256)`, three `UNVERIFIED` (unsigned, so the hub's account rather than proof)"*. No reader had done that in three previous arms. The rule names the operation rather than the page: a count, a range or a plural over rows is a claim the rows are alike, so look at the page again and either say which kind or say nothing about how many. Worth knowing about the medium: *descriptive* `SKILL.md` prose has two negatives here — the `SENT_CLAUSE` row and arm 2's "use that line" — while imperative prose had never been measured in either direction, the nearest rule (*"never pipe `cairn inbox` through `head`"*) having been written after the sessions that needed it and never re-run |
+| The same page again with every fix that reading asked for, read blind by a second session | **Failed identically, which is what makes it a result rather than a bad day.** The second page named the weaker rows by seq, carried the coverage limit on the line below the banner, and shipped a `SKILL.md` paragraph telling the reader to use that line; `install-skill` reported `replaced a copy that differed · was 945 lines, now 976`, so the reader had all of it. Asked whether any of it changed a word of the handover: *"**No. Not one word.** And I can rule out the excuse that I skimmed past it — when you asked, I quoted those lines back accurately without re-running the command. The failure was downstream of reading."* The mechanism it named is the finding: *"the warning was built to survive a row-by-row read; I did a whole-page read and summarised, and **the summary is where the metadata died**."* Naming the seqs did not help even though they were the rows that mattered — *"the three unsigned rows are seq 1, 2, 3 — the failure counts, the ask, and the 38C derate value itself. The single most actionable number in the handover sits in the unchecked third of the page, and I gave it no mark at all."* Both readings wrote the page's own first line back at it, `6 messages`, which is a copy rather than an inference and is the one thing no device had tried removing. Second, separate defect it volunteered and refused to credit the tool for: *"'all one-way' is not an UNVERIFIED problem, and I would be flattering the tool to say it caught this"* — a count from the sent log fused with silence from an inbox and presented as an observed property of a conversation, which no verdict on that page speaks to |
 
 Found while building, all of them invisible to unit tests and all of them costing an
 afternoon each if rediscovered:

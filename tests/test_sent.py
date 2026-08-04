@@ -17,14 +17,29 @@ three inferences it could not support.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pytest
 
-from cairn import cli, provenance, render
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from cairn import cli, provenance, render, signing
 from cairn.store import SqliteStore
 from cairn.wire import Artifact, Message, SentEntry
 
-UNSIGNED_DETAIL = "hub does not sign yet"
+UNSIGNED_DETAIL = "no signature on this one"
+"""The tier-3 explanation on *this* surface, which is no longer the inbox's.
+
+`tests/test_render.py` and `tests/test_notes.py` still use `hub does not sign
+yet`, and that is correct there: nothing verifies a peer or an author, and the
+hub is still the thing that would have to. Here the sender signs, so an
+unverified row means something narrower — this particular row has no signature,
+because it predates the build or crossed an older hub. Two surfaces, two
+explanations, which is the whole reason `_provenance_notes` keys on the reason
+rather than on the surface.
+"""
 
 
 @pytest.fixture
@@ -52,6 +67,26 @@ def _entry(
         body=body,
         **kwargs,
     )
+    return SentEntry(message=message, provenance=provenance.assess_sent(message))
+
+
+def _verified_entry(seq: int = 1, cwd: Path | None = None) -> SentEntry:
+    """Return a row that really verifies, signed rather than hand-stamped.
+
+    Built by signing with the same key `assess_sent` will check against, so the
+    pass comes from the code under test rather than from a `Provenance` a test
+    constructed. A hand-made verdict would keep passing after `signing.canonical`
+    and `signing.verify` had stopped agreeing with each other, which is the one
+    failure this whole surface is downstream of.
+    """
+    draft = Message(
+        seq=seq,
+        kind="tell",
+        sender="bench/night-shift",
+        recipient="compute/traces",
+        body="capture is staged, filename n33-coldstart.ctf",
+    )
+    message = replace(draft, signature=signing.sign(draft, cwd))
     return SentEntry(message=message, provenance=provenance.assess_sent(message))
 
 
@@ -148,10 +183,23 @@ def test_the_sent_log_is_not_framed_as_peer_content():
 
 
 def test_the_log_says_it_is_the_hubs_record_rather_than_proof():
-    text = render.sent_text([_entry()], 1)
+    """And stops saying it once there is nothing on the page it is true of.
 
-    assert "does not sign" in text
-    assert "rather than proof you sent it" in text
+    This used to assert the literal `does not sign`, which was accurate for every
+    build up to the first cut of docs/design.md §12 item 9 and is now the
+    opposite of what a fully verified page shows. The clause survives — most
+    pages will carry an unsigned row for as long as anybody's log predates that
+    build — but it became a statement about the page rather than about the
+    product, and the half worth pinning is the one that would otherwise rot back:
+    a footnote telling the reader nothing was proven, printed directly under the
+    proof.
+    """
+    unsigned = render.sent_text([_entry()], 1)
+    assert render.RECORD_CLAUSE in unsigned
+    assert "rather than proof you sent it" in unsigned
+
+    verified = render.sent_text([_verified_entry()], 1)
+    assert render.RECORD_CLAUSE not in verified
 
 
 def test_the_log_says_it_is_not_a_record_of_what_was_answered():

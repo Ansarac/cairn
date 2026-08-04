@@ -1404,8 +1404,16 @@ def test_reading_notes_moves_no_cursor_and_leaves_the_pile_for_the_next_reader(h
     assert [m.body for m in hub.inbox("bench/firmware").messages] == ["unrelated mail, still unread"]
 
 
-def test_reading_the_same_pile_twice_from_the_command_line_prints_the_same_thing(hub, capsys):
-    """No cursor, no ack, no read state anywhere — the second reader sees exactly what the first did."""
+def test_reading_the_same_pile_twice_from_the_command_line_prints_the_same_thing(hub, capsys, pile_only):
+    """No cursor, no ack, no read state anywhere — the second reader sees exactly what the first did.
+
+    The anchor line is excluded, for the reason `test_walking_skeleton._pile_only`
+    argues at length: `notes` ends on `— hub clock <now>` taken from the response,
+    so comparing two whole readings of an unchanged pile is a coin weighted by
+    machine load. This is the second copy of that comparison in the suite and it
+    survived the sweep that found the first, because it names its variables
+    differently — which is the argument for one helper rather than two spellings.
+    """
     _join(hub, "bench/firmware")
     _wire_pile(hub, "bench/firmware", "rig-a")
     hub.write_note("bench/firmware", BODY, subject="rig-a")
@@ -1413,7 +1421,10 @@ def test_reading_the_same_pile_twice_from_the_command_line_prints_the_same_thing
     assert _cli(hub, "notes", "rig-a") == 0
     once = capsys.readouterr().out
     assert _cli(hub, "notes", "rig-a") == 0
-    assert capsys.readouterr().out == once
+    twice = capsys.readouterr().out
+
+    assert "— hub clock " in twice, "the anchor the dates are read against went missing"
+    assert pile_only(twice) == pile_only(once)
 
 
 # -- what an empty answer says, and the code it leaves ----------------------------

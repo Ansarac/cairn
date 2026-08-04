@@ -143,6 +143,19 @@ def require_identity(cwd: Path | None = None) -> str:
     return name
 
 
+def key_file(cwd: Path | None = None) -> Path:
+    """Return where this directory's signing key lives.
+
+    Public where `_identity_file` and `_pin_file` are private, because `signing`
+    is a different module and the slug scheme is the thing that must not be
+    reinvented: three kinds of per-directory state that disagreed about how a
+    path becomes a filename would be three kinds that silently stop matching
+    after a symlink or a rename. `signing` owns the key; this file owns where
+    per-directory state goes.
+    """
+    return state_dir() / "keys" / f"{_slug(cwd or Path.cwd())}.json"
+
+
 def _pin_file(cwd: Path | None = None) -> Path:
     return state_dir() / "pins" / f"{_slug(cwd or Path.cwd())}.json"
 
