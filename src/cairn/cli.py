@@ -1041,11 +1041,22 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
 
 def cmd_install_skill(args: argparse.Namespace) -> int:
-    """Install the bundled skill."""
+    """Install the bundled skill, and say which of the three cases it was.
+
+    Exit code stays 0 for all three: none of them is a failure, and `unchanged`
+    especially is the answer somebody re-running this wants to be told rather
+    than warned about. `skill.install_skill` argues why the case is worth a line.
+    """
     from cairn.adapters import default
 
-    target = skill.install_skill(default().skills_dir())
-    print(f"skill installed at {target}")
+    done = skill.install_skill(default().skills_dir())
+    if done.outcome == "unchanged":
+        print(f"skill at {done.path} · already identical, nothing written")
+    elif done.outcome == "created":
+        print(f"skill installed at {done.path} · created, {done.lines} lines")
+    else:
+        sizes = f"was {done.previous_lines} lines, now {done.lines}"
+        print(f"skill installed at {done.path} · replaced a copy that differed · {sizes}")
     _ = args
     return 0
 
