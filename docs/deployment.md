@@ -66,10 +66,29 @@ and it is two commands rather than one — *Upgrading a machine that runs agents
 below, has why the second one is the one that gets forgotten.
 
 ```bash
-docker compose cp hub:/var/lib/cairn/hub.db ./hub-$(date +%F).db   # first, always
+# First, always — and NOT `cp hub.db`. See below.
+docker compose exec -T hub python -c "import sqlite3; \
+  s=sqlite3.connect('file:/var/lib/cairn/hub.db?mode=ro',uri=True); \
+  d=sqlite3.connect('/tmp/backup.db'); s.backup(d); d.close()"
+docker compose cp hub:/tmp/backup.db ./hub-$(date +%F).db
 docker compose up -d --build
 docker compose logs -f        # watch it come up, not just start
 ```
+
+**`docker compose cp hub:/var/lib/cairn/hub.db` is not a backup, and it looks
+exactly like one.** The hub runs `PRAGMA journal_mode=WAL`, so recent writes live
+in the `hub.db-wal` sidecar until SQLite checkpoints them, and copying the main
+file alone silently leaves them behind. This page told you to do exactly that
+until 2026-08-04, when the pre-upgrade copy for the signing cut was taken on a
+live hub and measured first: `hub.db` was **348 KB against a 4.1 MB WAL** that
+had not been checkpointed in an hour. The copy would have opened, answered
+queries, and been missing roughly twelve times its own size in traffic — the
+worst shape a backup can have, because nothing fails until you need it.
+
+`sqlite3`'s backup API reads through the WAL and writes one consistent file, and
+it is in the standard library on both ends. Count the rows in the copy before
+you touch anything: 97 messages, 12 notes, 4 agents, 4 subjects, off-container,
+is what a real check looks like.
 
 The hub brings its own database up to date at open: it adds the columns a newer
 build needs and repairs data an older one could not have written. There is no
