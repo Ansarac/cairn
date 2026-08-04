@@ -109,7 +109,9 @@ def test_the_command_says_which_case_it_was(tmp_path, monkeypatch, capsys, prepa
     monkeypatch.setattr(claude_code, "skills_dir", lambda: dest)
     capsys.readouterr()
     assert cli.run(["install-skill"]) == 0
-    assert expected in capsys.readouterr().out
+    printed = capsys.readouterr().out.splitlines()
+    assert expected in printed[0], "the case belongs on the first line, ahead of the path"
+    assert str(dest / "SKILL.md") in printed[1], "and the path on the second"
 
 
 def _hook_input(event: str) -> str:

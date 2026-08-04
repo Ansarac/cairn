@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
-from cairn import __version__, config, notify, nudge, provenance, render, skill
+from cairn import build, config, notify, nudge, provenance, render, skill
 from cairn.client import HubClient
 from cairn.errors import CairnError, UsageError
 from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, SentEntry, WireError, normalize_subject
@@ -1104,18 +1104,12 @@ def cmd_install_skill(args: argparse.Namespace) -> int:
 
     Exit code stays 0 for all three: none of them is a failure, and `unchanged`
     especially is the answer somebody re-running this wants to be told rather
-    than warned about. `skill.install_skill` argues why the case is worth a line.
+    than warned about. `skill.install_skill` argues why the case is worth a line,
+    and `render.skill_installation` why the case comes before the path.
     """
     from cairn.adapters import default
 
-    done = skill.install_skill(default().skills_dir())
-    if done.outcome == "unchanged":
-        print(f"skill at {done.path} · already identical, nothing written")
-    elif done.outcome == "created":
-        print(f"skill installed at {done.path} · created, {done.lines} lines")
-    else:
-        sizes = f"was {done.previous_lines} lines, now {done.lines}"
-        print(f"skill installed at {done.path} · replaced a copy that differed · {sizes}")
+    print(render.skill_installation(skill.install_skill(default().skills_dir())))
     _ = args
     return 0
 
@@ -1183,10 +1177,35 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(detail)
 
 
+class _Version(argparse.Action):
+    """Print the version line, building it only when `--version` is actually passed.
+
+    `action="version"` takes a finished string, so the obvious form —
+    `version=build.describe()` — would run at `add_argument` time and put an
+    `importlib.metadata` scan of `sys.path` on **every** invocation of every
+    command. `cairn bell` runs at every single turn boundary and its docstring
+    commits to costing a `stat` and a small read rather than anything larger, so
+    the obvious form is the one that quietly regresses the hot path. Five lines
+    here buy that back; do not tidy them away.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: object,
+        values: object,
+        option: str = "",
+    ) -> NoReturn:
+        """Print and exit 0, as argparse's own version action does."""
+        _, _, _ = namespace, values, option
+        print(build.describe())
+        parser.exit()
+
+
 def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat statement per flag; splitting it hides the surface
     """Build the argument parser."""
     parser = _Parser(prog="cairn", description="Cross-machine messaging for coding agent sessions.")
-    parser.add_argument("--version", action="version", version=f"cairn {__version__}")
+    parser.add_argument("--version", action=_Version, nargs=0, help="show the version and which build this is")
     parser.add_argument("--hub", help="hub URL; overrides $CAIRN_HUB and the config file")
     sub = parser.add_subparsers(dest="command", required=True)
 

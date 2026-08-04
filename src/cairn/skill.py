@@ -69,7 +69,25 @@ def install_skill(dest_dir: Path) -> Installation:
     file's mtime saying when the skill last actually changed rather than when
     somebody last ran this command, which is the one piece of evidence available
     to whoever is trying to work out how long a machine has been reading the
-    wrong thing.
+    wrong thing. Measured on Windows, where a peer took md5 and mtime immediately
+    before and after: unchanged to the nanosecond, against a baseline on the same
+    file where an older build did move it.
+
+    **Compare the normalised text, never the bytes**, and the reason is not
+    visible from either line below on its own. `read_text` applies universal
+    newlines to both sides, so a CRLF copy and an LF copy compare equal — which
+    is correct — while `write_text` translates back on write. On Windows the
+    installed file is therefore permanently ~one byte per line larger than the
+    packaged one and has a different digest, *while being current*: 49811 bytes
+    against 48866, and 945 of those 945 lines account for the difference exactly.
+    The pair is self-consistent and the identical case is stable there by
+    construction rather than by luck.
+
+    The hazard is for a check nobody has written yet. Anything that decides
+    freshness by hashing file bytes will report every Windows machine as stale
+    forever, with no way for that machine to disagree — and the comparison on the
+    line below is already the correct implementation to copy. Line count is
+    comparable across platforms; md5 and byte count are not.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / "SKILL.md"

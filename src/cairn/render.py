@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from cairn.notify import Probe
+    from cairn.skill import Installation
     from cairn.wire import (
         Agent,
         Artifact,
@@ -885,6 +886,30 @@ def bell_reason(count: int) -> str:
     plural = "message" if count == 1 else "messages"
     pronoun = "it" if count == 1 else "them"
     return f"cairn: {count} unread {plural} from peer agents. Run `cairn inbox` to read {pronoun} — {CLAIM_CLAUSE}."
+
+
+def skill_installation(done: Installation) -> str:
+    """Say which of the three cases `install-skill` hit, then where.
+
+    **The verdict comes first and the path second**, which is a reversal of the
+    line cut 19 shipped. A peer on another machine, having been asked to run the
+    command and paste the output, made the argument: the path is what survives
+    anything that shortens the line and the case is what does not, "and the case
+    is the part you added". The reading half stands without the truncation half —
+    the one question this command exists to answer was sitting at the end of a
+    line that opens with a sixty-character absolute path under somebody's home
+    directory, and a reader scans from the left.
+
+    The three verdicts keep their exact wording, so what a peer quoted a cut ago
+    is still findable in what this prints now.
+    """
+    if done.outcome == "unchanged":
+        verdict = "already identical, nothing written"
+    elif done.outcome == "created":
+        verdict = f"created, {done.lines} lines"
+    else:
+        verdict = f"replaced a copy that differed · was {done.previous_lines} lines, now {done.lines}"
+    return f"cairn install-skill · {verdict}\n  {oneline(str(done.path))}"
 
 
 def bell_test_report(probe: Probe, count: int) -> str:
