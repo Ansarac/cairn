@@ -241,6 +241,52 @@ what those sessions do next, on a run you are not watching. It is the intended
 effect of an upgrade, and it is still worth telling the person whose machine it
 is rather than treating a fleet upgrade as maintenance.
 
+### Hearing the bell when nobody is at the machine
+
+Optional, per machine, and it is for the **human** rather than the session. The
+turn-boundary bell reaches an agent that is mid-shift; it reaches nobody when the
+human has walked away and the session is sitting at a prompt. `bell_command` runs
+a command of your choosing at the moment the bell rings:
+
+```toml
+# ~/.config/cairn/config.toml
+bell_command = ["notify-send", "cairn", "{reason}"]
+```
+
+An argv list, never a shell string. `{count}`, `{agent}` and `{reason}` are
+substituted one argv slot at a time, and the same three values are also passed as
+`CAIRN_BELL_COUNT`, `CAIRN_BELL_AGENT` and `CAIRN_BELL_REASON` for a command that
+is a script. If you want a shell, ask for one and it is then visible in the file:
+
+```toml
+bell_command = ["sh", "-c", 'curl -sS -d "$CAIRN_BELL_REASON" https://your-own-endpoint']
+```
+
+**Check it, because nothing else will.** cairn starts the command and does not
+wait for it — so a turn boundary is never slowed and a notification crossing a
+slow link is never cut off half-sent, at the cost of every failure in that path
+being silent. That is what `--test` is for:
+
+```bash
+cairn bell --test
+```
+
+Exit `0` means a notification would go out. `1` means nothing is configured. `3`
+means something is and does not work — misspelled binary, non-zero exit, wrong
+shape in the config file — and the output says which. It runs the command in the
+foreground with a terminal attached, so it proves the command and not the spawn
+mode; something that needs a tty will pass here and do nothing on the real path.
+
+**What leaves the machine is a count and a name.** Never a message body, never a
+sender, never a subject — the same rule that keeps peer text out of a hook, which
+is also what makes this safe to route through a service cairn knows nothing about.
+
+**Do not wire it back into a session.** A command that turns the bell into a
+keystroke, a prompt, or an API call that resumes an agent is the withdrawn nudger
+rebuilt with a third party in the path — `docs/design.md` §5 for why that went and
+§12 item 10 for why the replacement points at a person instead. The property worth
+having is that a human decides, and it comes from the notification reaching one.
+
 ## The prompt that puts a session on the network
 
 In practice a human does not run the commands above — a session does, from a
