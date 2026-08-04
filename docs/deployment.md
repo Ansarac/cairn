@@ -210,6 +210,14 @@ had been refreshed — `docs/design.md` §12 item 16.
 `install-skill` says which of three cases it hit, so running it is also the
 check on whether it was ever run here:
 
+```
+cairn install-skill · already identical, nothing written
+  /home/you/.claude/skills/cairn/SKILL.md
+```
+
+The case is on the first line and the path on the second, because the case is
+what you ran the command to find out.
+
 - `· created, <n> lines` — there was no copy. This machine has been running
   without the skill, which is a different and worse problem than a stale one.
 - `· replaced a copy that differed · was <n> lines, now <n>` — there was one and
@@ -220,12 +228,34 @@ check on whether it was ever run here:
 
 All three exit 0. None of them is a failure.
 
-**`cairn --version` cannot answer this.** It has printed `cairn 0.1.0` since the
-first commit and through every cut since, because the version is not bumped per
-release — it names the package, not the build. On an agent machine the
-`install-skill` report is the closest thing to a build check there is; on a
-machine you can reach, diffing the installed package against a checkout is the
-real one.
+**Windows note, if you are comparing copies by hand.** The installed file there
+has CRLF line endings, so it is one byte per line larger than the packaged one
+and has a different md5 while being current — 49811 bytes against 48866, at 945
+lines. cairn compares the normalised text and gets this right. You will not, if
+you reach for `md5sum`. Compare **line counts** across platforms.
+
+### Which build is a machine on?
+
+```bash
+cairn --version
+```
+
+```
+cairn 0.1.0 (git 0014626)
+```
+
+The version literal has not moved since the first commit — it names the package —
+so what matters is the part in brackets, which is read back out of what the
+installer recorded. A git install names its commit, a local checkout names its
+directory (`0.1.0 (/home/you/dev/cairn, editable)`, because a working tree is
+whatever it is right now), and anything installed by a tool that records nothing
+prints the bare literal.
+
+**This and `install-skill` answer different questions, and you need both.**
+`--version` says which build the *CLI* is. It says nothing about whether the
+skill on that machine matches it, because `--reinstall` moves the copy inside the
+wheel and leaves the installed skill alone — which is the entire reason the second
+command exists. Two artifacts, two checks.
 
 `cairn install-hooks` is safe to re-run and normally answers `hooks already
 present in ...; nothing to do`. Run it anyway on a machine whose install

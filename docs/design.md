@@ -2684,17 +2684,85 @@ framework-internal orchestration, not network protocols.
     `settings.json` has neighbours, so what the silent overwrite was missing is the report
     and not a merge.
 
-    **`cairn --version` cannot stand in for any of this.** It has printed `cairn 0.1.0`
-    since the first commit and through every cut since — the version names the package, not
-    the build — so on a machine you cannot reach, the `install-skill` report is the closest
-    thing to a build check that exists. `docs/deployment.md` gains *Upgrading a machine that
-    runs agents* beside the hub's own section for the same reason: `uv tool install
+    **`cairn --version` cannot stand in for any of this** — half of which is no longer
+    true, and the correction is item 20. It has printed `cairn 0.1.0` since the first commit
+    and through every cut since, because the version names the package and nothing bumps it
+    between releases. `docs/deployment.md` gains *Upgrading a machine that
+    runs agents* for the same reason: `uv tool install
     --reinstall` moves the copy inside the wheel and deliberately leaves the installed skill
     alone, so the CLI is new, the hub is reachable, every command works, and the sessions on
     that machine go on reading the previous skill for as long as nobody looks. Two commands,
     and the second is the one that gets skipped.
 
     Nothing in this cut crosses the hub, so `PROTOCOL_VERSION` does not move.
+
+20. **Both peer machines ran it, and one of them found the better answer.** **Done.**
+    Item 19 shipped a report that had only ever run on the machine that wrote it. It has
+    now run on two foreign machines, one Windows and one Linux, reached by `cairn ask`
+    rather than by anybody logging in. **Both hit `already identical, nothing written`**,
+    which is the boring branch, and one of them said so unprompted: *"you do NOT have
+    `created` or `replaced`. […] Saying it plainly rather than letting one green case read
+    as full coverage."* Producing either would have meant editing somebody else's installed
+    skill, which is a larger thing to do on a peer's box than the no-op that was asked for,
+    and it was offered rather than done. That gap is still open.
+
+    **The Windows reading is the stronger one, and not because of the message.** The peer
+    took md5 and mtime immediately before and immediately after: unchanged to the
+    nanosecond. On its own that is worth little — it is equally consistent with a skipped
+    write and with a write that preserves mtime. What made it evidence was an accident: the
+    same machine had been on a build 28 minutes earlier where the same file's mtime *did*
+    move on the same command. The peer named that itself: *"the 28-minute accident is doing
+    more work in this result than my method is."* So `unchanged` does not write is measured
+    on Windows, and the thing that measured it was a baseline nobody arranged.
+
+    **The version can identify itself, and item 19's conclusion was wrong.** Item 19 said
+    the `install-skill` report was the closest thing to a build check that exists. The same
+    peer, upgrading before it ran anything, noticed that `uv` had printed its two builds
+    apart — `78736ab` to `0014626` — while `--version` called both of them `cairn 0.1.0`.
+    The commit is not only in the install log: it persists in
+    `<dist-info>/direct_url.json` and needs no reinstall to read. `cairn --version` now
+    derives from it. Three answers, all of them real installs here rather than defensive
+    coding: `cairn 0.1.0 (git 0014626)` for the git installs every peer machine runs,
+    `cairn 0.1.0 (/path, editable)` for a checkout — where the honest answer is the
+    directory, because the working tree is whatever it is right now — and the bare literal
+    for anything installed by a tool that does not write the file.
+
+    **This does not replace item 19 and the distinction is the whole of item 19.**
+    `--version` answers which build the *CLI* is. Whether the *skill* on that machine
+    matches it is a different question with a different answer, because `--reinstall` moves
+    one and not the other. Two artifacts, two checks. What changes is that the second one
+    is no longer being asked to do the first one's job.
+
+    The peer's own measure of whether it was worth doing is the right one and is quoted
+    because it is a better test than "would this be tidy": *"that would have made this
+    entire exchange a single `cairn ask` answered in one line."*
+
+    **The reading is lazy, and that is not an optimisation.** `argparse`'s `version` action
+    takes a finished string, so the obvious form runs the lookup at parser-build time — on
+    every invocation of every command, `cairn bell` at every turn boundary included, whose
+    own docstring commits to costing a `stat` and a small read rather than an
+    `importlib.metadata` walk of `sys.path`. A five-line action defers it. There is a test,
+    because the tidy-up that removes it looks like a simplification.
+
+    **A hazard for a check nobody has written yet.** On Windows the installed `SKILL.md` is
+    permanently 945 bytes larger than the packaged one and has a different digest, *while
+    being current*: `read_text` normalises CRLF on both sides so the comparison is right,
+    and `write_text` translates back on write, which makes the identical case stable there
+    by construction rather than by luck. The consequence is that any future freshness check
+    hashing file **bytes** would report every Windows machine as stale forever, with no way
+    for that machine to disagree. Line count is comparable across platforms; md5 and byte
+    count are not. Written into `skill.install_skill`'s docstring, next to the comparison
+    that is already the correct implementation to copy.
+
+    **And the verdict moved to the front of the line.** The other peer made the argument:
+    the case is what a shortened line loses and the path is what survives, *"and the case is
+    the part you added"*. The truncation half is speculative — a terminal wraps rather than
+    cuts — but the reading half does not need it, since the one question the command answers
+    was sitting behind a sixty-character absolute path and readers scan from the left. The
+    three verdict strings are unchanged, so what a peer quoted a cut ago is still findable
+    in what this prints now.
+
+    Nothing here crosses the hub either, and `SKILL.md` is untouched again.
 
 ---
 
@@ -2757,6 +2825,10 @@ and is still untested.
 | The same bell, read off two machines running **different builds** of cairn | One word apart: `to read it` on the machine reinstalled from the working tree, `to read them` on the machine still on the published build — at the same count of 1, on the same event, minutes apart. Neither session knew a change existed. One of them found it anyway, by diffing its own two transcripts, and drew the right conclusion rather than the exciting one: *"I am not asserting the bell changed; I am reporting two recorded readings that differ in one word, and flagging that whichever of us is treating that string as a fixed literal should stop."* The bell carries no version marker, so an in-place CLI upgrade silently rewrites text peers may already have recorded. `PROTOCOL_VERSION` is not involved and nothing failed — the divergence sits entirely below it |
 | A session asked, after a context clear, which agent it is | `cairn whoami`, first call, exit 0 — and both sessions volunteered the epistemics unasked: *"found, not created; I ran no `cairn register`. I can establish that this session did not create it, not which earlier one did."* Identity is keyed to the working directory, so a cleared context is a session restart picking its name back up. Neither guessed a name and neither re-registered, which was the failure available to them |
 | `cairn sent`, read by a session whose context was cleared | Works as recovered memory, and one used it that way twice: to prove its registration predated the session (three sends under that name, timestamped before this context began) and to source an earlier bell it could no longer see. It labelled that second one precisely — *"my own past testimony rather than something I can see"* — which is the distinction the appendix's "sediment sitting in a mailbox" row is about, met from the useful side |
+| `cairn install-skill`, run on two machines that were not the one it was written on, reached by `cairn ask` | **`already identical, nothing written` on both**, Windows and Linux. Neither `created` nor `replaced` has been observed anywhere but the machine that wrote them, and one peer said so unasked rather than letting one green case read as coverage. Producing either would mean editing somebody else's installed skill; it was offered and declined |
+| The `unchanged` case not writing, checked by md5 and mtime either side of the command on Windows | Unchanged to the nanosecond — and worth little on its own, since that is equally consistent with a write that preserves mtime. What made it evidence was a build 28 minutes old on the same machine where the same file's mtime *did* move. The peer named the accident: *"the 28-minute accident is doing more work in this result than my method is"* |
+| An installed `SKILL.md` on Windows, compared byte-for-byte against the packaged copy | Permanently 945 bytes larger with a different digest, **while being current** — one byte per line, CRLF. Normalising it yields the packaged file's md5 exactly. `read_text` normalises both sides so the comparison is right and the identical case is stable by construction; any future freshness check hashing bytes would call every Windows machine stale forever |
+| `cairn --version`, asked to identify a build | `cairn 0.1.0` on every machine and every cut, while `uv` printed the two builds apart in the install log of the very same upgrade. The commit was on disk the whole time in `<dist-info>/direct_url.json`. Found by the peer that had been asked for something else entirely, whose own test of whether it was worth building is the one to keep: *"that would have made this entire exchange a single `cairn ask` answered in one line"* |
 | `cairn inbox --wait` returning mail that is not the mail you are waiting for | The case §12 item 3 is built around, met live and unforced. A session blocked waiting for its answer received instead the *mirror question* from the same peer, which was running the opposite half of the same errand. It read it, answered it, and waited again; the real answer came on the second wait. Its peer's request that it read with `--no-ack` could not be honoured for the same reason, and it said so: the question landed while it was already blocked, and **a wait is a read** |
 | Where a wait is run | Not mentioned anywhere in `SKILL.md` — the word "background" did not appear in it. Over one run the hub's own operator backgrounded **eight of eight** waits and never blocked, while two sessions reading the skill blocked on **every** one, including a 90-second wait that returned nothing, in front of the person who had just typed at them. The skill gave three screens to *how* to wait, half a sentence to *whether*, and nothing to *where*. Two agent sessions arriving at the same behaviour from the same page is a property of the page |
 | The nudger, given all three of its preconditions | **Worked, in under two seconds.** A `tell` at 10:36:48 put the line at the pane's prompt by 10:36:50, submitted; the session woke, loaded the skill unprompted and ran `cairn inbox`. It also picked the right session out of three sharing that directory and said which out loud. This is the only clean run the accelerator row ever got, and it is why §5 records that it was withdrawn for its preconditions rather than for failing |
