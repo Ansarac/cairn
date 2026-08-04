@@ -8,6 +8,13 @@ Every failure to reach the hub becomes `Unreachable` (exit code 2), and every
 refusal by the hub becomes `UsageError` (exit code 3). Keeping those apart is
 the difference between "nobody heard you" and "you asked for something that
 does not exist".
+
+A hub that will not accept this machine's token is neither, and becomes
+`Unauthorized` (exit code 4) — see `errors` for why it is kept out of both. It
+is the one HTTP status this module does **not** quote the hub's reply for: the
+hub cannot know where this machine's configuration lives, so the message is
+written locally, which incidentally keeps a wire-supplied string out of a new
+print path (invariant I1, column zero).
 """
 
 from __future__ import annotations
@@ -18,8 +25,8 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
-from cairn import signing
-from cairn.errors import Unreachable, UsageError
+from cairn import config, signing
+from cairn.errors import Unauthorized, Unreachable, UsageError
 from cairn.wire import (
     Agent,
     Artifact,
@@ -44,6 +51,9 @@ DEFAULT_TIMEOUT = 10.0
 
 HTTP_BAD_REQUEST = 400
 """The one status that means "you asked for something impossible", not "nobody heard you"."""
+
+HTTP_UNAUTHORIZED = 401
+"""The hub is up and will not talk to this machine. Neither of the two above."""
 
 STREAM_TIMEOUT = 60.0
 """Socket timeout for a bell stream. Must stay well above the hub's heartbeat.
@@ -75,6 +85,27 @@ class HubClient:
 
     # -- plumbing -------------------------------------------------------------
 
+    @staticmethod
+    def _authorize(request: urllib.request.Request) -> None:
+        """Attach this machine's token, if it has one.
+
+        Resolved per request rather than cached on the client, so a token set
+        after this object was built still works — clients here are built per
+        command and live for one call, and a cache would only be able to go
+        stale.
+
+        **Called from two places, and the second one is the whole reason this is
+        a method.** `stream()` builds its own `Request` because a bell stream is
+        not a `_call`, so an inline `add_header` in `_call` would secure every
+        route except the one nobody exercises in a unit test. That exact shape —
+        a defect living only in the stream path — has already cost this project
+        two bugs (`read` versus `read1`, and the inherited timeout), both
+        invisible until an end-to-end run.
+        """
+        secret = config.token()
+        if secret:
+            request.add_header("Authorization", f"Bearer {secret}")
+
     def _call(self, method: str, path: str, payload: dict[str, Any] | None = None, **query: Any) -> dict[str, Any]:  # noqa: ANN401
         url = f"{self.base_url}{path}"
         clean = {k: str(v) for k, v in query.items() if v is not None}
@@ -84,6 +115,7 @@ class HubClient:
         request = urllib.request.Request(url, data=data, method=method)  # noqa: S310 - scheme is ours, from config
         if data is not None:
             request.add_header("Content-Type", "application/json")
+        self._authorize(request)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
                 answer = loads(response.read())
@@ -94,6 +126,8 @@ class HubClient:
                 self.hub_time = str(answer.get("t") or self.hub_time)
                 return answer
         except urllib.error.HTTPError as exc:
+            if exc.code == HTTP_UNAUTHORIZED:
+                raise Unauthorized(self.base_url) from exc
             detail = _error_detail(exc.read())
             if exc.code == HTTP_BAD_REQUEST:
                 raise UsageError(detail) from exc
@@ -407,11 +441,14 @@ class HubClient:
         url = f"{self.base_url}/v1/events?{urllib.parse.urlencode({'agent': agent})}"
         request = urllib.request.Request(url, method="GET")  # noqa: S310 - scheme is ours, from config
         request.add_header("Accept", "text/event-stream")
+        self._authorize(request)
         try:
             response = urllib.request.urlopen(request, timeout=timeout)  # noqa: S310
         except urllib.error.HTTPError as exc:
             # HTTPError subclasses URLError, so it has to be caught first or a
             # "you asked for something impossible" turns into "nobody heard you".
+            if exc.code == HTTP_UNAUTHORIZED:
+                raise Unauthorized(self.base_url) from exc
             detail = _error_detail(exc.read())
             if exc.code == HTTP_BAD_REQUEST:
                 raise UsageError(detail) from exc

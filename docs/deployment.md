@@ -42,22 +42,45 @@ needs `sudo` — that is a fact about the host, not about cairn.
 
 ### Read this before it touches a network
 
-**cairn does not authenticate and does not sign.** Anyone who can route to the
-hub can register any name and take delivery of everything addressed to it from
-that moment on. That is measured rather than feared: registering an existing
-name from another directory on another machine against a live hub replaced the
-holder in `cairn peers` and started delivering its mail elsewhere.
+**A hub with no token authenticates nobody, and that is the default.** Anyone
+who can route to it can register any name and take delivery of everything
+addressed to it from that moment on. That is measured rather than feared:
+registering an existing name from another directory on another machine against a
+live hub replaced the holder in `cairn peers` and started delivering its mail
+elsewhere.
 
-Two things soften it and neither is access control. A takeover is parked at the
-head, so an impostor gets the future of a conversation and not its past; and it
-is announced at both ends — the registration says what it stepped over, and the
-sender's directory pins each name to what it first reached, so a name that moves
-raises `NameMoved` instead of quietly going somewhere else.
+Set `CAIRN_TOKEN` on the hub and on every agent machine and that stops being
+true of strangers:
 
-The honest summary is the one in `docs/design.md` §11 item 3: the network it
-runs on is trusted, and the alternative is having no hub until signing lands.
-On a wider network, bind it to one interface, or put it behind something that
-does authenticate.
+```bash
+# On the hub. Once this is set, everyone without it is locked out — read the
+# ordering note below before you run it.
+CAIRN_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+```
+
+**What a token buys, stated no wider than it goes.** It turns *anyone who can
+route here* into *anyone holding the token*. It is access control and nothing
+else. Every agent machine shares the one secret, so it does **not** stop a peer
+machine from registering a name that is not its own, and it does not make a
+message's sender any more proven than it was: `cairn inbox` prints `UNVERIFIED`
+on peer mail exactly as before, because no check ran on the machine doing the
+reading. That is `docs/design.md` §12 item 9, and it is still open.
+
+**The order is forced.** The hub reads the token once at startup, and rejects
+everyone without it from that instant. So: upgrade every agent machine first,
+give each one the token, and only then set it on the hub and restart. Getting
+this backwards locks out the machines you would use to tell people what
+happened.
+
+Two things soften an open hub and neither is access control. A takeover is
+parked at the head, so an impostor gets the future of a conversation and not its
+past; and it is announced at both ends — the registration says what it stepped
+over, and the sender's directory pins each name to what it first reached, so a
+name that moves raises `NameMoved` instead of quietly going somewhere else.
+
+For an open hub the honest summary is still `docs/design.md` §11 item 3: the
+network it runs on is trusted. On a wider network, set a token, bind it to one
+interface, or both.
 
 ### Upgrading the hub
 
@@ -432,13 +455,17 @@ cairn peers
 ```
 
 Exit 0 with the first machine's agent listed is the answer you want. The other
-two exit codes are the diagnosis:
+exit codes are the diagnosis:
 
 - **1** — it reached the hub and there is nobody else there. The other machine
   has not registered, or registered against a different hub.
 - **2** — it did not reach the hub at all. Port, firewall, or `CAIRN_HUB`.
+- **4** — the hub is up and would not accept this machine's token. Nothing about
+  the network is wrong; `CAIRN_TOKEN` here does not match the hub's.
 
-`1` and `2` are never interchangeable, and that is why they are separate.
+`1` and `2` are never interchangeable, and that is why they are separate. `4` is
+separate from `2` for the next reason along: waiting will fix an outage and will
+never fix a credential, so a script that retries on `2` must not retry on `4`.
 
 Then a round trip. On the second machine:
 

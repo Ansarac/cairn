@@ -517,7 +517,9 @@ class SentEntry:
 
     Not `InboxEntry`, and the difference is not cosmetic. An inbox entry is
     somebody else's words arriving; this is the hub's account of **your own**,
-    handed back over a connection cairn does not authenticate. The verdict
+    handed back by a hub this machine has no way to hold to account. A token
+    changes nothing here and is worth saying so: it proves this client to the
+    hub, never the hub to this client. The verdict
     therefore qualifies a different thing — on the inbox `UNVERIFIED` means "we
     cannot prove who sent this", here it means "we cannot prove you sent this" —
     which is why `provenance.assess_sent` is its own seam and why the two

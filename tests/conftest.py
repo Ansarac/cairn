@@ -20,6 +20,14 @@ they run after this and their `setenv` wins.
 `XDG_CONFIG_HOME` goes with it for the same reason one step earlier — nothing in
 the suite should be able to read the maintainer's `bell_command`, and a test that
 depends on the host's config file is a test that passes here and fails in CI.
+
+`CAIRN_TOKEN` is **unset** rather than redirected, and it is the one here that is
+not hypothetical. Redirecting the config root does nothing about an environment
+variable, and the rollout for hub authentication ends with that variable set in
+the operator's own shell on the machine this suite is developed on. Left alone,
+every test would then authenticate against hubs that require nothing, and the
+tests that assert an *open* hub's behaviour would be measuring the wrong arm on
+exactly one machine — the maintainer's. Tests that want a token set it themselves.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ def _isolate_xdg(tmp_path_factory, monkeypatch):
     root = tmp_path_factory.mktemp("xdg")
     monkeypatch.setenv("XDG_STATE_HOME", str(root / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "config"))
+    monkeypatch.delenv("CAIRN_TOKEN", raising=False)
 
 
 @pytest.fixture

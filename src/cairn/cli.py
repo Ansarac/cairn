@@ -9,10 +9,13 @@ Exit codes, which a script may rely on:
     1    it worked, and the answer is "nothing" — empty inbox, no peers
     2    the hub could not be reached
     3    the command cannot be carried out as asked
+    4    the hub refused this machine's token
     130  interrupted
 
 `1` and `2` mean opposite things and must never be collapsed. "No mail" is an
-answer; "no hub" is a broken pipe.
+answer; "no hub" is a broken pipe. `4` is out of `2` for the next reason along:
+a retry fixes an outage and will never fix a credential. `errors.py` has both
+arguments in full.
 """
 
 from __future__ import annotations
@@ -1095,7 +1098,9 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
     db = Path(args.db).expanduser()
     db.parent.mkdir(parents=True, exist_ok=True)
-    serve(SqliteStore(db), host=args.host, port=args.port)
+    # Resolved here rather than inside `serve`, so `hub.py` goes on knowing
+    # nothing about where this machine keeps its configuration.
+    serve(SqliteStore(db), host=args.host, port=args.port, token=config.token())
     return 0
 
 

@@ -921,10 +921,16 @@ or messaging. Not competitors; potentially complementary.
    fails when it stops being true. `just hub` is still the foreground way to run one, and
    `just hub-dev` the throwaway; the container is what a deployed hub is.
 
-   Binding it to a network is not free while item 4 below is unresolved. cairn does not
-   authenticate and does not sign — which is why `cairn inbox` prints `UNVERIFIED` on
-   every message — so **anyone who can route to the hub can register any name and read
-   every message addressed to it.** That is measured, not feared: registering an existing
+   Binding it to a network is not free while item 4 below is unresolved. **A hub with
+   no token still authenticates nobody**, and that is the default, so **anyone who can
+   route to it can register any name and read every message addressed to it.** §12 item
+   23 added the door — `CAIRN_TOKEN` on both ends — and it is worth being exact about
+   which half of this paragraph it closed. It turns *anyone who can route here* into
+   *anyone holding the token*, and stops there: one secret is shared by every agent
+   machine, so it is access control and never provenance. `cairn inbox` prints
+   `UNVERIFIED` on peer mail before and after, because no check ran on the reading
+   machine. Everything below this sentence is what an open hub still costs, and what a
+   secured one still costs from a peer rather than a stranger. That is measured, not feared: registering an existing
    name from another directory on another machine against a live hub replaced the holder
    in `peers` and took delivery of everything addressed to it from that moment on (§9).
    The backlog no longer comes with it — the hub parks a takeover at the head — so what
@@ -932,8 +938,13 @@ or messaging. Not competitors; potentially complementary.
    speak as its owner, not its past. Read §9 for what was closed; the sentence above is
    what stayed open. The takeover report and the sender-side pin make it loud at both
    ends, which is I3 working as designed — a declaration, not enforcement — and loud is
-   not access control; neither should ever be described as if it were. It is accepted on the same terms as the outage above: the network it runs on
-   is trusted, and the alternative is having no hub until §12 item 9 lands.
+   not access control; neither should ever be described as if it were. For an **open**
+   hub this is accepted on the same terms as the outage above: the network it runs on is
+   trusted. For a **secured** one it is what remains, and the shape has changed rather
+   than shrunk — the impostor is now necessarily a machine that already holds the token,
+   which is to say a peer rather than a stranger. Nothing in a shared secret separates
+   two holders of it, and nothing was ever going to; that is §12 item 9's job and it is
+   still open.
 4. **Identity and signing.** Per-agent Ed25519 keypair generated at `cairn register` with
    the hub countersigning, or a shared-secret HMAC for v1 with keys added later. I1
    requires only that whatever is chosen is *actually verified client-side*.
@@ -3049,6 +3060,99 @@ framework-internal orchestration, not network protocols.
     moves by `scp` and a changed `CAIRN_HUB`, per §11 item 3), and telling the
     peers — which is the next thing to happen and wanted a published release to
     point at.
+23. **A door on the hub.** **Done.** `CAIRN_TOKEN`, or `token` in the config file,
+    on both ends. Unset — the default, and every build before this one — is a hub
+    that authenticates nobody. Set, and every route but `/v1/health` needs
+    `Authorization: Bearer <token>`.
+
+    **What it buys is narrower than the word "authentication", and the whole cut
+    is arranged around saying so.** It turns *anyone who can route to the hub*
+    into *anyone holding the token*. One secret is shared by every agent machine,
+    so nothing in it separates two holders: a peer machine can still register a
+    name that is not its own. §11 item 3's hole is not closed, it is resized, and
+    the paragraph there now says which half went.
+
+    **The line this cut must not cross, and it will look like a bug fix to whoever
+    crosses it.** Authenticating a *connection* says nothing about who wrote a
+    *message*, and the hub cannot fix that by asserting an answer — a verdict is
+    worth exactly the check that produced it, and no check ran on the reading
+    machine. That is not a rule derived from first principles here; it is the
+    finding `provenance`'s docstring is built from, where an agent refused a
+    `verified_by: "cairn-hub"` field on those grounds. So `cairn inbox` prints
+    `UNVERIFIED` on peer mail before and after, and the assertion lives end to end
+    in `test_walking_skeleton.py` — real hub, real token, real reading, real bell
+    — rather than as a unit test, because the thing being protected is what a
+    reader sees.
+
+    **Off unless configured, and that is what makes it deployable.** Three
+    machines, one maintainer, and a hub that reads its token once at startup: the
+    moment it has one, everybody without it is locked out, including the machines
+    you would use to tell people. So the default had to stay the old behaviour,
+    the code could land without changing anything anywhere, and enabling it is a
+    separate ordered operation — upgrade the agents, give them the token, then set
+    it on the hub. `compose.yaml` passes it through from the environment so that
+    last step is a restart and not a rebuild.
+
+    **A shared secret, and the dependency argument never came up.** §11 item 4 is
+    blocked on whether `dependencies = []` survives, because peer *signature*
+    verification needs an asymmetric primitive the stdlib does not have. Access
+    control needs none: `hmac.compare_digest` against a string. The two questions
+    look adjacent and are not, which is worth recording because the next reader
+    will expect this cut to have unblocked item 4 and it did not touch it.
+
+    **`/v1/health` stays open, and degrades instead.** `compose.yaml`'s healthcheck
+    calls it from inside the container with no credential, so a hub that reported
+    unhealthy the instant it was secured would be discovered by the person who had
+    just turned authentication on, at the moment they were least able to
+    investigate. It answers `{"ok": true}` to anyone and adds the agent count only
+    for an authenticated caller — that count being the one thing the route knows
+    that a stranger should not.
+
+    **Two things the shape of the code decided rather than a preference.** The
+    token is passed into `make_server` rather than read from `config`, which is
+    why `hub.py` still imports nothing but `errors`, `events` and `wire`: choosing
+    this machine's secret is the caller's job in exactly the way choosing the
+    database is. And the 401 is answered *before* the route lookup, so 404 and 401
+    cannot be diffed by an unauthenticated caller into a map of which routes exist.
+
+    **Exit 4, kept out of 2.** A script's correct response to the two is opposite —
+    an outage may clear, a wrong credential never will — which is the same argument
+    `errors.py` already made for why 1 and 2 cannot collapse. The message is written
+    on this machine rather than quoted from the hub's reply, because the hub is the
+    one party that cannot know where this machine keeps its configuration; that it
+    also keeps a wire-supplied string out of a new print path (I1, column zero) is
+    a second reason and not the first.
+
+    **The bug this cut created and then found was in neither of those places.** A
+    401 answered without reading the POST body leaves that body in the socket where
+    HTTP/1.1's next request line belongs. Measured on a keep-alive client: POST
+    refused, then `GET /v1/health` on the same connection came back **400**, for a
+    reason having nothing to do with what it asked. cairn's own client cannot reach
+    it — `urllib` opens a fresh connection every time — so it is latent rather than
+    live, and it needed a test written against `http.client` to see at all. The
+    casualty of a missing drain is never the request you refused.
+
+    Two things found by accident on the way, neither about authentication. A
+    `zip(events, range(1))` over a bell stream pulls from the stream *before* it
+    notices the counter is exhausted, so it blocks a whole heartbeat on a quiet hub
+    — which presented as a hung test and was briefly blamed on the drain above.
+    And `conftest.py` isolated both XDG roots but not `CAIRN_TOKEN`, which this
+    cut's own rollout is about to set in the maintainer's shell — the suite would
+    then have measured the secured arm on exactly one machine in the world.
+
+    **`PROTOCOL_VERSION` stays at `1`, and `wire.py` is in the diff anyway** — the
+    third worked example that constant's docstring did not have, and the easiest
+    of the three. A token is a transport header, not a message field: no shape
+    changed, no route changed, nothing is stored. What changed in that file is one
+    docstring, because `SentEntry`'s said the hub's account came back *"over a
+    connection cairn does not authenticate"*, which this cut makes false in a way
+    that flatters it. The true version is narrower and survives either
+    configuration: a token proves the client to the hub and never the hub to the
+    client. A `git diff` on `wire.py` is a prompt to check, not an answer.
+
+    `SKILL.md` is untouched, and this time for a duller reason than item 21's: an
+    agent does not configure a hub, and exit 4 arrives with a message that already
+    says what to do. It would gain a paragraph to skip.
 
 ---
 

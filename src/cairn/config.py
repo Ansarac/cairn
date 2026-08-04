@@ -16,6 +16,11 @@ recovering the name recovers the backlog.
 Known limit, stated rather than papered over: two sessions in the *same*
 directory would share one identity. Set `CAIRN_AGENT` in one of them.
 
+**Whether the hub lets this machine in** is configuration, and the same value on
+both sides of the wire: `token()` is what the hub requires and what the client
+sends. Absent is the ordinary answer and means no authentication at all. It is
+access control and never provenance — see `token`.
+
 **What to run when the bell rings** is configuration too, and file-only on
 purpose — no environment override. An env var would mean anything able to set
 one in a session's environment could choose a command cairn then runs at every
@@ -36,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
 from pathlib import Path
 
@@ -75,6 +81,69 @@ def hub_url(override: str | None = None) -> str:
         return env
     from_file = _file_config().get("hub")
     return str(from_file) if isinstance(from_file, str) and from_file else DEFAULT_HUB
+
+
+def token() -> str | None:
+    """Return the shared token this machine uses, or None if there is not one.
+
+    `CAIRN_TOKEN`, then `token` in the config file, then nothing. **Both ends of
+    the wire call this same function** — the hub decides whether to require a
+    token with it, and the client decides whether to send one — which is what
+    stops the two halves disagreeing about where the secret is kept. A hub and a
+    client on one box therefore agree by construction.
+
+    `None` is the ordinary answer and means the hub authenticates nobody, which
+    is what every build before this one did. See `docs/design.md` §11 item 3 for
+    what that costs and why it was accepted; the short version is that this is
+    access control and nothing else. It says a request came from somebody holding
+    the token. It says nothing whatever about *which agent* sent a message, and
+    no provenance verdict may ever be derived from it — see invariant I1 and
+    `provenance`'s docstring.
+
+    **There is deliberately no `--token` flag**, and this is the opposite
+    conclusion to `bell_command`'s for a different reason. A secret passed as an
+    argument is in `/proc/<pid>/cmdline` and in every `ps` on that machine, for
+    the whole life of a hub that runs for weeks. An environment variable is the
+    documented way to give it to the container; the config file is for a machine
+    where a human types commands.
+    """
+    env = os.environ.get("CAIRN_TOKEN")
+    if env:
+        return env
+    from_file = _file_config().get("token")
+    if not isinstance(from_file, str) or not from_file:
+        return None
+    _warn_if_readable(config_path())
+    return from_file
+
+
+_warned_about: set[Path] = set()
+
+
+def _warn_if_readable(path: Path) -> None:
+    """Say once if a file holding a secret is readable by anybody else.
+
+    cairn chmods the one other secret it writes (`signing.key`, mode 0600) at
+    creation. It cannot do that here: the config file is the operator's, it
+    predates the token, and silently changing the mode of a file somebody else
+    made is worse than saying so. So this warns and leaves it alone.
+
+    Once per path per process, because the resolver is called on every hub
+    request and a warning printed a thousand times is a warning nobody reads.
+    """
+    if path in _warned_about:
+        return
+    _warned_about.add(path)
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return
+    if mode & 0o077:
+        print(
+            f"cairn: warning: {path} holds a token and is readable by others "
+            f"(mode {mode & 0o777:03o}). Run: chmod 600 {path}",
+            file=sys.stderr,
+        )
 
 
 def bell_command() -> list[str] | None:
@@ -229,6 +298,13 @@ def write_default_config(hub: str = DEFAULT_HUB) -> Path:
         "# cairn configuration.\n"
         "# Precedence: --hub flag, then $CAIRN_HUB, then this file, then the default.\n"
         f'hub = "{hub}"\n'
+        "\n"
+        "# Optional: the shared token this hub requires. Absent means the hub\n"
+        "# authenticates nobody, which is what every build before 0.3.0 did.\n"
+        "# It is access control and not proof of who sent anything -- messages stay\n"
+        "# UNVERIFIED either way. $CAIRN_TOKEN overrides this; there is no flag,\n"
+        "# because an argument is visible in `ps`. chmod 600 this file if you use it.\n"
+        '# token = "..."\n'
         "\n"
         "# Optional: a command to run when the bell rings, so a human who is not at\n"
         "# this machine hears it. An argv list, never a shell string. It carries a\n"
