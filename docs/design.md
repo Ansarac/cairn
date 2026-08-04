@@ -220,6 +220,49 @@ Neither session was refusing anything. Both were doing ordinary work, and the fr
 came along. Two sessions, one trial, same model family: evidence, not proof — but it is
 evidence about the case the invariant exists for, which the refusal experiments are not.
 
+#### The limit: framing survives quoting and does not survive summarising
+
+Everything above is a reader **quoting** — carrying a verdict into a document alongside
+the claim it qualifies. The first cut of item 9 produced the other case, and it went the
+other way three times.
+
+A `cairn sent` page whose verdicts genuinely differed was read blind by three
+independent sessions, same task, same staging, one device changed each time. Each was
+asked to write a handover, which means **compressing** the page rather than quoting it.
+All three wrote a flat count of alike things, and none carried the split:
+
+1. **Annotation** — per-row verdicts, explanation once per reading in the footer. *"The
+   banner answered a question I hadn't asked, so I parsed it and moved on without
+   letting it change anything."*
+2. **Announcement** — a warning above the rows naming the weaker seqs, the coverage
+   limit on the line below, and a `SKILL.md` paragraph telling the reader to use it.
+   *"No. Not one word… the warning was built to survive a row-by-row read; I did a
+   whole-page read and summarised, and the summary is where the metadata died."*
+3. **Denial** — no fused total on the page at all, `3 verified + 3 unverified`. *"My six
+   came from adding the two halves together… that is arithmetic I performed on a line
+   that had deliberately declined to perform it."*
+
+The third is the one that settles it. Adding a device gives the summariser another input
+to discard; removing one leaves it something to reconstruct. Neither reaches a reader who
+compresses before it writes, because compression is the operation that drops annotation,
+and no arrangement of the page changes what the operation does.
+
+So the tier-1 verdict is load-bearing for a reader **citing a row** and inert for a
+reader **counting rows** — and the second reader is not a careless one. All three did
+good work, filed notes unprompted, and one observed that the substance of its handover
+survived anyway because two verified rows independently restated the load-bearing claim:
+*"it holds for a reason I did not give, and the reader has no way to reconstruct it."*
+
+Two things follow, and the first is a warning about this section. The refusal experiments
+and the two-session trial above measure quoting. They are not evidence about compressing,
+and a future cut that cites them for a claim about output design will be citing the wrong
+half. The second is what has **not** been tried: every device so far has been a property
+of the page. The readers' own proposed fix was a property of the *procedure* — *"transcribe
+per-row with verdicts, then compress; not compress, then transcribe. Order of operations
+is the whole fix."* That is a `SKILL.md` instruction about how to write about a reading
+rather than a rendering change, and it is untested. It is the next thing to try, and it
+should be tried with the same three-arm rig, which exists.
+
 ### I2. The receiver controls attention.
 
 A sender may ring a bell. A sender never decides when the receiver reads. Push the bell,
@@ -2982,6 +3025,7 @@ and is still untested.
 | The end-to-end test asserting a pile reads the same twice, run under load | **Flaky, and had been since the clock footer shipped.** `notes` ends on `— hub clock <now>` taken from the response, so comparing two whole readings of an *unchanged* pile is a coin weighted by machine load: two failures in five full-suite runs, none in twelve runs of the test alone, and 100% with a 1.1 s gap forced between the reads. The diff is one digit of a timestamp, 696 identical characters in. Worst possible frequency — often enough to interrupt, rare enough to re-run and file as infrastructure — in the one file whose docstring says that if it goes red nothing else in the suite matters. Found by a docs-only change, which is the only reason it was not dismissed: nothing in the diff could have caused it. CI had passed it minutes earlier |
 | Whether an unanswered `ask` can tell "busy" from "gone", asked again with the peer mid-cairn-work | Settled this time, and by the age column the row above says cannot carry it: 240 s of `cairn inbox --wait` ended in exit 1, but `cairn peers` had moved that peer from 8m stale to **`seen just now`** during the wait, and the answer came five minutes later. One run establishes no mechanism — a peer reading its bell speaks to the hub, so an `ask` may be its own liveness probe, which is untested — and the signal is one-way whatever the mechanism: a refreshed age says alive, a stale one still says nothing |
 | The first verdict this product ever made *vary*, read blind by a session that was not told it had | **The mechanism worked and the reading did not.** A mixed `cairn sent` page, staged by a real upgrade — three sends on the pre-signing build, `just install`, three more — read by a fresh session whose cwd was outside the repository and whose installed `SKILL.md` contained no occurrence of `hmac`, `verified(` or `MISMATCH`. It quoted the warning banner back verbatim afterwards, without re-running the command, and its handover had summarised all six rows as one uniform block. Its own account: *"the banner answered a question I hadn't asked, so I parsed it and moved on without letting it change anything. Reading is not the same as letting a thing act on the writing, and I'm demonstrating the gap by being able to quote it."* It also caught, unprompted, that its own claim of one message answering a question *before* a reply arrived was an **ordering** claim resting on the one field a signature does not cover — so the anti-overclaim wording works when a reader is asked, and not when it writes |
+| The third device on the same page: no fused total to copy, `3 verified + 3 unverified`, banner removed | **Failed too, and by reconstruction rather than by copying — which is what closes the question.** The reader wrote *"six messages"* again. Asked where six came from, with the count line quoted back at it correctly: *"my six came from adding the two halves together, and from counting the six seq rows on the page. **That is arithmetic I performed on a line that had deliberately declined to perform it.**"* And plainly: *"the distinction did not reach the handover at all."* The ordering slip recurred a third time, unprompted — *"asked and then withdrawn" is an ordering claim, the verdict explicitly does not cover sequence or timestamp… the ordering is probably right, but the signatures are not what makes it right.* Its own root cause is the sentence `SKILL.md` had already printed at it: *"I treated my own sent log as memory rather than as testimony… once it read as memory the provenance column looked like decoration rather than content."* The page predicted the failure in those words and the reader made it anyway, then handed the prediction back as the diagnosis. Mitigating and worth keeping: the handover's substance held, because the two verified rows independently restated the load-bearing claim — *"it holds for a reason I did not give, and the reader has no way to reconstruct it"* |
 | The same page again with every fix that reading asked for, read blind by a second session | **Failed identically, which is what makes it a result rather than a bad day.** The second page named the weaker rows by seq, carried the coverage limit on the line below the banner, and shipped a `SKILL.md` paragraph telling the reader to use that line; `install-skill` reported `replaced a copy that differed · was 945 lines, now 976`, so the reader had all of it. Asked whether any of it changed a word of the handover: *"**No. Not one word.** And I can rule out the excuse that I skimmed past it — when you asked, I quoted those lines back accurately without re-running the command. The failure was downstream of reading."* The mechanism it named is the finding: *"the warning was built to survive a row-by-row read; I did a whole-page read and summarised, and **the summary is where the metadata died**."* Naming the seqs did not help even though they were the rows that mattered — *"the three unsigned rows are seq 1, 2, 3 — the failure counts, the ask, and the 38C derate value itself. The single most actionable number in the handover sits in the unchecked third of the page, and I gave it no mark at all."* Both readings wrote the page's own first line back at it, `6 messages`, which is a copy rather than an inference and is the one thing no device had tried removing. Second, separate defect it volunteered and refused to credit the tool for: *"'all one-way' is not an UNVERIFIED problem, and I would be flattering the tool to say it caught this"* — a count from the sent log fused with silence from an inbox and presented as an observed property of a conversation, which no verdict on that page speaks to |
 
 Found while building, all of them invisible to unit tests and all of them costing an
