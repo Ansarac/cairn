@@ -838,8 +838,16 @@ or messaging. Not competitors; potentially complementary.
    and now binds `0.0.0.0` against `~/.local/state/cairn/hub.db`. A container image with
    a compose file is the intended endpoint, preferred over a systemd unit because it
    moves the way the hub itself moves: the same `scp` and changed `CAIRN_HUB` as above,
-   with the runtime carried along rather than rebuilt on the far side. Nobody has built
-   it yet.
+   with the runtime carried along rather than rebuilt on the far side.
+
+   **That is what runs, and this paragraph said otherwise for twenty-three merges.**
+   `Dockerfile` and `compose.yaml` landed in the first cut after this section was
+   written; `docs/deployment.md` carries the operating half, down to the named volume and
+   the healthcheck; and item 17 below is an incident report about upgrading the running
+   container. The sentence that used to end here — *nobody has built it yet* — went on
+   being read as current the whole time, because nothing about a status claim in prose
+   fails when it stops being true. `just hub` is still the foreground way to run one, and
+   `just hub-dev` the throwaway; the container is what a deployed hub is.
 
    Binding it to a network is not free while item 4 below is unresolved. cairn does not
    authenticate and does not sign — which is why `cairn inbox` prints `UNVERIFIED` on
