@@ -2974,6 +2974,81 @@ framework-internal orchestration, not network protocols.
     **`SKILL.md` is untouched, deliberately.** The reading has been confirmed to
     work by the session that wrote it, which item 18 is precisely the record of
     not being enough. It needs an independent reader first.
+22. **Twenty-one cuts and no releases.** **Done.** `v0.2.0` is the first tag this
+    repository has ever carried. Pushing one runs the ordinary CI, and a `release`
+    job behind it builds the wheel and opens a **draft** release with the artifacts
+    attached. `just release <version>` is the way in.
+
+    **The reason is a sentence somebody has to say to another human**, not a
+    packaging goal. Two peer machines are behind on both CLI and skill, and the
+    thing to tell their operators was *"reinstall from main"* — a request with no
+    subject, no way to confirm afterwards, and nothing to point at if it goes
+    wrong. `v0.2.0` is a name. That is the whole return, and it is worth the cut
+    only because item 16 measured what happens when an upgrade is asked for
+    vaguely: a machine whose own handoff said it had been refreshed was 129 lines
+    behind.
+
+    **The install story deliberately did not change.** Peers still install from
+    `git+…` tracking `main`, so a release is a label on history rather than the
+    thing that gets deployed. Pinning was considered and rejected on the shape of
+    this project: two machines, one maintainer, and fixes that are typically an
+    hour old when the other end needs them. A pinned fleet sits still until
+    somebody cuts a release, and nobody here is going to cut one per fix. So
+    `--version` reads `cairn 0.2.0 (git <sha>)` and **the sha is still the only
+    honest half** — `build.py`'s docstring now says so directly, because a real
+    version number is more inviting to stop at than the constant it replaced.
+
+    **`0.2.0` and not `1.0.0`.** `PROTOCOL_VERSION` is the wire contract and is
+    untouched here; `__version__` names the package and nothing else. A `1.0.0`
+    would be a claim about stability made in the same week as item 8 (`claim`,
+    deferred four times now for want of evidence), item 9's remaining two thirds,
+    and §11 item 4 — the last of which has to reopen `dependencies = []` before it
+    can be answered at all. The number is not a milestone, and pretending it is one
+    would cost the next real decision its room.
+
+    **The version guard checks the wheel, not the source.** `build.py` exists
+    because a declaration is worth less than what the artifact says, and the same
+    logic applies one level up: the job asserts that `dist/cairn-<tag>-py3-none-any.whl`
+    is on disk after `uv build`, rather than re-reading `__version__` and comparing
+    strings. The failure it is aimed at is quiet — a tag one version ahead of the
+    tree builds cleanly, uploads files whose names nobody reads, and produces a
+    `v0.3.0` release containing only `0.2.0`, with nothing anywhere going red.
+
+    **A tag is pushed before anything can check it, and that shapes the rest.** The
+    two CI guards — the tag is on `main`, the tag names what was built — both run
+    after the tag exists on the remote, so failing one leaves a bad tag behind. Two
+    consequences, both deliberate. `just release` re-runs the same rules locally so
+    the common mistake costs a second instead of four minutes. And the tag ruleset
+    (`v*`, no deletion, no non-fast-forward, added alongside the `main` ruleset)
+    keeps **admin bypass** rather than being absolute: recovering from a bad tag
+    means deleting it, and a rule with no door is a rule that gets turned off in a
+    hurry by somebody who needed one.
+
+    **The ancestry check is the "push tags to main" rule as a gate.** Everything
+    `main` is protected for — review, linear history, the required `check` — is
+    bypassed by tagging a side branch, and the release that comes out is
+    indistinguishable from a legitimate one. `git merge-base --is-ancestor` against
+    a freshly-fetched `origin/main` is one line and closes it.
+
+    **`image` gates a release, though it deliberately does not gate a PR.** The job
+    was kept out of the required checks so the gate on every PR stays fast (its own
+    comment argues that). The trade goes the other way here: a slow PR is a
+    nuisance, and a release whose hub container will not start is a machine
+    somebody cannot bring up, discovered by the person least able to fix it.
+
+    **Draft, and no `--latest` in the workflow.** GitHub will not put that flag on
+    an unpublished release — *"Drafts and prereleases cannot be set as latest"* —
+    so the flag is not omitted, it is unavailable, and a future session reading the
+    job will otherwise add it. Publishing from the web UI applies it by GitHub's own
+    default of newest date and highest semver. The draft is not ceremony either: the
+    notes are machine-generated, and they are the account of the release that
+    outlives everyone's memory of it.
+
+    Not in this cut and each for its own reason: PyPI (a publishing identity is a
+    separate decision, and nothing here needs it), a container registry (the hub
+    moves by `scp` and a changed `CAIRN_HUB`, per §11 item 3), and telling the
+    peers — which is the next thing to happen and wanted a published release to
+    point at.
 
 ---
 

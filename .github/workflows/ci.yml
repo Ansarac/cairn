@@ -81,3 +81,72 @@ jobs:
           docker stop hub
           code=$(docker inspect hub --format '{{.State.ExitCode}}')
           if [ "$code" != "0" ]; then echo "::error::hub exited $code on SIGTERM"; exit 1; fi
+
+  # A tagged build, drafted for a human to publish. `just release` is the way in
+  # and its comment has the operating half; this job is the part that cannot be
+  # skipped by whoever is in a hurry.
+  #
+  # `on: push` already fires for tags, so `check` and `image` have run against
+  # this exact commit before this job starts. `image` gates a release even though
+  # it is deliberately not a required check on a PR: a slow PR is a nuisance and a
+  # release whose hub will not start is a machine somebody cannot bring up.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # the workflow-level default above is read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      # A tag can be pushed at any commit in the repository, including one that
+      # never went through a PR. Everything `main` is protected for — review,
+      # linear history, the required check — is bypassed by tagging a side branch,
+      # and the release that comes out looks exactly like a legitimate one.
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      # Against the artifact rather than against `__version__`, for the same
+      # reason build.py reads `direct_url.json` instead of trusting a declaration:
+      # what ships is the wheel. A tag one version ahead of the tree builds
+      # cleanly, uploads files nobody looks at the names of, and produces a
+      # `v0.3.0` release containing only `0.2.0` — with nothing anywhere failing.
+      - name: The tag names the version that was built
+        run: |
+          wheel="dist/cairn-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+          if [ ! -f "$wheel" ]; then
+            echo "::error::$GITHUB_REF_NAME built no $wheel — it built $(ls dist/*.whl)"
+            exit 1
+          fi
+
+      # Draft on purpose: the notes are generated and want a human's eye before
+      # anyone reads them as the account of a release.
+      #
+      # No `--latest`, and it is not an omission. GitHub will not put that flag on
+      # a draft — "Drafts and prereleases cannot be set as latest" — so passing it
+      # here buys nothing. Publishing from the web UI is what applies it, by
+      # GitHub's own default of newest date and highest semver.
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft --verify-tag --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            dist/*

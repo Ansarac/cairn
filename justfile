@@ -61,6 +61,35 @@ check: lint fmt-check guard test
 install:
     uv tool install --reinstall --force .
 
+# Cut a release: tag main and push it. CI does the rest.
+#
+# What happens after this recipe returns, because none of it is guessable from
+# here: the tag push runs `check`, then `image`, then a `release` job that builds
+# the wheel and opens a **draft** release with both artifacts attached. It is not
+# published and it is not `latest`. You publish it from the web UI, and that click
+# is what makes it latest — GitHub refuses to put that flag on a draft, so there is
+# no command here that could do it for you.
+#
+# The guards below are the same rules the release job enforces, run a second after
+# you type this instead of four minutes into CI. They are not belt and braces: a
+# tag is pushed before anything can check it, so a failure in CI leaves a bad tag
+# on the remote that has to be deleted through admin bypass. Cheaper never to
+# create it.
+#
+# Cut a release: `just release 0.2.0` tags main, pushes, and CI drafts the rest.
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git branch --show-current)" = "main" ] || { echo "not on main"; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "working tree is dirty"; exit 1; }
+    git fetch --no-tags origin main
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main is not in sync with origin"; exit 1; }
+    declared=$(uv run python -c "import cairn; print(cairn.__version__)")
+    [ "{{version}}" = "$declared" ] || { echo "asked for {{version}}, __version__ says $declared"; exit 1; }
+    git tag -a "v{{version}}" -m "cairn {{version}}"
+    git push origin "v{{version}}"
+    echo "pushed v{{version}} — CI will draft the release; publish it from the web UI"
+
 # Run the hub in the foreground, reachable from other machines, on a database
 # that survives a reboot.
 #
