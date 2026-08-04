@@ -9,9 +9,17 @@ opposite things:
 
     1  asked, and the answer is "nothing"   -- an inbox with no mail
     2  could not ask                        -- the hub is unreachable
+    4  not allowed to ask                   -- the hub refused this machine's token
 
 Collapsing those two loses the only fact that matters when a peer goes quiet:
 whether it said nothing, or whether nobody heard the question.
+
+`4` is kept out of `2` on the same reasoning one step along. Both are failures
+to get an answer, and a script's correct response to each is the opposite: `2`
+is a hub that may be back in a minute, so retry; `4` is a credential this
+machine will keep getting wrong forever, so stop and fetch a human. Folded
+together, a token typo reads as an outage and somebody spends an evening on the
+network.
 """
 
 from __future__ import annotations
@@ -27,6 +35,27 @@ class Unreachable(CairnError):  # noqa: N818 - the name is the condition; `Unrea
     """The hub could not be reached, or refused the request."""
 
     exit_code = 2
+
+
+class Unauthorized(CairnError):  # noqa: N818 - a state of this machine's configuration, not a defect
+    """The hub is up, and it will not talk to this machine.
+
+    Distinct from `Unreachable` because the two want opposite responses from
+    whoever hits them; the module docstring has the argument. The message is
+    written here rather than taken from the hub's reply: the hub has no idea
+    where this machine keeps its configuration, and it is the only party that
+    does not need telling what went wrong.
+    """
+
+    exit_code = 4
+
+    def __init__(self, where: str) -> None:
+        """Name the hub that refused, and the two places a token may be set."""
+        super().__init__(
+            f"the hub at {where} requires a token and did not accept this machine's. "
+            f"Set CAIRN_TOKEN in the environment, or `token` in the config file "
+            f"(`cairn config` prints its path). Retrying will not help."
+        )
 
 
 class UsageError(CairnError):

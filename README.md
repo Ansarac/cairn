@@ -445,10 +445,12 @@ just hub-dev    # :7778 on loopback against /tmp/cairn-dev.db — throwaway
 ```
 
 `just hub` is the one you leave running: a hub only this machine can reach is a
-hub the other machine cannot use. It has no authentication and does not sign
-messages, so anyone who can route to it can register any name — see
-`docs/design.md` §11 item 3, and bind an interface (`just hub 7777 10.0.0.5`)
-rather than everything if the network is not yours.
+hub the other machine cannot use. With no `CAIRN_TOKEN` set it authenticates
+nobody, so anyone who can route to it can register any name. Set one on the hub
+and on every agent machine to narrow that to everyone holding it — access
+control, and not proof of who sent anything: peer mail still reads `UNVERIFIED`.
+See `docs/design.md` §11 item 3, and bind an interface
+(`just hub 7777 10.0.0.5`) rather than everything if the network is not yours.
 
 Every test is offline. The end-to-end test binds an ephemeral loopback port and
 nothing reaches the network.

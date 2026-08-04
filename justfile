@@ -98,9 +98,11 @@ release version:
 # database /tmp reclaims — is a hub that has to be re-explained every time. The
 # scratch equivalent is `just hub-dev`.
 #
-# cairn has no authentication and does not sign messages yet (docs/design.md §12
-# item 9), so binding this to a network means trusting everyone who can route to
-# it. On a shared LAN, bind an interface instead: `just hub 7777 10.0.0.5`.
+# With no CAIRN_TOKEN set this hub authenticates nobody, so binding it to a
+# network means trusting everyone who can route to it. Set one on both ends to
+# narrow that to everyone holding it — which is access control and not proof of
+# who sent anything; peer mail still reads UNVERIFIED (docs/design.md §12 item 9).
+# On a shared LAN, bind an interface too: `just hub 7777 10.0.0.5`.
 hub port="7777" host="0.0.0.0":
     uv run cairn hub --port {{port}} --host {{host}} --db ~/.local/state/cairn/hub.db
 

@@ -1556,3 +1556,84 @@ def test_an_inbox_page_of_nothing_is_refused_rather_than_read_as_an_empty_mailbo
     for limit in ("0", "-1"):
         assert _cli(hub, "inbox", "--limit", limit) == 3, f"--limit {limit} was not refused"
     assert hub.inbox("bench/firmware").unread == 1, "a refused read moved the cursor"
+
+
+def test_authenticating_the_connection_changes_no_verdict(tmp_path, monkeypatch, capsys):
+    """Invariant I1, at the seam where this cut is most likely to be undone later.
+
+    A token on the wire proves that a request came from somebody holding the
+    token. It proves nothing whatever about who wrote a message — and the hub
+    could not fix that by asserting an answer, because a verdict is worth exactly
+    the check that produced it and no check ran on this machine. That is the
+    finding `provenance`'s docstring is built from: an agent refused a
+    `verified_by: "cairn-hub"` field on precisely these grounds.
+
+    So the reading a peer gets through a secured hub has to be **the same
+    reading**, `UNVERIFIED` and all. The obvious-looking improvement — "the hub
+    authenticated the sender, so let the inbox say so" — is the I1 violation this
+    assertion exists to stop, and it will look like a bug fix to whoever gets
+    there next.
+
+    Full stack on purpose: a real authenticating hub on a socket, a real client
+    holding the token, a real `cli.run` reading, and a real bell stream. The
+    stream is here because it is the request path that does not go through
+    `_call`, so it is the one a header could have been left off.
+    """
+    from cairn.events import sse_decode
+
+    token = "shared-secret-for-the-skeleton"  # noqa: S105 - a literal in a test
+    server = make_server(SqliteStore(":memory:"), host="127.0.0.1", port=0, token=token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    base = f"http://{host}:{port}"
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    monkeypatch.chdir(bench)
+
+    try:
+        # Without the token, nothing works and it is not called an outage.
+        assert cli.run(["--hub", base, "register", "bench/firmware", "--machine", "bench"]) == 4
+        assert "Retrying will not help" in capsys.readouterr().err
+
+        monkeypatch.setenv("CAIRN_TOKEN", token)
+        secured = HubClient(base, timeout=5.0)
+        _register(secured, "compute/analysis", machine="compute", cwd="/w/compute")
+        assert cli.run(["--hub", base, "register", "bench/firmware", "--machine", "bench"]) == 0
+        capsys.readouterr()
+
+        # The bell still rings through the secured stream.
+        bells: list[dict] = []
+        opened = threading.Event()
+
+        def listen() -> None:
+            for event, payload in sse_decode(secured.stream("bench/firmware")):
+                if event == "hello":
+                    opened.set()
+                elif event == "mail":
+                    bells.append(payload)
+                    return
+
+        listener = threading.Thread(target=listen, daemon=True)
+        listener.start()
+        assert opened.wait(5.0), "the bell stream never opened against a secured hub"
+
+        secured.send("tell", "compute/analysis", "bench/firmware", "the archive numbers are on the share")
+        listener.join(timeout=5.0)
+        assert bells, "no bell arrived through a secured hub"
+        assert "body" not in bells[0], "the bell grew a body on the way through authentication"
+
+        # And the reading is the same reading.
+        assert cli.run(["--hub", base, "inbox"]) == 0
+        reading = capsys.readouterr().out
+        assert "the archive numbers are on the share" in reading
+        assert "UNVERIFIED" in reading, "authenticating the connection changed a provenance verdict"
+        assert "cairn-hub" not in reading
+        assert "hmac" not in reading.lower(), "a peer message must not claim a check nobody ran"
+    finally:
+        server.notifier.close_all()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

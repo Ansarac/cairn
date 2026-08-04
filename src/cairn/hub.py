@@ -15,6 +15,7 @@ where every package is one more thing that can break before a test run.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import signal
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +43,7 @@ class _Handler(BaseHTTPRequestHandler):
     sys_version = ""
     store: Store  # bound by `make_server()`
     notifier: Notifier  # bound by `make_server()`
+    token: str | None  # bound by `make_server()`; None means this hub lets anyone in
 
     def log_message(self, fmt: str, *args: object) -> None:
         """Silence the default stderr access log; the hub is not a web server."""
@@ -62,6 +64,22 @@ class _Handler(BaseHTTPRequestHandler):
             msg = f"request body is {length} bytes, limit is {MAX_REQUEST_BYTES}"
             raise WireError(msg)
         return loads(self.rfile.read(length)) if length else {}
+
+    def _drain(self) -> None:
+        """Consume and discard a request body this hub is not going to look at.
+
+        Capped at `MAX_REQUEST_BYTES` for the ordinary reason: a refused caller
+        must not be able to make the hub read an arbitrary amount into memory.
+        Beyond the cap the connection is closed instead, because what is left in
+        it can no longer be resynchronised.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return
+        if length > MAX_REQUEST_BYTES:
+            self.close_connection = True
+            return
+        self.rfile.read(length)
 
     def _query(self) -> dict[str, str]:
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
@@ -90,8 +108,44 @@ class _Handler(BaseHTTPRequestHandler):
             msg = f"{name} must be a whole number, got {raw!r}"
             raise UsageError(msg) from exc
 
+    def _authorized(self) -> bool:
+        """Return whether this request may proceed. True for every route on an open hub.
+
+        `hmac.compare_digest` rather than `==` on the ordinary timing grounds,
+        and here — unlike `signing.verify`, where the same line is close to
+        pointless — the attacker is by definition on the other end of a socket,
+        which is the case the comparison is for.
+        """
+        if self.token is None:
+            return True
+        offered = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not offered.startswith(prefix):
+            return False
+        return hmac.compare_digest(offered[len(prefix) :], self.token)
+
     def _dispatch(self, table: dict[str, Any]) -> None:
         route = urlparse(self.path).path
+        # Ahead of the route lookup, so an unauthorized caller cannot map which
+        # routes exist by reading 404 against 401. `/v1/health` is the exception
+        # and answers either way — see `_health`.
+        if route != "/v1/health" and not self._authorized():
+            # Drain first. Every other refusal in this file happens after a
+            # handler has called `_read()`, so this is the only path that can
+            # answer a POST without consuming its body — and this hub speaks
+            # HTTP/1.1, so the connection is reused. The unread body is then
+            # sitting in the socket where the next request line should be.
+            #
+            # Measured on a keep-alive client, POST 401 then GET /v1/health on the
+            # same connection: **400 without this line, 200 with it.** So the cost
+            # is not the refused request, which the caller expected to fail — it is
+            # the *next* one, which fails for a reason that has nothing to do with
+            # what it asked. cairn's own client cannot hit it, because `urllib`
+            # opens a fresh connection every time; a pooling client or a proxy in
+            # front of the hub can, and neither is far-fetched.
+            self._drain()
+            self._reply(401, {"error": "this hub requires a token"})
+            return
         handler = table.get(route)
         if handler is None:
             self._reply(404, {"error": f"no route {route}"})
@@ -137,6 +191,20 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def _health(self) -> None:
+        """Answer whether the hub is up — to anybody, token or not.
+
+        The one route that stays open, because `compose.yaml`'s healthcheck calls
+        it from inside the container and a hub that reports unhealthy the moment
+        it is secured is a trap that would be met at the worst possible time.
+
+        It degrades rather than staying whole: the agent count is the only thing
+        this route knows that a stranger should not, so an unauthenticated caller
+        gets liveness and nothing else. `ok` keeps its meaning either way, which
+        is all the healthcheck reads.
+        """
+        if not self._authorized():
+            self._reply(200, {"ok": True})
+            return
         self._reply(200, {"ok": True, "agents": len(self.store.peers())})
 
     def _peers(self) -> None:
@@ -367,16 +435,32 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def make_server(
-    store: Store, host: str = "127.0.0.1", port: int = 7777, notifier: Notifier | None = None
+    store: Store,
+    host: str = "127.0.0.1",
+    port: int = 7777,
+    notifier: Notifier | None = None,
+    token: str | None = None,
 ) -> ThreadingHTTPServer:
     """Build a hub bound to `host:port`, backed by `store`.
 
     The notifier is attached to the returned server as `server.notifier` so a
     caller — `serve()`, or a test — can `close_all()` it at shutdown and unblock
     every open stream.
+
+    **`token` is passed in rather than read from `config`**, which is why this
+    module still imports nothing but `errors`, `events` and `wire`. The hub's job
+    is to parse, call one store method and serialize; deciding what this machine's
+    secret is belongs to the caller, exactly as choosing the database does. It
+    also makes a test able to stand up an authenticating hub without touching the
+    environment.
+
+    Bound once, at construction. Changing the token therefore needs a hub
+    restart, which is the honest behaviour for a process that hands out no way to
+    reload — and it means a request cannot be answered against a half-changed
+    configuration.
     """
     bell = notifier or Notifier()
-    handler = type("_BoundHandler", (_Handler,), {"store": store, "notifier": bell})
+    handler = type("_BoundHandler", (_Handler,), {"store": store, "notifier": bell, "token": token})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     server.notifier = bell  # type: ignore[attr-defined]
@@ -406,15 +490,21 @@ def stop_on_terminate(server: ThreadingHTTPServer) -> None:
         signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
 
 
-def serve(store: Store, host: str = "127.0.0.1", port: int = 7777) -> None:
+def serve(store: Store, host: str = "127.0.0.1", port: int = 7777, token: str | None = None) -> None:
     """Run a hub in the foreground until interrupted."""
-    server = make_server(store, host, port)
+    server = make_server(store, host, port, token=token)
     bound_host, bound_port = server.server_address[:2]
     # flush: this line is the only "I am up, on this port" signal there is, and
     # stdout is block-buffered whenever the hub is not on a tty — under systemd,
     # nohup or a pipe it would otherwise sit in the buffer until the process
     # exits, and be lost outright if the process is signalled.
-    print(f"cairn hub on http://{bound_host}:{bound_port}", flush=True)
+    #
+    # Which of the two it is goes on the same line, because it is the one fact
+    # about a hub that cannot be recovered by looking at it later: an open hub
+    # and a secured one answer `/v1/health` identically. The token is never
+    # printed, only whether there is one.
+    door = "token required" if token else "open to anyone who can reach it"
+    print(f"cairn hub on http://{bound_host}:{bound_port} ({door})", flush=True)
     stop_on_terminate(server)
     with contextlib.suppress(KeyboardInterrupt):
         server.serve_forever()

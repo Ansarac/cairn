@@ -11,9 +11,9 @@ services:
 
     # A hub only one machine can reach is not a hub, so this publishes on every
     # interface by default. That is a real decision, not a default worth
-    # inheriting silently: cairn does not authenticate, so anyone who can route
-    # here can register any name and take delivery of its mail. Pin it to one
-    # interface when the network is wider than the people you trust:
+    # inheriting silently: an unauthenticated hub lets anyone who can route here
+    # register any name and take delivery of its mail. Pin it to one interface
+    # when the network is wider than the people you trust:
     #
     #     CAIRN_BIND=10.0.0.5 docker compose up -d
     #
@@ -21,6 +21,19 @@ services:
     # measurement behind it.
     ports:
       - "${CAIRN_BIND:-0.0.0.0}:${CAIRN_PORT:-7777}:7777"
+
+    # The shared token, passed through from the host environment so that turning
+    # authentication on is a restart rather than an image rebuild. Unset — the
+    # default — is an open hub, which is what every build before 0.3.0 was.
+    #
+    # Order matters and it is not reversible by halves: the moment this is set,
+    # every agent machine without the same value is locked out. Upgrade them and
+    # give them the token first. docs/deployment.md has the sequence.
+    #
+    # The healthcheck below deliberately sends no token and keeps working: the
+    # hub answers /v1/health either way, and only withholds the agent count.
+    environment:
+      CAIRN_TOKEN: "${CAIRN_TOKEN:-}"
 
     # The database is the only thing here worth keeping, and it is deliberately
     # not a bind mount by default: a named volume inherits the image's ownership

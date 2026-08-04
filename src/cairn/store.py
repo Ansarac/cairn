@@ -994,9 +994,12 @@ class SqliteStore:
         they would have read the note. Say why it went, not what it said.
 
         No ownership check, on the same reasoning as `settle` and
-        `archive_subject`: cairn does not authenticate, so a check would be a
-        pretence — I3 — and the tombstone names who did it, which is the
-        accountability that actually exists.
+        `archive_subject`: cairn cannot tell one agent from another, so a check
+        would be a pretence — I3 — and the tombstone names who did it, which is
+        the accountability that actually exists. A hub token does not change
+        this and was never going to: it is one secret shared by every agent
+        machine, so it separates the network from a stranger and never one
+        caller from another.
         """
         if self.get_agent(author) is None:
             msg = f"unknown author {author!r}; register before deleting a note"
@@ -1305,7 +1308,8 @@ class SqliteStore:
         should make somebody type `--reopen` and thereby notice they are reopening
         finished work, rather than quietly appending to it.
 
-        No ownership check. cairn has no authentication, so one would be a
+        No ownership check. cairn cannot tell one agent from another — a hub
+        token authenticates the network, not the caller — so one would be a
         pretence — I3 — and the row records who did it, which is the accountability
         that is actually available.
         """
