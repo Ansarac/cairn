@@ -62,14 +62,63 @@ def state_dir() -> Path:
     return Path(root) / "cairn"
 
 
+NOT_IN_EFFECT = "so none of it is in effect"
+"""The clause every unusable-config error ends on.
+
+Which key was being looked up is an accident of what ran first. What the reader
+has to know is that the *whole file* was discarded, because the symptom they are
+about to chase is a hub URL or a token reverting to a default that is nowhere in
+the file they are staring at.
+"""
+
+
 def _file_config() -> dict[str, object]:
+    """Return the parsed config file, or `{}` when there is not one.
+
+    **A file that exists and cannot be used is an error, never silence.** That is
+    the second time this module has had to learn the rule — `bell_command` raises
+    for the same reason, that a config which quietly disables itself is
+    indistinguishable from a quiet week for as long as nobody looks.
+
+    Two ways in, both measured, and both arriving from a Windows shell appending
+    a token:
+
+    - **UTF-16**, which `>>` produces in Windows PowerShell 5.1. `UnicodeDecodeError`
+      is a `ValueError`, so it was not caught here and `run()` deliberately does not
+      catch it either: a traceback plus exit **1**, the code for "asked, nothing to
+      report". That is the poisoned-mailbox shape, reached through a door nobody had
+      thought to check.
+    - **A UTF-8 BOM**, which PowerShell 5.1 writes for `-Encoding utf8`. Three bytes,
+      and they raised `TOMLDecodeError`, which *was* caught — so the entire file was
+      discarded in silence. `cairn config` then reported the localhost default while
+      naming a file that said otherwise, and a hub whose token lived in that file
+      **started open**, its banner missing `(token required)` and authenticating
+      nobody. The quieter failure is the more dangerous one.
+
+    A BOM is now simply consumed. `utf-8-sig` strips one if present and is byte for
+    byte `utf-8` otherwise, which is the right treatment for a sequence that carries
+    no meaning here and that no operator typed on purpose. Everything else is
+    reported, named, and exits 3.
+    """
     path = config_path()
     if not path.is_file():
         return {}
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+        raw = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        msg = (
+            f"{path} is not valid UTF-8, {NOT_IN_EFFECT}. On Windows this is usually PowerShell's `>>`, "
+            f"which writes UTF-16 — rewrite the file, and append with `Add-Content -Encoding ascii`."
+        )
+        raise UsageError(msg) from exc
+    except OSError as exc:
+        msg = f"{path} exists but could not be read ({exc.strerror or exc}), {NOT_IN_EFFECT}"
+        raise UsageError(msg) from exc
+    try:
+        return tomllib.loads(raw)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{path} is not valid TOML ({exc}), {NOT_IN_EFFECT}"
+        raise UsageError(msg) from exc
 
 
 def hub_url(override: str | None = None) -> str:
