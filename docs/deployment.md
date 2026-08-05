@@ -58,6 +58,28 @@ true of strangers:
 CAIRN_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 ```
 
+On a machine where a human types commands, the config file is the better home —
+it survives the terminal, and both ends read it, so one line configures a client
+and a hub on the same box:
+
+```toml
+# ~/.config/cairn/config.toml   (Windows: C:\Users\<you>\.config\cairn\config.toml)
+token = "…"
+```
+
+Then `chmod 600` it. cairn chmods the one secret it writes itself — the signing
+key — but it will not silently change the mode of a file you made, so it warns
+instead and leaves it alone.
+
+**On Windows it does not warn, and that is deliberate rather than missing.**
+Python there synthesizes the whole mode from one read-only attribute — `0o666` for
+any writable file — with no relation to the ACL that actually governs access. A
+check against that would fire on every correctly-configured machine and then
+prescribe `chmod`, which Windows has not got. So cairn says nothing where it
+cannot tell, and **protecting that file on Windows is yours to do** — `icacls`, or
+a directory only your account can read. WSL reports as POSIX and gets the real
+check.
+
 **What a token buys, stated no wider than it goes.** It turns *anyone who can
 route here* into *anyone holding the token*. It is access control and nothing
 else. Every agent machine shares the one secret, so it does **not** stop a peer

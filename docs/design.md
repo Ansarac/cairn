@@ -3154,6 +3154,37 @@ framework-internal orchestration, not network protocols.
     agent does not configure a hub, and exit 4 arrives with a message that already
     says what to do. It would gain a paragraph to skip.
 
+    **Two things this cut got wrong turned up before it reached the machines it
+    would have been wrong on**, and both were found by answering a question rather
+    than by looking for defects — which is the second time in three cuts that the
+    interview and not the test suite produced the finding.
+
+    The first is that there was **no way to see whether a token had been picked
+    up**. `cairn config` printed hub, config file, state dir and identity, and the
+    `Unauthorized` message this cut wrote points at `cairn config` for the config
+    path — so a reader following the pointer arrived at a page that declined to
+    mention what they came for. The line that fixed it names the **source** rather
+    than the presence, because "is there a token" was never the question and "the
+    environment is overriding the file I just edited" always is. It shares
+    `_resolve_token` with `token()` itself: two resolvers would agree right up
+    until somebody changed the precedence in one, and a diagnostic that confidently
+    names the wrong source is worse than none because it is believed.
+
+    The second is that the permission warning **would have fired on every Windows
+    machine in the fleet and prescribed a command Windows has not got.** Python
+    there builds the whole mode out of one read-only attribute — `0o666` for
+    anything writable — so `mode & 0o077` is true of every correctly-configured
+    file, and the advice was `chmod`. The failure worth naming is not the false
+    positive but that it is *unconditional*: a warning that is always on is a
+    warning that has stopped being read, and this one would also have been wrong
+    about the thing it named. So cairn is silent where a mode carries no
+    information, and says so once in `docs/deployment.md` rather than printing
+    "cannot check here" at every invocation — item 18's furniture, in the one place
+    it would have been most tempting to add some. One peer machine in this fleet is
+    Windows and it had not been upgraded yet, so the count of machines this was
+    ever observed on is zero: it was reasoned from how `st_mode` is built there,
+    and the honest status is *predicted and pre-empted*, not *reproduced*.
+
 ---
 
 ## Appendix — measurements
