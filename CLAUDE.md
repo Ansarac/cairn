@@ -231,9 +231,9 @@ just hub-dev    # :7778 on loopback against /tmp/cairn-dev.db — throwaway
 ```
 
 `just hub` binds `0.0.0.0` because a two-machine tool nobody else can reach is
-not testable, and cairn does not authenticate. Use `just hub-dev` for scratch
-work, and read `docs/design.md` §11 item 3 before putting the real one on a
-network you do not trust.
+not testable, and a hub with no `CAIRN_TOKEN` set authenticates nobody. Use
+`just hub-dev` for scratch work, and read `docs/design.md` §11 item 3 before
+putting the real one on a network you do not trust.
 
 ## Ending a session
 
