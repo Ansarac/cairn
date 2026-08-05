@@ -151,6 +151,28 @@ def _resolve_token() -> tuple[str | None, str]:
 
 _warned_about: set[Path] = set()
 
+MODES_ARE_MEANINGFUL = os.name != "nt"
+"""Whether this platform's `st_mode` says anything about who may read a file.
+
+Windows synthesizes the whole mode from one read-only attribute — `0o666` for a
+writable file, `0o444` for a read-only one — with no relation to the ACL that
+actually governs access. So the check below is not merely unhelpful there: it
+matches on **every** correctly-configured Windows machine, because `0o666 & 0o077`
+is non-zero for any file anybody can write. And the fix it prescribes is `chmod`,
+which Windows does not have.
+
+A warning that is always on is a warning that says nothing, and this one would
+also be wrong about the thing it named. So cairn declines to answer where it
+cannot check — the same choice `provenance` makes about a signature it has no key
+for. What it does *not* do is print "cannot check permissions here" on every
+invocation, because a clause on every reading is the furniture
+`docs/design.md` §12 item 18 measured. That sentence lives in
+`docs/deployment.md`, where somebody setting a token up meets it once.
+
+WSL reports `posix` and keeps the real check, which is the common case for a
+Windows box in this fleet anyway.
+"""
+
 
 def _warn_if_readable(path: Path) -> None:
     """Say once if a file holding a secret is readable by anybody else.
@@ -162,8 +184,10 @@ def _warn_if_readable(path: Path) -> None:
 
     Once per path per process, because the resolver is called on every hub
     request and a warning printed a thousand times is a warning nobody reads.
+
+    Silent where a mode means nothing — see `MODES_ARE_MEANINGFUL`.
     """
-    if path in _warned_about:
+    if not MODES_ARE_MEANINGFUL or path in _warned_about:
         return
     _warned_about.add(path)
     try:

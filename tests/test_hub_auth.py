@@ -107,6 +107,25 @@ def test_a_world_readable_config_holding_a_token_says_so(monkeypatch, tmp_path, 
     assert "secret" not in warning, "the warning must not print the thing it is warning about"
 
 
+def test_no_permission_warning_where_a_mode_means_nothing(monkeypatch, tmp_path, capsys):
+    """Windows reports 0o666 for every writable file, so the check would always fire.
+
+    Always-on is the failure, not the false positive: the warning would appear on
+    correctly-configured machines and prescribe `chmod`, which Windows has not
+    got. Staged by patching the platform flag rather than the mode, because the
+    mode is exactly what carries no information there.
+    """
+    monkeypatch.setattr(config, "MODES_ARE_MEANINGFUL", False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = tmp_path / "cairn" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text('token = "secret"\n', encoding="utf-8")
+    path.chmod(0o666)
+
+    assert config.token() == "secret", "the token must still resolve; only the warning is suppressed"
+    assert capsys.readouterr().err == ""
+
+
 # -- the diagnostic ----------------------------------------------------------
 
 
