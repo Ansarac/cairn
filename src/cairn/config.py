@@ -107,14 +107,46 @@ def token() -> str | None:
     documented way to give it to the container; the config file is for a machine
     where a human types commands.
     """
+    return _resolve_token()[0]
+
+
+ENV_SOURCE = "$CAIRN_TOKEN"
+"""What `token_source` calls the environment. Printed, so it is written once."""
+
+FILE_SOURCE = "config file"
+"""What `token_source` calls the config file. Printed, so it is written once."""
+
+
+def token_source() -> str:
+    """Return where `token` got its answer, or `""` when there is no token.
+
+    Exists because the failure this diagnoses is never "is there a token" — it is
+    "I edited the file and something else was overriding it". Presence is the
+    useless half of that; the source is the answer.
+
+    Returns a label rather than the value, and no caller may be given the value:
+    the whole point of a config surface is that it can be pasted into a message
+    to whoever is helping, and a surface that prints the secret cannot be.
+    """
+    return _resolve_token()[1]
+
+
+def _resolve_token() -> tuple[str | None, str]:
+    """Resolve the token and name its source, in one place so the two cannot drift.
+
+    `token` and `token_source` are two views of one decision. Written as two
+    resolvers they would agree until somebody changed the precedence in one of
+    them, and the symptom would be a diagnostic confidently naming the wrong
+    source — worse than no diagnostic, because it is believed.
+    """
     env = os.environ.get("CAIRN_TOKEN")
     if env:
-        return env
+        return env, ENV_SOURCE
     from_file = _file_config().get("token")
     if not isinstance(from_file, str) or not from_file:
-        return None
+        return None, ""
     _warn_if_readable(config_path())
-    return from_file
+    return from_file, FILE_SOURCE
 
 
 _warned_about: set[Path] = set()

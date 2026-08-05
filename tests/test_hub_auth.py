@@ -107,6 +107,56 @@ def test_a_world_readable_config_holding_a_token_says_so(monkeypatch, tmp_path, 
     assert "secret" not in warning, "the warning must not print the thing it is warning about"
 
 
+# -- the diagnostic ----------------------------------------------------------
+
+
+def _config_page(capsys) -> str:
+    from cairn import cli
+
+    assert cli.run(["config"]) == 0
+    return capsys.readouterr().out
+
+
+def test_config_says_when_no_token_is_set(capsys):
+    assert "token        not set" in _config_page(capsys)
+
+
+def test_config_names_the_config_file_as_the_source(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = tmp_path / "cairn" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text('token = "from-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
+    assert "token        set (config file)" in _config_page(capsys)
+
+
+def test_config_names_the_environment_when_it_is_the_one_winning(monkeypatch, tmp_path, capsys):
+    """The failure this whole line exists for: an override nobody remembered setting.
+
+    A file with a token in it *and* an environment variable is not a contrived
+    case — it is what the machine looks like halfway through configuring one.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = tmp_path / "cairn" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text('token = "from-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setenv("CAIRN_TOKEN", "from-the-environment")
+    assert "token        set ($CAIRN_TOKEN)" in _config_page(capsys)
+
+
+def test_config_never_prints_the_token(monkeypatch, tmp_path, capsys):
+    """`cairn config` is what somebody pastes when asking for help.
+
+    A page that leaks the secret is a page that cannot be shared, which would
+    cost the diagnostic exactly the situation it was added for.
+    """
+    monkeypatch.setenv("CAIRN_TOKEN", "hunter2-do-not-print-me")
+    page = _config_page(capsys)
+    assert "hunter2-do-not-print-me" not in page
+    assert "set ($CAIRN_TOKEN)" in page
+
+
 # -- the door ----------------------------------------------------------------
 
 

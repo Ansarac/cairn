@@ -72,6 +72,16 @@ give each one the token, and only then set it on the hub and restart. Getting
 this backwards locks out the machines you would use to tell people what
 happened.
 
+`cairn config` on each machine is how you check that step happened, and it is
+worth running rather than assuming — it names the **source**, so an environment
+variable quietly overriding the file you just edited shows up here instead of as
+an exit 4 an hour later. It prints whether a token is set and where it came from,
+never its value, so the output is safe to paste to whoever is helping:
+
+```
+token        set (config file)
+```
+
 **And getting it backwards is quiet, which is the reason the order matters.** A
 machine without the token fails loudly at everything a human types — `inbox`,
 `peers`, `tell` and `notes` all exit **4** and name `CAIRN_TOKEN`. The bell does

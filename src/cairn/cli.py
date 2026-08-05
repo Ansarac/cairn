@@ -1147,12 +1147,29 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
 
 
 def cmd_config(args: argparse.Namespace) -> int:
-    """Show or create the config file."""
+    """Show or create the config file.
+
+    **The token line says whether and from where, never what.** This page is the
+    thing somebody pastes into a message when asking why their machine cannot
+    reach the hub, so printing the secret would make the one useful diagnostic
+    unshareable. The source is the half that matters anyway: "there is a token"
+    was rarely the question, and "the environment is overriding the file I just
+    edited" always is.
+
+    **The same line means two things and no wording fixes that**, so none is
+    attempted. `config.token` is read by both ends of the wire, so on an agent
+    machine this reports what cairn will *send* and on a hub what it will
+    *require* — and cairn cannot tell which kind of machine it is on, because
+    that is decided by whether somebody runs `cairn hub` here. Stating the value
+    and leaving the consequence to the reader is the honest form.
+    """
     if args.init:
         print(f"wrote {config.write_default_config(config.hub_url(args.hub))}")
         return 0
+    source = config.token_source()
     print(f"hub          {config.hub_url(args.hub)}")
     print(f"config file  {config.config_path()}")
+    print(f"token        {f'set ({source})' if source else 'not set'}")
     print(f"state dir    {config.state_dir()}")
     print(f"identity     {render.oneline(config.current_identity() or '') or '—'}")
     return 0
