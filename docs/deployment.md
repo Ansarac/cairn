@@ -67,6 +67,26 @@ and a hub on the same box:
 token = "…"
 ```
 
+If the file does not exist yet, `cairn config --init` writes one. To append the
+line in place, in each platform's own shell:
+
+```bash
+# Linux / macOS / WSL
+printf 'token = "…"\n' >> ~/.config/cairn/config.toml && chmod 600 ~/.config/cairn/config.toml
+```
+
+```powershell
+# Windows PowerShell. Note Add-Content, not >>.
+Add-Content -Encoding ascii "$HOME\.config\cairn\config.toml" 'token = "…"'
+```
+
+**Do not use `>>` in Windows PowerShell 5.1.** It writes UTF-16, and that breaks
+the *whole file*, not the line you added — every setting in it, including the hub
+URL. cairn now refuses with exit 3 and names the file rather than crashing, and
+`cairn config --init` will rewrite it, but that throws away whatever was in there.
+A leading UTF-8 BOM, which `-Encoding utf8` produces on that shell, is stripped
+and harmless. `docs/design.md` §12 item 24 has what each of those used to do.
+
 Then `chmod 600` it. cairn chmods the one secret it writes itself — the signing
 key — but it will not silently change the mode of a file you made, so it warns
 instead and leaves it alone.

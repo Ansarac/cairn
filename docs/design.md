@@ -3185,6 +3185,52 @@ framework-internal orchestration, not network protocols.
     ever observed on is zero: it was reasoned from how `st_mode` is built there,
     and the honest status is *predicted and pre-empted*, not *reproduced*.
 
+24. **A config file this build cannot read.** **Done.** Writing the two one-line
+    instructions for appending a token — one for Linux, one for Windows — was what
+    exposed this, which makes it the third finding in three cuts that came from
+    writing something down rather than from a test. Both defects were then
+    *reproduced* on this machine, not reasoned about, which is what separates this
+    item from item 23's Windows warning.
+
+    **UTF-16, from PowerShell 5.1's `>>`.** That redirection writes UTF-16LE, and
+    `Path.read_text(encoding="utf-8")` raises `UnicodeDecodeError` — a `ValueError`,
+    so `run()` deliberately does not catch it. Measured: a traceback and exit **1**,
+    the code for "asked, nothing to report". `CLAUDE.md` already names this shape and
+    says a new validator must be proven with an exit-code assertion through `cli.run`
+    rather than a call to the helper; the door nobody had checked was that the config
+    file is itself input, arriving from a shell on the other machine. It is now a
+    `UsageError` — exit 3, named path, and the fix spelled out for the platform that
+    produces it (`Add-Content -Encoding ascii`).
+
+    **A UTF-8 BOM, and this is the one that mattered.** PowerShell 5.1 writes those
+    three bytes for `-Encoding utf8`. They raised `TOMLDecodeError`, which *was*
+    caught — so the entire file was discarded in silence. Measured with a distinctive
+    URL in the file: `cairn config` printed `http://127.0.0.1:7777` while naming, one
+    line below, a file that said `http://example.invalid:9999`. The worst arm is not
+    the agent machine but the hub: `cmd_hub` reads `token()`, got `None`, and **started
+    open** — banner missing `(token required)`, authenticating nobody, on the day
+    somebody thought they had just turned authentication on. The quieter failure was
+    the more dangerous one, exactly as `bell_command`'s docstring had already argued
+    for a different key in the same file.
+
+    A BOM is now simply consumed: `utf-8-sig` strips one if present and is byte for
+    byte `utf-8` otherwise. That is the right treatment for a sequence carrying no
+    meaning here that no operator typed on purpose — and it is a different answer to
+    UTF-16's on purpose. One is recoverable without asking; the other is not, and
+    guessing at a text encoding is how a config file starts meaning something its
+    author did not write. **Every other unusable-config path is now an error too**,
+    including `OSError`, and every message ends on the same clause: *so none of it is
+    in effect*. Which key was being looked up is an accident of what ran first; that
+    the whole file was discarded is the thing the reader is about to chase.
+
+    **`cairn config --init` is the way out, so it may not be the one command that
+    needs to read it.** It now catches the refusal, says what it is about to destroy —
+    those unreadable bytes may be the only copy of a token — and writes a fresh file.
+    A repair tool that requires the thing it repairs is not one.
+
+    CRLF was checked and is fine: `tomllib` accepts it. The failure is strictly the
+    bytes at the front of the file.
+
 ---
 
 ## Appendix — measurements

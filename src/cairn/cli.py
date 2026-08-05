@@ -1164,7 +1164,18 @@ def cmd_config(args: argparse.Namespace) -> int:
     and leaving the consequence to the reader is the honest form.
     """
     if args.init:
-        print(f"wrote {config.write_default_config(config.hub_url(args.hub))}")
+        # `--init` is the way out of a config this build refuses to read, so it
+        # must not be the one command that needs to read it. It only consults the
+        # old file to carry the hub across; when that fails, say what is being
+        # lost rather than overwriting in silence — the unreadable bytes may still
+        # be the only copy of a token.
+        try:
+            hub = config.hub_url(args.hub)
+        except UsageError as exc:
+            print(f"cairn: {exc}", file=sys.stderr)
+            print("cairn: replacing it; anything it held, including a token, is gone", file=sys.stderr)
+            hub = args.hub or config.DEFAULT_HUB
+        print(f"wrote {config.write_default_config(hub)}")
         return 0
     source = config.token_source()
     print(f"hub          {config.hub_url(args.hub)}")

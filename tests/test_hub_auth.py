@@ -18,7 +18,7 @@ import pytest
 
 from cairn import config
 from cairn.client import HubClient
-from cairn.errors import Unauthorized, Unreachable
+from cairn.errors import Unauthorized, Unreachable, UsageError
 from cairn.hub import make_server
 from cairn.store import SqliteStore
 from cairn.wire import Agent
@@ -124,6 +124,77 @@ def test_no_permission_warning_where_a_mode_means_nothing(monkeypatch, tmp_path,
 
     assert config.token() == "secret", "the token must still resolve; only the warning is suppressed"
     assert capsys.readouterr().err == ""
+
+
+# -- a config file this build cannot read ------------------------------------
+
+
+def _staged_config(monkeypatch, tmp_path, body: bytes):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = tmp_path / "cairn" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(body)
+    return path
+
+
+def test_a_utf16_config_is_named_not_a_traceback(monkeypatch, tmp_path):
+    """Windows PowerShell 5.1's `>>` writes UTF-16, and this used to exit 1.
+
+    `UnicodeDecodeError` is a `ValueError`, so it went straight past `run()` as a
+    traceback under the code for "asked, nothing to report" — the poisoned-mailbox
+    shape. Asserted through `cli.run` rather than the helper, which is what
+    CLAUDE.md asks of any new validator.
+    """
+    from cairn import cli
+
+    _staged_config(monkeypatch, tmp_path, 'token = "x"\n'.encode("utf-16"))
+    assert cli.run(["config"]) == 3, "an unreadable config is a refusal, not a traceback and not 'no mail'"
+
+
+def test_a_utf16_config_says_what_to_do(monkeypatch, tmp_path, capsys):
+    _staged_config(monkeypatch, tmp_path, 'token = "x"\n'.encode("utf-16"))
+    with pytest.raises(UsageError) as caught:
+        config.token()
+    said = str(caught.value)
+    assert "not valid UTF-8" in said
+    assert config.NOT_IN_EFFECT in said, "the whole file is discarded, not just the key being looked up"
+    assert "Add-Content -Encoding ascii" in said, "name the fix on the platform that produces this"
+
+
+def test_a_byte_order_mark_is_consumed_rather_than_fatal(monkeypatch, tmp_path):
+    """Three bytes used to discard the whole config in silence.
+
+    The consequence that matters is not the missing token but the hub: with the
+    token in a BOM'd file, `cmd_hub` read `None` and started **open**, announcing
+    itself without `(token required)`. A BOM carries no meaning here and nobody
+    types one on purpose, so it is stripped.
+    """
+    _staged_config(monkeypatch, tmp_path, 'hub = "http://h.invalid:1"\ntoken = "x"\n'.encode("utf-8-sig"))
+    assert config.token() == "x"
+    assert config.hub_url() == "http://h.invalid:1", "the rest of the file must survive too"
+
+
+def test_malformed_toml_is_named_rather_than_swallowed(monkeypatch, tmp_path):
+    _staged_config(monkeypatch, tmp_path, b'token = "unterminated\n')
+    with pytest.raises(UsageError) as caught:
+        config.hub_url()
+    assert config.NOT_IN_EFFECT in str(caught.value)
+
+
+def test_init_still_works_on_a_config_that_cannot_be_read(monkeypatch, tmp_path, capsys):
+    """`--init` is the way out, so it must not be the one command that needs to read it.
+
+    And it says what it is destroying: the unreadable bytes may be the only copy
+    of a token.
+    """
+    from cairn import cli
+
+    _staged_config(monkeypatch, tmp_path, 'token = "x"\n'.encode("utf-16"))
+    assert cli.run(["config", "--init"]) == 0
+    out = capsys.readouterr()
+    assert "wrote" in out.out
+    assert "is gone" in out.err, "overwriting the only copy of a token must not be silent"
+    assert config.token() is None, "the rewritten file is readable and holds no token"
 
 
 # -- the diagnostic ----------------------------------------------------------
