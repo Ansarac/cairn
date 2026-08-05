@@ -72,6 +72,20 @@ give each one the token, and only then set it on the hub and restart. Getting
 this backwards locks out the machines you would use to tell people what
 happened.
 
+**And getting it backwards is quiet, which is the reason the order matters.** A
+machine without the token fails loudly at everything a human types — `inbox`,
+`peers`, `tell` and `notes` all exit **4** and name `CAIRN_TOKEN`. The bell does
+not. `cairn bell` runs at every turn boundary from a hook, and one of its four
+fixed properties is that it never fails loudly: a hook that errors degrades the
+session it is only supposed to inform, so *every* failure becomes "no mail" and
+exit 0. `cairn nudge` degrades the same way and keeps polling.
+
+So the sessions on an un-tokened peer do not see an error. They stop being told
+that mail exists, indefinitely, and nothing on that machine says why until
+somebody runs a command by hand. That is the bell working as designed and it is
+still the worst way to find out, which is why the token goes to the agents
+before it goes to the hub.
+
 Two things soften an open hub and neither is access control. A takeover is
 parked at the head, so an impostor gets the future of a conversation and not its
 past; and it is announced at both ends — the registration says what it stepped
