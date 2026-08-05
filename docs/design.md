@@ -3231,6 +3231,15 @@ framework-internal orchestration, not network protocols.
     CRLF was checked and is fine: `tomllib` accepts it. The failure is strictly the
     bytes at the front of the file.
 
+    Shipped as **`v0.3.1`**, and the peers were deliberately **not** re-notified.
+    The upgrade notice they had already been sent tells them to append the token
+    with `Add-Content -Encoding ascii`, which produces neither failure — so `0.3.0`
+    is usable for anyone following it, and this cut only changes what happens to
+    somebody who improvises. A second broadcast interrupting three live sessions to
+    say "the thing we told you to do still works" is worse than the risk it covers.
+    The hub is upgraded to `0.3.1` regardless, because the open-hub arm is the one
+    consequence that lands on this machine rather than on theirs.
+
 ---
 
 ## Appendix — measurements
