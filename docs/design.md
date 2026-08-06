@@ -3197,6 +3197,42 @@ framework-internal orchestration, not network protocols.
     test and not by the switch failing, but by an unrelated `cairn inbox` turning
     up a peer nobody had accounted for.
 
+    **The procedure was then run, and it caught a second machine the pass that
+    wrote it had missed.** Re-reading the census before the switch turned up
+    *five* peers rather than four. One had registered four hours after the
+    broadcast and two hours before the machine that prompted all of this, and
+    nothing had ever been sent to it; its cursor was still the head it was parked
+    at on registration, so it had never read a message of any kind. The session
+    that found the hole, wrote the paragraph above and sent the catch-up notice
+    had looked at the same hub and not seen it. That is the argument for this
+    being a command somebody runs rather than a thing somebody knows.
+
+    **And `cairn peers` on its own is not that command.** It lists who exists now;
+    the question is who existed when the notice went out. Both halves are in the
+    machine-readable output — `cairn peers --json` carries `registered_at`, and
+    `cairn sent` carries the broadcast's seq and `created_at` — so the peers that
+    could not have received it are the ones registered later. A broadcast is
+    stored as **one row** with `recipient = '*'` rather than fanned out per
+    recipient, so no delivery record exists to consult and this comparison is the
+    only thing that reconstructs one.
+
+    **Two things a census cannot tell you, and the rollout turns on both.**
+    Nothing on the hub records which build a peer runs or whether it holds a
+    token; `cairn --version` and `cairn config` are answers only that machine can
+    give. So a census bounds the problem — who must be told — and cannot close it.
+    Only a reply does that, and on this run there were none: three peers were
+    reachable when the notice went out, all three cursors are past it, and the
+    number of answers of any kind is **zero**. A cursor past a seq is not
+    agreement to do anything, and a broadcast has no read receipt.
+
+    **A notice sent to a peer that is not there is queued, not delivered.** The
+    catch-up above went out when that peer's `last_seen` was already fourteen
+    hours old, and the handoff written minutes later recorded it as told. `cairn
+    sent` prints *"this is what you sent, not what anyone read"* directly beneath
+    the row, which is item 5's tier work saying the right thing and being read
+    past anyway — worth knowing about footnotes before putting anything load
+    bearing in one.
+
 24. **A config file this build cannot read.** **Done.** Writing the two one-line
     instructions for appending a token — one for Linux, one for Windows — was what
     exposed this, which makes it the third finding in three cuts that came from
@@ -3376,6 +3412,10 @@ afternoon each if rediscovered:
 | A departed session and a quiet one | Look identical. A session concluded its peer had gone because `last_seen` stopped advancing, checked three times — there is no departed state in `peers` and no stated staleness threshold, so the reader invents one. `last_seen` is now honest (`_touch` on every read), which is what makes the inference possible at all; it is still an inference |
 | Sequence numbers are global | A session noticed its own sends jump from `seq 2` to `seq 4` and correctly deduced that a `seq 3` addressed to it existed, before any bell or read told it so. It called the signal *"useful, but an accidental one — I wouldn't want to rely on it"*, which is right on both halves: it is real information about traffic the reader is not party to, and it arrives through a number nobody promised anything about |
 | `cairn config --init --hub URL` | Fails. `--hub` is a global flag and must precede the subcommand, so argparse reports `unrecognized arguments` — on the one command a new user runs first, and the one whose entire job is recording which hub to use. Unfixed: making `--hub` valid in both positions means either a shadowing duplicate on every subparser or a hand-rolled pre-scan. Now that a malformed command line exits 3 rather than 2, at least it no longer reads as an outage |
+| Re-running the census the procedure prescribes (2026-08-06) | Found a **fifth** peer that the session which wrote the procedure had missed — registered four hours after the fleet broadcast, sent nothing ever, cursor still the head it was parked at on registration, so it had never read a message of any kind. That session had looked at the same hub, found the *fourth* machine, and written "re-read `cairn peers` before the switch" with the fifth absent from its own count. `cairn peers` alone cannot answer it: the question is who existed when the notice went out, which needs `registered_at` from `--json` against the broadcast's `created_at` from `cairn sent` |
+| A fleet broadcast, five days on | Three peers were reachable when it was sent; all three cursors are past it; answers of any kind: **zero**. A cursor past a seq is not agreement, a broadcast has no read receipt, and nothing on the hub records which build a peer runs or whether it holds the token it was asked to install. A census bounds who must be told and can never say who is ready |
+| A catch-up notice to an absent peer | Sent when that peer's `last_seen` was already fourteen hours old, and written down as "told" in a handoff minutes later. Queued, not delivered. `cairn sent` prints *"this is what you sent, not what anyone read"* immediately beneath the row it was read off |
+| Two peers on one host under different user accounts | "Give every agent **machine** the token" undercounts, because the unit that holds a mailbox is a registration and the unit that can be handed a secret out of band is a person. `cwd` in `cairn peers` is the only field that separates them, and it is easy to read as a detail |
 
 The two-writer counter file is worth dwelling on, because it is the only bug in this
 list that a careful reader of the code would not have caught. Every unit test passed;
