@@ -51,6 +51,76 @@ verdict that says how much was proven, and this one proves less than a reader
 might assume. See `canonical`.
 """
 
+SCHEMES = frozenset({METHOD})
+"""The signature schemes this build knows how to check.
+
+**Nothing in this build writes a scheme prefix, and that asymmetry is the entire
+point of the three functions below.** They read a syntax `sign` does not produce,
+which reads as dead code and will keep reading that way for as long as there is
+one scheme — possibly years. Deleting them costs nothing today and everything on
+the day somebody adds the second.
+
+The reason is what happens without them. `verify` compares against a key, so a
+signature made under a scheme this build cannot compute simply fails to match,
+and `provenance.assess_sent` had exactly two branches for that: matched, or
+`MISMATCH`. `MISMATCH` is the loudest verdict cairn has and `Provenance.mismatch`
+says it means *a check ran and failed*. So the first build to emit a new scheme
+would turn every reading on every not-yet-upgraded peer into that verdict, across
+the whole history, for no reason but a version skew — the largest false alarm
+this product is capable of producing, delivered by an ordinary upgrade.
+
+Tolerance therefore has to ship **before** anything emits, which is why this half
+lands alone. `sign` keeps returning bare hex, `scheme_of` reads bare hex as
+`METHOD`, and every row already on every hub keeps verifying exactly as it did.
+When a second scheme is eventually added, the build that adds it can emit a
+prefix knowing that every peer old enough to have this code reports `UNVERIFIED`
+— *nothing was checked* — rather than accusing them of forgery.
+
+Whoever adds that scheme: add it here, and read `canonical` first. The bytes are
+pinned by a test and changing them is a separate decision from changing the
+algorithm over them.
+"""
+
+
+def scheme_of(signature: str) -> str:
+    """Return the scheme `signature` declares.
+
+    The wire form is `<scheme>:<hex>`, and a signature with no colon is the
+    original scheme rather than a malformed one — every signature written before
+    this function existed is bare hex, and they are the only signatures that
+    exist. Reading them as `METHOD` is what keeps this change invisible.
+
+    The return value comes off the wire, so it is a string a peer chose. Do not
+    interpolate it into anything printed: see `provenance.assess_sent`, which
+    deliberately does not name it, and docs/design.md §12 item 23 for the
+    precedent.
+    """
+    scheme, separator, _ = signature.partition(":")
+    return scheme if separator else METHOD
+
+
+def digest_of(signature: str) -> str:
+    """Return the hex half of `signature`, with any scheme prefix removed.
+
+    Tolerant in the direction that matters: a future build emitting
+    `hmac-sha256:<hex>` for the scheme this one already implements is verified
+    here correctly, because the prefix is stripped and the remaining bytes are
+    what `sign` produces. Only a genuinely unknown scheme is unreadable.
+    """
+    _, separator, digest = signature.partition(":")
+    return digest if separator else signature
+
+
+def can_check(signature: str) -> bool:
+    """Return whether this build implements the scheme `signature` was made under.
+
+    Callers must ask this **before** treating a failed `verify` as evidence of
+    anything; `verify`'s docstring says why, and `provenance.assess_sent` is the
+    worked example.
+    """
+    return scheme_of(signature) in SCHEMES
+
+
 _KEY_BYTES = 32
 
 
@@ -97,6 +167,27 @@ def canonical(message: Message) -> bytes:
     which of those it should be is a decision somebody has to make. Making this
     function fail to compile the question is the point of spelling it out.
 
+    **Changing what is covered *is* changing the scheme, and the two have to move
+    together.** These bytes are not a private detail: every signature on every
+    hub was made over the output of this function as it stood that day, and
+    nothing on the wire records which day that was. Add a field, drop one, or
+    change the serialization, and every stored row stops matching — and it stops
+    matching as `MISMATCH`, the verdict that means *a check ran and failed*,
+    rather than as anything a reader could correctly ignore. That is a one-way
+    door if the scheme name stays put, and an ordinary additive change if it does
+    not, which is what `SCHEMES` exists to make possible. So: a new field list
+    ships under a new entry in `SCHEMES`, or it does not ship.
+
+    `test_the_bytes_a_signature_covers_are_pinned` holds the literal output for
+    one fully-populated message so that a change here cannot be a quiet one. It
+    will look like a brittle test. It is a tripwire, and the thing on the other
+    side of it is every signature anybody has already stored.
+
+    Note what that pin transitively covers: `Artifact.to_json` is called here, so
+    a field added to `Artifact` also changes these bytes. That is correct — it is
+    inside the signature — and it is the change least likely to be noticed from
+    this file.
+
     Serialized through `json.dumps` with sorted keys and no spaces, so the bytes
     do not depend on dict ordering or on anybody's formatter.
 
@@ -118,18 +209,38 @@ def canonical(message: Message) -> bytes:
 
 
 def sign(message: Message, cwd: Path | None = None) -> str:
-    """Return a hex HMAC over `canonical`, using this directory's key."""
+    """Return a hex HMAC over `canonical`, using this directory's key.
+
+    **Bare hex, with no `METHOD:` prefix, and that is deliberate rather than an
+    oversight `scheme_of` was written to paper over.** Emitting a prefix would
+    make every not-yet-upgraded peer read this build's sends as `MISMATCH`; see
+    `SCHEMES` for why that is the worst thing an upgrade can do here. The prefix
+    is a syntax this build reads and does not write, and it stays that way until
+    the build that introduces a second scheme.
+    """
     return hmac.new(key(cwd), canonical(message), hashlib.sha256).hexdigest()
 
 
 def verify(message: Message, cwd: Path | None = None) -> bool:
     """Return whether `message.signature` is one this directory's key would have produced.
 
-    A message with no signature is **not** a failure here and the caller has to
-    tell the two apart: `provenance.assess_sent` checks for an empty signature
-    before calling, because "nobody signed this" and "this signature is wrong"
-    are different findings and flattening them into one `False` is the defect
-    this cut exists to avoid on the surface above.
+    **`False` here means one of three things and the caller has to separate
+    them**, because they are three different findings and only one of them is
+    evidence against anybody:
+
+    - *nobody signed this* — an empty signature. `provenance.assess_sent` checks
+      for that before calling.
+    - *this build cannot check that scheme* — `can_check` is false. Also checked
+      before calling, and for the same reason: a scheme this build has never
+      heard of produces bytes it cannot compute, so the mismatch here says
+      nothing about the sender.
+    - *this signature is wrong* — the only one that is evidence of something.
+
+    Flattening any of them into one `False` is the defect this whole surface
+    exists to avoid, and the second was added by the cut that made a scheme
+    prefix readable. It is written as a caller obligation rather than a guard in
+    here on purpose: a guard would have to pick a return value, and every value
+    it could pick is one of the three findings above wearing another's clothes.
 
     `hmac.compare_digest` rather than `==`, on the ordinary timing-attack
     grounds. It is close to pointless here — the attacker would need to be
@@ -137,4 +248,4 @@ def verify(message: Message, cwd: Path | None = None) -> bool:
     reason to write it is that the version without it is the one that gets
     copied somewhere it matters.
     """
-    return hmac.compare_digest(sign(message, cwd), message.signature)
+    return hmac.compare_digest(sign(message, cwd), digest_of(message.signature))

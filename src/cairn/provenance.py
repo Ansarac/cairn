@@ -116,6 +116,16 @@ def assess_sent(message: Message) -> Provenance:
     directory, so a name taken over from somewhere else is signed by a key this
     directory does not hold.
 
+    **A fourth case now sits between them, and it is the reason the split was
+    worth keeping.** A row signed under a scheme this build does not implement is
+    *not checked* rather than *checked and failed*, so it reads `UNVERIFIED`. The
+    distinction only ever matters across a version skew, which is exactly when it
+    matters most: without this branch, the first build to sign differently would
+    make every older peer report the entire history as `MISMATCH` — the loudest
+    verdict cairn has, produced by an upgrade rather than by an attacker.
+    `signing.SCHEMES` carries the argument; the ordering of the two guards below
+    is the whole of the implementation.
+
     **What a pass claims is narrower than it looks**, and the detail says so on
     every reading that has one. The hub assigns `seq` and `created_at`, so
     neither is inside the signature: a hub that re-dated or re-ordered your sends
@@ -126,6 +136,17 @@ def assess_sent(message: Message) -> Provenance:
         return Provenance.unverified(
             "no signature on this one — sent before this build, or through a hub too old to carry it, "
             "so it is the hub's record of your send and not proof of it"
+        )
+    if not signing.can_check(message.signature):
+        # The scheme name is *not* interpolated, and this is the same call
+        # docs/design.md §12 item 23 made for the `Unauthorized` message: it is a
+        # string a peer chose, `render.footnotes` prints `Provenance.label()`
+        # without folding it, and every other detail on this type is written on
+        # this machine. Naming the scheme would be worth roughly one word to a
+        # reader and would put a wire value in column zero (I1).
+        return Provenance.unverified(
+            "this row is signed with a scheme this build does not implement, so nothing was checked — "
+            "it is a newer cairn than this one, not a bad signature. Upgrading is what reads it"
         )
     if signing.verify(message):
         return Provenance(

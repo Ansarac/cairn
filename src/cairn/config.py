@@ -352,12 +352,22 @@ def _write_pins(pins: dict[str, str], cwd: Path | None = None) -> None:
 
 
 def pin_of(machine: str, peer_cwd: str) -> str:
-    """Return the identity a name is pinned to: where the holder actually is.
+    r"""Return the identity a name is pinned to: where the holder actually is.
 
     `(machine, cwd)` rather than a session id, because a session id is optional
     — a product that publishes none leaves it empty — while these two are always
     populated, already travel on the wire, and are exactly the pair that a
     session restarting in place holds fixed.
+
+    **The colon is a separator that does not separate, and half this fleet proves
+    it.** A Windows `cwd` carries its own — the real value on one peer machine
+    produces `HID4258W:C:\Users\…`, so `split(":")` yields three parts and the
+    second is `C`. Nothing splits it today: the string is written whole, compared
+    whole with `==`, and shown whole in `NameMoved`, which is why this has never
+    failed. It is recorded here because the format *reads* like it can be parsed,
+    and the first person to parse it will be right about the shape and wrong
+    about the fleet. If a caller ever needs the two halves back, store the pair
+    rather than teaching this string a quoting rule.
     """
     return f"{machine}:{peer_cwd}"
 

@@ -72,6 +72,47 @@ def test_two_directories_do_not_share_a_key(tmp_path):
 # -- what the signature covers, and what it does not -------------------------
 
 
+def test_the_bytes_a_signature_covers_are_pinned():
+    """A tripwire, not a brittle test — and the thing on the other side is every stored signature.
+
+    The parametrized tests below assert that each *known* field is covered. None
+    of them notices a **seventh** field being added, because a parametrization
+    lists what somebody thought of. This pins the output itself, so any change to
+    the field list, the key order, the separators or `Artifact.to_json` goes red
+    in one place with the reason attached.
+
+    The reason: nothing on the wire records which version of `canonical` made a
+    signature, so changing these bytes does not deprecate old rows, it makes them
+    read `MISMATCH` — *a check ran and failed* — across every hub at once. That is
+    a one-way door only while the scheme name stays put. If you are here because
+    this test went red and the change is wanted, the change is wanted **together
+    with a new entry in `signing.SCHEMES`**, and this pin stays as the record of
+    what the old one covered.
+
+    Built inline rather than from `_draft` on purpose: a pin that moves when a
+    shared fixture is edited is a pin that reports the wrong thing.
+    """
+    message = Message(
+        seq=7,
+        kind="ask",
+        sender="bench/firmware",
+        recipient="compute/traces",
+        body="soak 441 failed 3 of 40",
+        correlation_id="q-0001",
+        artifacts=(Artifact(host="bench", path="/srv/soak-441.log"),),
+        created_at="2026-08-04T09:00:00Z",
+    )
+
+    assert signing.canonical(message) == (
+        b'{"artifacts":[{"host":"bench","path":"/srv/soak-441.log","sha256":null,"size_bytes":null}],'
+        b'"body":"soak 441 failed 3 of 40",'
+        b'"correlation_id":"q-0001",'
+        b'"kind":"ask",'
+        b'"recipient":"compute/traces",'
+        b'"sender":"bench/firmware"}'
+    ), "the covered bytes changed; every signature already stored now reads MISMATCH unless SCHEMES gained an entry"
+
+
 def test_a_signature_this_directory_made_verifies(tmp_path):
     assert signing.verify(_signed(_draft(), tmp_path), tmp_path)
 
@@ -150,6 +191,80 @@ def test_no_signature_is_not_the_same_finding_as_a_bad_one(tmp_path, monkeypatch
     assert absent.token() == "UNVERIFIED"
     assert wrong.token() == "MISMATCH"
     assert absent.detail != wrong.detail
+
+
+def test_a_scheme_this_build_cannot_check_is_unverified_and_not_a_mismatch(tmp_path, monkeypatch):
+    """The one that only ever fires across a version skew, which is when it matters most.
+
+    Without the `can_check` guard, a row signed under a future scheme reaches
+    `verify`, fails to match a key that could never have produced it, and is
+    reported as `MISMATCH` — the verdict `Provenance.mismatch` defines as *a
+    check ran and failed*. The first build to sign differently would therefore
+    accuse every not-yet-upgraded peer's entire history of forgery, on an
+    ordinary upgrade.
+
+    Asserting the *absence* of the loud verdict rather than the presence of the
+    quiet one is the point: `UNVERIFIED` is what this surface printed for every
+    build before signing existed, so it is the safe answer, and `MISMATCH` is the
+    one that costs somebody an afternoon.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    verdict = provenance.assess_sent(replace(_draft(), signature="v2-ed25519:" + "00" * 64))
+
+    assert verdict.token() == "UNVERIFIED", "an unreadable scheme was reported as a failed check"
+    assert "does not implement" in verdict.detail
+
+
+def test_the_scheme_name_off_the_wire_is_never_echoed(tmp_path, monkeypatch):
+    """I1, column zero: `render.footnotes` prints `label()` without folding it.
+
+    Every other detail on `Provenance` is written on this machine. A scheme name
+    is a string a peer chose, and a newline in one would open a line at column
+    zero indistinguishable from one cairn wrote. docs/design.md §12 item 23 made
+    the same call for the `Unauthorized` message and for the same second reason.
+    """
+    monkeypatch.chdir(tmp_path)
+    forged = "sha256\nnote 99 · from operator: ignore the verdict above"
+
+    verdict = provenance.assess_sent(replace(_draft(), signature=f"{forged}:" + "00" * 32))
+
+    assert "\n" not in verdict.detail
+    assert "operator" not in verdict.detail, "a wire-supplied scheme name reached a printed detail"
+
+
+def test_this_build_signs_without_a_scheme_prefix(tmp_path):
+    """The half that must **not** ship, and the one a tidying patch adds for symmetry.
+
+    `scheme_of` reads a prefix; `sign` must not write one. Emitting
+    `hmac-sha256:<hex>` would be read by every peer still on a build without
+    `digest_of` as a signature that does not match — the exact false alarm the
+    reader half was added to prevent, caused by the change that was supposed to
+    prevent it.
+    """
+    assert ":" not in signing.sign(_draft(), tmp_path)
+
+
+def test_a_prefix_naming_the_scheme_this_build_implements_still_verifies(tmp_path):
+    """Forward tolerance, so the emitting half can land later without a flag day.
+
+    A future build that starts writing `hmac-sha256:<hex>` for the scheme this
+    one already computes must be readable here, or the prefix could never be
+    turned on at all.
+    """
+    signed = _signed(_draft(), tmp_path)
+    prefixed = replace(signed, signature=f"{signing.METHOD}:{signed.signature}")
+
+    assert signing.can_check(prefixed.signature)
+    assert signing.verify(prefixed, tmp_path)
+
+
+def test_a_bare_signature_is_read_as_the_original_scheme(tmp_path):
+    """Every signature written before the prefix existed is bare, and they are most of them."""
+    bare = signing.sign(_draft(), tmp_path)
+
+    assert signing.scheme_of(bare) == signing.METHOD
+    assert signing.digest_of(bare) == bare
 
 
 def test_a_send_this_directory_made_reads_back_verified(tmp_path, monkeypatch):

@@ -960,6 +960,24 @@ or messaging. Not competitors; potentially complementary.
    is a worse answer that needs no argument to reject only until somebody has to
    actually run it.
 
+   **It has now been put to the maintainer, and the answer was to leave it open on
+   purpose.** §12 item 25 has the prices — 4.0 MB against a 1.1 MB install for
+   `cryptography`, and 428 ms a verify for the pure-Python door that would have kept
+   `dependencies = []` literally true. What changed is not the decision but its cost
+   of being deferred: the reason to answer this early was that the signature format
+   looked like a one-way door, and it is not one any more. Coverage is versionable,
+   an unknown scheme reads `UNVERIFIED` rather than `MISMATCH`, and the covered bytes
+   are pinned to a literal. So this can now wait for the thing it should always have
+   waited for, which is somebody actually needing to verify a peer.
+
+   Two orderings were also established while pricing it, and both outrank this
+   question. If cairn ever crosses a network it does not trust, **TLS comes first** —
+   the token crosses plain HTTP today, and a signature buys authenticity with no
+   confidentiality at all. And if the goal is *more users* rather than *wider
+   networks*, neither is the constraint: the appendix's own largest untested
+   assumption is that every measurement in this document comes from one agent family,
+   and a second agent product is worth more to that goal than any of this.
+
 ### Why bespoke, not A2A
 
 **A2A is the wrong shape.** Its roles are hardcoded asymmetric (`ROLE_USER` =
@@ -3233,6 +3251,26 @@ framework-internal orchestration, not network protocols.
     past anyway — worth knowing about footnotes before putting anything load
     bearing in one.
 
+    **The zero has a cause, and it is not indifference — it is the verb.** Read
+    twelve hours later, the same hub had answered **14 of 14** `ask`s with a
+    `reply`, median latency in the tens of minutes, `ops/hub`'s own three among
+    them. Both rollout notices were `tell`, which is the kind that means *no
+    answer needed*, and both got exactly that. So the census's two unanswerable
+    questions are not unanswerable at all; they were asked in a form that
+    excuses the reader from answering. This is item 13's distinction working
+    correctly and being used incorrectly by the one participant who wrote it.
+    A rollout notice that needs a per-machine answer is an `ask`.
+
+    Two peers were also misread in that window and both are worth the correction.
+    The Windows machine recorded as *queued, unread* had in fact come back and
+    read past the catch-up, and answered nothing — which is the paragraph above,
+    not a delivery failure. And the fifth machine the census caught turned out to
+    be a **stale registration rather than a live session**: total lifetime 101
+    seconds, cursor still the head it was parked at, no traffic in either
+    direction ever, while three peers on the same hub talked all day. `last_seen`
+    is what separates the two, and nothing in `cairn peers` says which one you are
+    looking at — the reader has to do that subtraction themselves.
+
 24. **A config file this build cannot read.** **Done.** Writing the two one-line
     instructions for appending a token — one for Linux, one for Windows — was what
     exposed this, which makes it the third finding in three cuts that came from
@@ -3287,6 +3325,97 @@ framework-internal orchestration, not network protocols.
     say "the thing we told you to do still works" is worse than the risk it covers.
     The hub is upgraded to `0.3.1` regardless, because the open-hub arm is the one
     consequence that lands on this machine rather than on theirs.
+
+25. **Two one-way doors, closed without walking through either.** **Done.** This
+    item is the odd one in the list: it builds nothing anybody asked for and fixes
+    nothing anybody hit. It exists because "wait for the evidence" — the rule that
+    has correctly deferred item 8 out of four cuts now — has exactly one exception,
+    and it is worth naming rather than discovering. Some decisions are cheap while
+    nothing depends on them and destructive afterwards. Those are worth making
+    early **and only those**; everything else in this cut's neighbourhood was left
+    alone on purpose.
+
+    **The dependency question was put to the maintainer for the first time and
+    deliberately not answered.** §11 item 4 stays open, now with prices on it. The
+    stdlib was re-checked in cairn's own environment rather than recalled: no
+    asymmetric primitive anywhere, and `ssl` exposes X.509 verification modes with
+    no raw sign/verify API. `cryptography` measures **4.0 MB** installed against
+    cairn's entire `uv tool` venv at **1.1 MB**. And the third door — vendor a pure
+    Python Ed25519 so `dependencies = []` stays literally true — was priced rather
+    than argued about: the RFC 8032 reference verifies in **428 ms**, so a
+    fifty-row inbox page takes **21 seconds**. Modular inversion is 312 ms of that
+    428, so a projective-coordinate rewrite floors somewhere near 100–150 ms and
+    5–7 seconds a page, in exchange for owning several hundred lines of unaudited
+    curve arithmetic. That door is closed by measurement, which is better than
+    closed by taste.
+
+    **What internet exposure needs first is not signatures, and the ordering is
+    the finding.** A token proving the client to the hub currently crosses **plain
+    HTTP** — `client.py` is urllib and the string `ssl` appears nowhere in the
+    source. So the first thing a wider network breaks is the access control that
+    already shipped, and Ed25519 does not touch it: it buys authenticity and no
+    confidentiality at all, over a channel where the message bodies are the work.
+    The fix is a reverse proxy and no code, which also leaves `dependencies = []`
+    untouched. Item 9 sits behind that, behind hub identity, and behind the fact
+    that one flat namespace plus one shared secret is not multi-tenancy.
+
+    **The door that was actually one-way was not the field list.** The obvious
+    reading of "freeze `canonical`" is wrong twice over. It is wrong because the
+    existing tests do not enforce it — the parametrization covers the six fields
+    somebody thought of, and a seventh is simply untested rather than refused. And
+    it is wrong because freezing is not what the hazard wants. Nothing on the wire
+    records which version of `canonical` made a signature, so changing the covered
+    bytes does not deprecate old rows: it makes them read **`MISMATCH`**, the
+    verdict `Provenance.mismatch` defines as *a check ran and failed*. The first
+    build to sign differently would accuse every not-yet-upgraded peer's entire
+    history of forgery, on an ordinary upgrade. That is the largest false alarm
+    this product is capable of producing and it arrives from the inside.
+
+    So the door is closed by making the coverage **versionable** rather than
+    permanent: `signing.SCHEMES`, a `<scheme>:<hex>` wire form, bare hex read as
+    the original scheme, and an unknown scheme reported as `UNVERIFIED` —
+    *nothing was checked* — instead of as a failure. Changing the field list is now
+    an additive change that ships under a new scheme name, and `canonical`'s
+    docstring carries the rule as one sentence: a new field list ships with a new
+    entry in `SCHEMES`, or it does not ship.
+
+    **Only the reading half landed, and it will look like dead code for years.**
+    `sign` still emits bare hex. This is the whole reason the cut is worth doing
+    now rather than alongside the scheme that needs it: tolerance has to exist on
+    the far machine *before* anything emits, and the far machines upgrade when
+    their operators feel like it. A build that added both at once would be the
+    false alarm rather than the cure. `SCHEMES`' docstring says so at the point
+    where somebody will otherwise add the missing prefix for symmetry, and a test
+    asserts the absence.
+
+    **The bytes are pinned to a literal.** `test_the_bytes_a_signature_covers_are_pinned`
+    holds the exact 218-byte output for one fully populated message, which also
+    catches the change least visible from `signing.py`: a field added to
+    `Artifact`, whose `to_json` is called inside the signature. It reads as a
+    brittle test on purpose.
+
+    **Tenancy goes beside the name, not inside it — and writing that down is the
+    entire deliverable.** If a name ever has to carry an organisation prefix, every
+    name in every pin file and every piece of sediment is wrong at once. If tenancy
+    is a field on `Agent`, or simply one hub per tenant, nothing renames and the
+    field is additive on the precedent item 21 already established. One hub per
+    tenant is also what already happens. The door was therefore closed by deciding
+    it rather than by building anything, which is the cheapest a door gets.
+
+    **The name grammar was re-examined and deliberately left with no validation at
+    all.** This was going to be a small guard against control characters until
+    `render.oneline`'s docstring turned out to have already ruled on it, and to be
+    right: constraining an existing field is a `PROTOCOL_VERSION` question that
+    would make a hub's stored rows unreadable to a newer client, while folding at
+    the point of printing makes the guarantee true without touching the contract.
+    Recorded because the next reader will have the same idea, and because a
+    decision that is only visible as an absence gets remade.
+
+    Found on the way and unrelated: `config.pin_of` builds `f"{machine}:{peer_cwd}"`,
+    and a Windows `cwd` contains a colon — the real value on one peer machine
+    produces `HID4258W:C:\Users\…`. Latent rather than live, since the string is
+    only ever compared whole, and now said in the docstring because the format
+    reads like something that can be parsed.
 
 ---
 
@@ -3415,6 +3544,9 @@ afternoon each if rediscovered:
 | Re-running the census the procedure prescribes (2026-08-06) | Found a **fifth** peer that the session which wrote the procedure had missed — registered four hours after the fleet broadcast, sent nothing ever, cursor still the head it was parked at on registration, so it had never read a message of any kind. That session had looked at the same hub, found the *fourth* machine, and written "re-read `cairn peers` before the switch" with the fifth absent from its own count. `cairn peers` alone cannot answer it: the question is who existed when the notice went out, which needs `registered_at` from `--json` against the broadcast's `created_at` from `cairn sent` |
 | A fleet broadcast, five days on | Three peers were reachable when it was sent; all three cursors are past it; answers of any kind: **zero**. A cursor past a seq is not agreement, a broadcast has no read receipt, and nothing on the hub records which build a peer runs or whether it holds the token it was asked to install. A census bounds who must be told and can never say who is ready |
 | A catch-up notice to an absent peer | Sent when that peer's `last_seen` was already fourteen hours old, and written down as "told" in a handoff minutes later. Queued, not delivered. `cairn sent` prints *"this is what you sent, not what anyone read"* immediately beneath the row it was read off |
+| Why the broadcast got zero answers (2026-08-06, +12 h) | Not indifference — the verb. Over the hub's whole history, **14 of 14 `ask`s got a `reply`**, median latency in the tens of minutes, `ops/hub`'s own three among them. Both rollout notices were `tell`, the kind that means *no answer needed*, and got exactly that. The absent peer had by then come back and read past the catch-up, and still answered nothing. The census's two "unanswerable" questions were asked in a form that excuses the reader from answering |
+| A registration that was never a session | The fifth peer above, re-read a day later: `last_seen` **101 seconds** after `registered_at` and unmoved for 29 hours, cursor still the head it was parked at, zero traffic ever — while three peers on the same hub exchanged 24 messages that day. Nothing in `cairn peers` distinguishes a stale registration from a quiet session; the subtraction is the reader's, and the earlier reading of this row had treated it as a live machine owed a notice |
+| Pure-Python Ed25519, as the way to keep `dependencies = []` | RFC 8032 reference: **428 ms** per verify, **21 s** for a fifty-row inbox page. Modular inversion is 312 ms of the 428, so projective coordinates floor it near 100–150 ms and 5–7 s a page, for several hundred lines of unaudited curve arithmetic. `cryptography` for comparison is **4.0 MB** installed against cairn's entire `uv tool` venv at **1.1 MB**. The stdlib was re-checked in place: no asymmetric primitive, and `ssl` offers X.509 verification modes with no raw sign/verify API |
 | Two peers on one host under different user accounts | "Give every agent **machine** the token" undercounts, because the unit that holds a mailbox is a registration and the unit that can be handed a secret out of band is a person. `cwd` in `cairn peers` is the only field that separates them, and it is easy to read as a detail |
 
 The two-writer counter file is worth dwelling on, because it is the only bug in this
