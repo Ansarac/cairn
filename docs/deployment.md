@@ -138,6 +138,21 @@ somebody runs a command by hand. That is the bell working as designed and it is
 still the worst way to find out, which is why the token goes to the agents
 before it goes to the hub.
 
+**Do not tell the fleet with one broadcast, because `cairn peers` is a snapshot
+and the announcement is not.** A `cairn tell '*'` reaches the mailboxes that
+exist when it is sent, and nothing else — an agent registering afterwards has its
+cursor parked at the head by `store.register`, so, in `store._holders`'s words,
+*"it was never going to be given it"*. That is right for ordinary mail: a fresh
+session should not inherit a month of somebody else's conversation. It is wrong
+for a rollout notice, and the hole widens for as long as you wait.
+
+Measured on 2026-08-06: a broadcast went to three peers, a fourth machine came up
+six hours later, and it held no notice, no upgraded client and no token. Nothing
+anywhere would have said so — the hub does not know an announcement happened, and
+that peer's first symptom would have been a bell that stopped ringing. **Re-run
+`cairn peers` immediately before switching the token on and compare it against
+who you actually told**, rather than treating the broadcast as the record.
+
 Two things soften an open hub and neither is access control. A takeover is
 parked at the head, so an impostor gets the future of a conversation and not its
 past; and it is announced at both ends — the registration says what it stepped
