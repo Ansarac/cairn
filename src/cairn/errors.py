@@ -37,6 +37,27 @@ class Unreachable(CairnError):  # noqa: N818 - the name is the condition; `Unrea
     exit_code = 2
 
 
+class Unreadable(Unreachable):
+    """The hub answered, and this build could not parse what it said.
+
+    **A subclass rather than a sibling, so the exit code cannot drift.** To a
+    script these are one situation — the hub is not usable from here, exit 2 —
+    and splitting that would be the collapse `errors.py` argues against
+    everywhere else, in reverse. Every `except Unreachable` keeps catching this.
+
+    What the distinction buys is one caller. `cli.cmd_bell` must stay silent
+    through an ordinary outage, because it runs at every turn boundary and a
+    line printed on every one of them is furniture (docs/design.md §12 item 18).
+    It must *not* stay silent when a page cannot be parsed, because that is a
+    poisoned mailbox reporting itself as an empty one — the failure §12 item 26
+    is about, which reached the bell as an `Unreachable` indistinguishable by
+    type from a hub that was merely down.
+
+    Nothing else should branch on this. If a second caller wants it, ask first
+    whether it actually wants "the hub is not usable", which is the parent.
+    """
+
+
 class Unauthorized(CairnError):  # noqa: N818 - a state of this machine's configuration, not a defect
     """The hub is up, and it will not talk to this machine.
 

@@ -30,7 +30,7 @@ import pytest
 
 from cairn import cli, render
 from cairn.client import HubClient
-from cairn.errors import UsageError
+from cairn.errors import Unreadable, UsageError
 from cairn.hub import make_server
 from cairn.provenance import assess_sent
 from cairn.store import SqliteStore
@@ -189,19 +189,42 @@ def test_the_refusal_says_the_message_was_not_sent(hub, monkeypatch, capsys):
 # -- the bell, which reported all of this as an empty mailbox -----------------
 
 
+def test_the_bell_stays_quiet_when_the_hub_is_merely_down(hub, monkeypatch, capsys):
+    """The half the first version of this fix got wrong, caught by the skill's own check.
+
+    An unreachable hub is the **ordinary** case at a turn boundary. The first
+    attempt printed to stderr for every exception the bell swallows, so a briefly
+    dead hub produced a line on every single turn — item 18's furniture, added by
+    the change that was supposed to remove a silence.
+
+    `client._readable` is why the two were indistinguishable: it converts a
+    `WireError` into `Unreachable`, so an unparseable page and a dead socket
+    arrived here as the same type. `errors.Unreadable` is a subclass of it, which
+    keeps exit 2 for every script and gives this one caller the distinction.
+    """
+    monkeypatch.setenv("CAIRN_AGENT", SENDER)
+
+    assert cli.run(["--hub", "http://127.0.0.1:9", "bell"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "{}"
+    assert captured.err == "", "a routine outage printed at a turn boundary"
+
+
 def test_the_bell_still_prints_nothing_but_no_longer_says_nothing(hub, monkeypatch, capsys):
     """Both halves, because dropping either one is a different bug.
 
     `{}` and exit 0 are the hook contract and must survive: a bell that errors
     degrades the session it is attached to. What must not survive is the total
-    silence — `WireError` is a `ValueError`, so an unreadable page was caught and
-    reported as an empty mailbox at every turn boundary, forever, which is
-    §12 item 6's deafness reached from inside.
+    silence — `WireError` is a `ValueError` that `client._readable` turns into
+    `Unreachable`, so an unreadable page was caught and reported as an empty
+    mailbox at every turn boundary, forever, which is §12 item 6's deafness
+    reached from inside.
     """
 
     def _unreadable(*_args, **_kwargs):
         msg = "bad page"
-        raise ValueError(msg)
+        raise Unreadable(msg)
 
     monkeypatch.setenv("CAIRN_AGENT", SENDER)
     monkeypatch.setattr("cairn.client.HubClient.inbox", _unreadable)
