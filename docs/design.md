@@ -3483,6 +3483,22 @@ framework-internal orchestration, not network protocols.
     goes to **stderr**, which reaches a hook log and a human and never reaches the
     model's context.
 
+    **The first version of that fix was itself the furniture it was fixing, and
+    the handoff skill's own checklist is what caught it.** *"Run `cairn bell` with
+    the hub down; it must print `{}` and exit 0"* — it did, and it also printed a
+    stderr line, because the first attempt spoke for every exception the bell
+    swallows. An unreachable hub is the **ordinary** case at a turn boundary, so
+    that is a line on every single turn of every session whose hub is briefly
+    down: item 18's measurement, reproduced by the change meant to honour it. The
+    cause was a type collapse one layer down — `client._readable` converts
+    `WireError` into `Unreachable`, so *"the hub is not there"* and *"the hub said
+    something I cannot parse"* arrive at every caller as one class.
+    `errors.Unreadable` is a subclass of `Unreachable`, which keeps exit 2 for
+    every script and every `except` already written, and gives exactly one caller
+    the distinction it needs. Worth noticing that the verification step found this
+    and the test did not: the test asserted the new line appears, which the broken
+    version also did.
+
     **`PROTOCOL_VERSION` stays at `1`, and this is the fourth worked example — the
     first where bumping would have been the harm.** No field changed, no route
     changed, and the parse moved in the *permissive* direction, so nothing that

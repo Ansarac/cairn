@@ -26,7 +26,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from cairn import config, signing
-from cairn.errors import Unauthorized, Unreachable, UsageError
+from cairn.errors import Unauthorized, Unreachable, Unreadable, UsageError
 from cairn.wire import (
     Agent,
     Artifact,
@@ -166,7 +166,10 @@ class HubClient:
             yield
         except (WireError, KeyError) as exc:
             msg = f"hub spoke something unexpected: {exc}"
-            raise Unreachable(msg) from exc
+            # `Unreadable`, not `Unreachable`: same exit code, same message, and
+            # a type `cli.cmd_bell` can tell from an ordinary outage. See
+            # `errors.Unreadable` for why exactly one caller may branch on it.
+            raise Unreadable(msg) from exc
 
     def health(self) -> dict[str, Any]:
         """Return the hub's health payload."""

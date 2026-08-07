@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from cairn import build, config, notify, nudge, provenance, render, skill
 from cairn.client import HubClient
-from cairn.errors import CairnError, UsageError
+from cairn.errors import CairnError, Unreadable, UsageError
 from cairn.wire import (
     BROADCAST,
     MAX_BODY_CHARS,
@@ -1082,15 +1082,23 @@ def cmd_bell(args: argparse.Namespace) -> int:
         # ensure_ascii=False so the reason reads as itself in the hook log rather
         # than as \uXXXX escapes; hook stdout is UTF-8 and render owns the wording.
         print(json.dumps(payload, ensure_ascii=False))
-    except (CairnError, OSError, ValueError) as exc:
+    except Unreadable as exc:
         print("{}")
         # Folded, because a `WireError` from `normalize_subject` quotes the value
         # it refused and that value came off the wire (I1, column zero) — stderr
         # is a smaller door than stdout, not a different rule.
         print(
-            f"cairn: bell found nothing it could read, so it rang for nothing: {render.oneline(str(exc))}",
+            f"cairn: this mailbox holds something this build cannot read, so the bell "
+            f"stayed quiet about it: {render.oneline(str(exc))}",
             file=sys.stderr,
         )
+    except (CairnError, OSError, ValueError):
+        # Silent on purpose, and the first version of this was not. An
+        # unreachable hub is the *ordinary* case at a turn boundary, so a line
+        # here prints on every one of them — item 18's furniture, added by the
+        # change that was meant to remove a silence. Only `Unreadable` is worth
+        # interrupting a human for.
+        print("{}")
     return 0
 
 
