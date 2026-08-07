@@ -469,9 +469,32 @@ class SqliteStore:
         therefore read as "no mail" to every script that follows the skill,
         forever, with no seq printed to aim an `ack` past. Reproduced against a
         live hub.
+
+        **The body check is the fourth, and it is the same bug found a second
+        time rather than a new one.** The paragraph above was written about
+        `kind` and is true word for word of `MAX_BODY_CHARS`, which lived only
+        inside `Message.from_json`: a 20,000-character POST was stored, answered
+        `200`, and refused thereafter by every reader of that page — the sender's
+        own `cairn sent` included, since it parses the same shape. Two such rows
+        are in this fleet's hub, and both were read past by hand.
+
+        So the lesson is taken generally this time. A guard in `from_json` with
+        no counterpart here is a poisoned mailbox waiting for an input, because
+        `hub._send` reaches this method without parsing; and the parser is the
+        wrong place for any of them, since it runs on rows that are already
+        durable. `wire.MAX_BODY_CHARS` carries the argument and
+        `test_whatever_the_store_accepts_can_be_read_back` enforces the direction
+        without naming a field, which is the part that survives the next guard
+        somebody adds.
         """
         if kind not in KINDS:
             msg = f"unknown message kind {kind!r}; this hub stores only: {', '.join(KINDS)}"
+            raise UsageError(msg)
+        if len(body) > MAX_BODY_CHARS:
+            msg = (
+                f"body is {len(body)} chars and this hub admits {MAX_BODY_CHARS}; "
+                f"nothing was stored. Split it, or send a reference with -a HOST:PATH"
+            )
             raise UsageError(msg)
         if self.get_agent(sender) is None:
             msg = f"unknown sender {sender!r}; register before sending"

@@ -34,7 +34,16 @@ from typing import TYPE_CHECKING, NoReturn
 from cairn import build, config, notify, nudge, provenance, render, skill
 from cairn.client import HubClient
 from cairn.errors import CairnError, UsageError
-from cairn.wire import BROADCAST, Agent, Artifact, InboxEntry, SentEntry, WireError, normalize_subject
+from cairn.wire import (
+    BROADCAST,
+    MAX_BODY_CHARS,
+    Agent,
+    Artifact,
+    InboxEntry,
+    SentEntry,
+    WireError,
+    normalize_subject,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -88,6 +97,38 @@ def _subject(raw: str) -> str:
         return normalize_subject(raw)
     except WireError as exc:
         raise UsageError(str(exc)) from exc
+
+
+def _body(raw: str) -> str:
+    """Refuse an oversized body here, where the sender can still do something about it.
+
+    The second of the two admission checks; `store.append` is the one that must
+    exist, since an older or foreign client will not run this one. This is the one
+    that makes the refusal *usable*, and the difference is the whole reason it is
+    duplicated rather than left to the hub.
+
+    Before this cut there was no check on either side. An oversized body was
+    stored, answered `200`, and refused only when a reader parsed it — so the
+    sender got exit **2** and `hub spoke something unexpected`, which is cairn's
+    "the hub is broken or unreachable", under a hub that was neither and a message
+    that had already been delivered. `errors.py` argues that 2 and 3 cannot
+    collapse because a script's correct response differs: an outage may clear, a
+    body that is too long never will. The sender was told to retry the one thing
+    that can only fail again, while the thing they would have retracted sat
+    unread in the recipient's mailbox poisoning it.
+
+    So the message says what happened to the send, not just what was wrong with
+    it. *Nothing was sent* is the fact the old failure got wrong, and it is what
+    decides whether the next thing the sender does is retract or rewrite.
+    """
+    if len(raw) > MAX_BODY_CHARS:
+        msg = (
+            f"body is {len(raw)} chars and the limit is {MAX_BODY_CHARS}. Nothing was sent. "
+            f"Either split it across two messages, or put the bulk behind a reference "
+            f"with -a HOST:PATH and say in the body what is at that path"
+        )
+        raise UsageError(msg)
+    return raw
 
 
 def _artifacts(specs: Sequence[str]) -> list[Artifact]:
@@ -257,7 +298,7 @@ def cmd_tell(args: argparse.Namespace) -> int:
     me = config.require_identity()
     client = _client(args)
     _check_recipient(client, args.recipient)
-    message = client.send("tell", me, args.recipient, args.body, artifacts=_artifacts(args.artifact))
+    message = client.send("tell", me, args.recipient, _body(args.body), artifacts=_artifacts(args.artifact))
     print(f"sent seq {message.seq} to {render.oneline(message.recipient)}{_reach(client, message.recipient, me)}")
     return 0
 
@@ -290,7 +331,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     client = _client(args)
     _check_recipient(client, args.recipient)
     message = client.send(
-        "ask", me, args.recipient, args.body, correlation_id=correlation, artifacts=_artifacts(args.artifact)
+        "ask", me, args.recipient, _body(args.body), correlation_id=correlation, artifacts=_artifacts(args.artifact)
     )
     print(f"asked seq {message.seq} of {render.oneline(message.recipient)}, correlation {render.oneline(correlation)}")
     return 0
@@ -310,7 +351,12 @@ def cmd_reply(args: argparse.Namespace) -> int:
     client = _client(args)
     _check_recipient(client, args.recipient)
     message = client.send(
-        "reply", me, args.recipient, args.body, correlation_id=args.correlation, artifacts=_artifacts(args.artifact)
+        "reply",
+        me,
+        args.recipient,
+        _body(args.body),
+        correlation_id=args.correlation,
+        artifacts=_artifacts(args.artifact),
     )
     print(f"replied seq {message.seq} to {render.oneline(message.recipient)} for {render.oneline(args.correlation)}")
     return 0
@@ -530,7 +576,7 @@ def cmd_note(args: argparse.Namespace) -> int:
     client = _client(args)
     note = client.write_note(
         author=me,
-        body=args.body,
+        body=_body(args.body),
         subject=_subject(args.subject),
         question=args.question,
         artifacts=_artifacts(args.artifact),
@@ -743,7 +789,9 @@ def cmd_settle(args: argparse.Namespace) -> int:
     an answer cannot be filed away from its question.
     """
     me = config.require_identity()
-    note = _client(args).write_note(author=me, body=args.body, settles=args.id, artifacts=_artifacts(args.artifact))
+    note = _client(args).write_note(
+        author=me, body=_body(args.body), settles=args.id, artifacts=_artifacts(args.artifact)
+    )
     print(f"note {note.id} on {note.subject} settles question {args.id}")
     return 0
 
@@ -763,7 +811,9 @@ def cmd_supersede(args: argparse.Namespace) -> int:
     is frequently not whoever wrote it down. See invariant I3.
     """
     me = config.require_identity()
-    note = _client(args).write_note(author=me, body=args.body, supersedes=args.id, artifacts=_artifacts(args.artifact))
+    note = _client(args).write_note(
+        author=me, body=_body(args.body), supersedes=args.id, artifacts=_artifacts(args.artifact)
+    )
     print(f"note {note.id} on {note.subject} supersedes {args.id}")
     print(f"  both stay on the pile; `cairn notes {note.subject}` marks {args.id} as superseded")
     return 0
@@ -971,6 +1021,18 @@ def cmd_bell(args: argparse.Namespace) -> int:
     **It never fails loudly.** A hook that errors degrades the session it is
     attached to, so an unreachable hub means an empty response and exit 0.
 
+    That property is kept and it had a hole underneath it: *never loudly* had
+    become *never at all*. `WireError` is a `ValueError`, so a page this build
+    could not parse was caught here and reported as an empty mailbox — the
+    recipient of a poisoned inbox was told there was no mail, at every turn
+    boundary, forever. Measured with an oversized body, which `store.append` now
+    refuses; the swallow is general, so closing that one entrance does not close
+    this. `{}` and exit 0 are still what stdout gets, because that is the hook
+    contract and a session must not be degraded by its own bell. The difference
+    is that the reason now goes to **stderr**, which reaches a hook log and a
+    human and never reaches the model's context — the one channel here that can
+    carry a fact without carrying a consequence.
+
     **It speaks the shape the invoking event expects**, which the adapter owns
     because the shape is a fact about one product. The latch below advances on
     the ring, not on the reading, and that is only safe while every event cairn
@@ -1020,8 +1082,15 @@ def cmd_bell(args: argparse.Namespace) -> int:
         # ensure_ascii=False so the reason reads as itself in the hook log rather
         # than as \uXXXX escapes; hook stdout is UTF-8 and render owns the wording.
         print(json.dumps(payload, ensure_ascii=False))
-    except (CairnError, OSError, ValueError):
+    except (CairnError, OSError, ValueError) as exc:
         print("{}")
+        # Folded, because a `WireError` from `normalize_subject` quotes the value
+        # it refused and that value came off the wire (I1, column zero) — stderr
+        # is a smaller door than stdout, not a different rule.
+        print(
+            f"cairn: bell found nothing it could read, so it rang for nothing: {render.oneline(str(exc))}",
+            file=sys.stderr,
+        )
     return 0
 
 

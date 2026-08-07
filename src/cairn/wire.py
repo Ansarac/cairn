@@ -66,8 +66,51 @@ BROADCAST = "*"
 MessageKind = Literal["tell", "ask", "reply"]
 KINDS: tuple[MessageKind, ...] = ("tell", "ask", "reply")
 
-MAX_BODY_CHARS = 16_000
-"""Messages are prose between agents. Anything larger is an artifact (see `Artifact`)."""
+MAX_BODY_CHARS = 32_000
+"""How much prose may be **admitted** to a mailbox. Not a parse guard — see below.
+
+Messages are prose between agents; anything genuinely larger is an artifact (see
+`Artifact`). What matters more than the number is **where this is enforced**, and
+that was wrong for the whole life of the project until it was measured.
+
+**A parser must never refuse what the store already holds.** This constant used
+to be checked inside `Message.from_json` and `Note.from_json` and nowhere else,
+which put the strictest guard in the system on the one code path that runs
+against data that is *already durable*. `hub._send` passes the POST body to
+`store.append` without going through `from_json`, so an oversized body was
+written, answered `200`, and then refused by every reader — including the
+sender's own `cairn sent`, and including every innocent message on the same
+page, because a page is parsed as a unit. `cairn bell` reported the mailbox as
+empty throughout. Measured, not reasoned: two such rows are in this fleet's hub.
+
+That is the identical failure `store.append`'s docstring already records for
+`kind`, found and fixed one field at a time. The general form is the rule now:
+**anything the store accepts, the parser must be able to read**, and
+`test_whatever_the_store_accepts_can_be_read_back` asserts the direction rather
+than any one guard. Admission is checked twice, at both entries — `cli` before
+the POST so the sender gets exit 3 and a usable sentence, and `store` before the
+insert because an older or foreign client will not have checked. Parsing checks
+nothing about length at all, and `render` truncates for display so that no single
+row can ever cost a reader the rest of the page.
+
+**32,000 rather than 16,000, and the number came from the traffic.** Over 197
+real messages: median 2,963, p90 5,849, p99 16,642, max 29,682. The old limit sat
+exactly on the 99th percentile, so it fired on legitimate work — and the two rows
+it caught were long-form prose (167 and 131 lines, mean line 127-177 characters,
+fifty-odd blank lines each), not pasted logs. The artifact rule does not serve
+prose: you cannot put a written argument behind a path and have it still be a
+message. The limit exists to protect the *reader's context*, not the hub — 32,000
+characters is nothing beside `hub.MAX_REQUEST_BYTES` — so it should sit clear of
+honest use and stop only the thing nobody meant to send.
+
+**Raising it does not make an un-upgraded peer any worse off, and that was
+checked rather than assumed.** A build whose `from_json` still refuses over
+16,000 is poisoned by such a row however it arrives, and today it arrives *by
+accident*, with the sender told exit 2 and "hub spoke something unexpected"
+while the message lands anyway. After this cut nothing over the limit is stored
+at all, so the accidental case goes to zero; what remains is deliberate, visible
+to the sender, and fixed for good on whichever machine installs this build.
+"""
 
 MAX_SUBJECT_CHARS = 120
 """A subject is an address for a pile of notes, not a sentence."""
@@ -273,10 +316,11 @@ class Message:
         if kind not in KINDS:
             msg = f"unknown message kind {kind!r}; expected one of {', '.join(KINDS)}"
             raise WireError(msg)
+        # No length check. `MAX_BODY_CHARS` is an admission limit and belongs at
+        # the two entries, never here: this runs against rows that are already
+        # durable, and a parser that refuses one of them costs the reader the
+        # whole page. See `MAX_BODY_CHARS`.
         body = _require(obj, "body", str)
-        if len(body) > MAX_BODY_CHARS:
-            msg = f"body is {len(body)} chars, limit is {MAX_BODY_CHARS}; send an artifact reference instead"
-            raise WireError(msg)
         return cls(
             seq=int(obj.get("seq") or 0),
             kind=kind,  # type: ignore[arg-type]
@@ -673,10 +717,10 @@ class Note:
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> Self:
         """Parse the wire form."""
+        # No length check here either, and for the same reason a message has
+        # none: sediment outlives the build that wrote it, so this is the last
+        # place that may refuse it. See `MAX_BODY_CHARS`.
         body = _require(obj, "body", str)
-        if len(body) > MAX_BODY_CHARS:
-            msg = f"note body is {len(body)} chars, limit is {MAX_BODY_CHARS}; reference an artifact instead"
-            raise WireError(msg)
         settles = obj.get("settles")
         supersedes = obj.get("supersedes")
         return cls(
