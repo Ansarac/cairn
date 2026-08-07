@@ -199,6 +199,20 @@ into snapshot-then-replace, and the replaced file's `-wal` and `-shm` sidecars s
 disk beside a database they no longer describe — which SQLite will try to replay. Caught
 by re-counting rows after the move; silent otherwise.
 
+**Verify with `immutable=1`, because the plain read-only connect is itself a writer.**
+The paragraph above blamed a live hub for the sidecars found beside an archive, and that
+was wrong — measured 2026-08-06: `sqlite3.connect("file:<archive>.db?mode=ro", uri=True)`
+on a WAL-mode file **creates `-shm` and `-wal` in the directory**, because `mode=ro`
+forbids writing to the *database* and says nothing about the WAL machinery. So the
+re-count this skill tells you to run is what produces the artefact it warns about, and
+the previous handoff's claim that cut 4's archive was "sidecar-free" was false within six
+minutes of being written. Nothing was corrupted either time — both files still read their
+recorded row counts — but "no sidecars" cannot be checked by a method that makes them.
+
+```python
+sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)  # reads, creates nothing
+```
+
 Render the companion `.md` **through the commands a reader would actually run** rather
 than as a table dump, so the I1 framing tiers survive. `handoffs/` is gitignored: the
 copy stays local, and the handoff points at it.

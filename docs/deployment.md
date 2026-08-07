@@ -138,6 +138,53 @@ somebody runs a command by hand. That is the bell working as designed and it is
 still the worst way to find out, which is why the token goes to the agents
 before it goes to the hub.
 
+**Do not tell the fleet with one broadcast, because `cairn peers` is a snapshot
+and the announcement is not.** A `cairn tell '*'` reaches the mailboxes that
+exist when it is sent, and nothing else — an agent registering afterwards has its
+cursor parked at the head by `store.register`, so, in `store._holders`'s words,
+*"it was never going to be given it"*. That is right for ordinary mail: a fresh
+session should not inherit a month of somebody else's conversation. It is wrong
+for a rollout notice, and the hole widens for as long as you wait.
+
+Measured on 2026-08-06: a broadcast went to three peers, a fourth machine came up
+six hours later, and it held no notice, no upgraded client and no token. Nothing
+anywhere would have said so — the hub does not know an announcement happened, and
+that peer's first symptom would have been a bell that stopped ringing. **Re-run
+the census immediately before switching the token on and compare it against who
+you actually told**, rather than treating the broadcast as the record.
+
+Later the same day, running that census caught a *fifth* machine the session that
+wrote this paragraph had missed. So it is a command and not a recollection — and
+`cairn peers` on its own is not the command, because it lists who exists now and
+the question is who existed when the notice went out:
+
+```bash
+cairn peers --json      # registered_at and last_seen, per peer
+cairn sent              # the broadcast's seq and created_at
+```
+
+A peer whose `registered_at` is **after** the broadcast never received it. A
+broadcast is stored as one row with `recipient = '*'` rather than fanned out per
+recipient, so there is no delivery record to consult and this comparison is the
+only thing that reconstructs one. A peer whose cursor is still the head it was
+parked at on registration has never read anything at all.
+
+Three more readings off the same two commands, each of which has been got wrong
+here at least once:
+
+- **`last_seen` older than the notice means queued, not delivered.** A catch-up
+  sent to a peer that has not been up since is sitting unread. `cairn sent` says
+  so in its own footer — *"this is what you sent, not what anyone read"* — under
+  a row that otherwise reads like proof of delivery.
+- **Neither command says which build a peer runs or whether it holds a token.**
+  Nothing on the hub records either; `cairn --version` and `cairn config` are
+  answers only that machine can give. The census bounds who must be told and
+  cannot say who is ready — only a reply does that, and on the run above the
+  number of replies to the broadcast was zero.
+- **The unit is a person, not a host.** Two registrations can share a machine
+  under different user accounts, and only `cwd` in `cairn peers` distinguishes
+  them. A secret handed out per machine misses the second operator entirely.
+
 Two things soften an open hub and neither is access control. A takeover is
 parked at the head, so an impostor gets the future of a conversation and not its
 past; and it is announced at both ends — the registration says what it stepped
