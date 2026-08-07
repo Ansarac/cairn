@@ -60,6 +60,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from cairn.wire import MAX_BODY_CHARS
 from cairn.wire import now as wire_now
 
 if TYPE_CHECKING:
@@ -384,6 +385,40 @@ def _artifact_line(artifact: Artifact) -> str:
     return f"    artifact: {oneline(artifact.host)}:{oneline(artifact.path)}"
 
 
+def _body_lines(body: str) -> list[str]:
+    """Render an indented body, truncating one that is longer than any send may be.
+
+    **The safety net, and the half of the body-size fix that has to hold when the
+    other half has already failed.** `store.append` and `cli` both refuse an
+    oversized body now, so nothing this build admits can reach here — which means
+    every row that does is one an *older* build stored, or one written by hand, or
+    one that arrived through a door nobody has thought of yet. Those are exactly
+    the rows that must not cost a reader the page.
+
+    That is not hypothetical. Before this cut the length check lived in
+    `Message.from_json`, so a single oversized row made every message on the page
+    unreadable, the sender's own `cairn sent` unreadable, and `cairn bell` report
+    the mailbox as empty. Two such rows are in this fleet's hub. Truncating is
+    what makes that impossible to repeat regardless of which guard is wrong next
+    time: this function has no failure mode that removes anybody else's message.
+
+    Truncated rather than folded, which is the opposite of `oneline`'s choice and
+    for the opposite reason. `oneline` protects column zero from a short hostile
+    value and a folded value stays usable; here the value is honest and simply too
+    long to put in a reader's context, which is the one thing `MAX_BODY_CHARS`
+    exists to protect. The marker carries the full length so the reader knows what
+    they are missing and can go get it.
+    """
+    if len(body) <= MAX_BODY_CHARS:
+        return [f"    {line}" for line in body.splitlines() or [""]]
+    kept = body[:MAX_BODY_CHARS]
+    marker = (
+        f"    […] TRUNCATED — this body is {len(body)} chars and cairn shows {MAX_BODY_CHARS}. "
+        f"The rest is stored and was never sent to your context; ask the sender for a reference to it."
+    )
+    return [*(f"    {line}" for line in kept.splitlines() or [""]), marker]
+
+
 def _asked(hub: str) -> str:
     """Return the "and this is who I asked" clause that every empty answer carries.
 
@@ -496,7 +531,7 @@ def inbox_text(  # noqa: PLR0913 - the last three are one window, and hiding the
             lines.append(f"    correlation: {oneline(message.correlation_id)}")
         lines.extend(_artifact_line(artifact) for artifact in message.artifacts)
         lines.append("    ─")
-        lines.extend(f"    {line}" for line in message.body.splitlines() or [""])
+        lines.extend(_body_lines(message.body))
         lines.append("")
     lines.append(f"— {AUTHORITY_CLAUSE}")
     lines.extend(f"— {note}" for note in _provenance_notes(e.provenance for e in entries))
@@ -785,7 +820,7 @@ def notes_text(  # noqa: PLR0913 - four of these are the filter the reader asked
         )
         lines.extend(_artifact_line(artifact) for artifact in note.artifacts)
         lines.append("    ─")
-        lines.extend(f"    {line}" for line in note.body.splitlines() or [""])
+        lines.extend(_body_lines(note.body))
         lines.append("")
     lines.append(f"— {AUTHORITY_CLAUSE}")
     lines.append(f"— {STALENESS_CLAUSE}")
@@ -860,7 +895,7 @@ def sent_text(entries: list[SentEntry], total: int, hub: str = "") -> str:
             lines.append(f"    correlation: {oneline(message.correlation_id)}")
         lines.extend(_artifact_line(artifact) for artifact in message.artifacts)
         lines.append("    ─")
-        lines.extend(f"    {line}" for line in message.body.splitlines() or [""])
+        lines.extend(_body_lines(message.body))
         lines.append("")
     lines.append(f"— {UNANSWERED_CLAUSE}")
     if any(e.message.retracted for e in entries):

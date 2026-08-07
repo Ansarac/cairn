@@ -71,10 +71,25 @@ def test_unknown_kind_is_rejected():
         Message.from_json({"kind": "shout", "sender": "a", "recipient": "b", "body": "x"})
 
 
-def test_oversized_body_points_at_artifacts():
+def test_an_oversized_body_still_parses():
+    """The inversion of an earlier test, and the earlier one described the defect.
+
+    This used to assert that `from_json` **refuses** an oversized body. It does
+    not any more, and the change is the point rather than a relaxation. That
+    guard was the only one in the system, it ran on the one code path that reads
+    rows which are *already durable*, and `hub._send` reaches `store.append`
+    without passing through here — so an oversized body was written, answered
+    `200`, and then refused by every reader of that page, the sender's own
+    `cairn sent` included. Two such rows are in this fleet's hub.
+
+    A parser that cannot read what the store holds is how a mailbox bricks. The
+    limit is admission, checked by `cli._body` and `store.append`; this side is
+    deliberately unlimited, and `render._body_lines` truncates for display so a
+    long row costs its reader nothing but its own tail.
+    """
     payload = {"kind": "tell", "sender": "a", "recipient": "b", "body": "x" * (MAX_BODY_CHARS + 1)}
-    with pytest.raises(WireError, match="artifact"):
-        Message.from_json(payload)
+
+    assert len(Message.from_json(payload).body) == MAX_BODY_CHARS + 1
 
 
 def test_missing_field_names_itself():

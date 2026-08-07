@@ -3417,6 +3417,88 @@ framework-internal orchestration, not network protocols.
     only ever compared whole, and now said in the docstring because the format
     reads like something that can be parsed.
 
+26. **The strictest guard in the system ran on the rows that were already
+    durable.** **Done.** Reported as *"the hub has a 16,000-character limit, it
+    does not error on send, you only find out at the receiving end, and you do not
+    even get the chance to send two."* Every clause turned out to be true of
+    something, and the mechanism was worse than the report.
+
+    `MAX_BODY_CHARS` was checked inside `Message.from_json` and nowhere else.
+    `hub._send` passes the POST body to `store.append` without parsing, so an
+    oversized body was **written, answered `200`, and refused from then on by
+    every reader of that page** — including the innocent messages beside it, since
+    a page is parsed as a unit, and including the sender's own `cairn sent`, since
+    it parses the same shape. The sender saw exit **2** and *"hub spoke something
+    unexpected"*: cairn's "the hub is broken or unreachable", under a hub that was
+    neither and a message that had already been delivered. `cairn bell` printed
+    `{}` and exited 0 throughout, so the recipient was told there was no mail.
+    Sender believes it failed, recipient believes there is nothing, the mailbox is
+    bricked, and nothing anywhere says why. That is the whole of *"not even the
+    chance to send two"*: you do not retract what you were told never arrived.
+
+    **This was not a new bug. It was a known one, found again in the next field
+    along.** `store.append`'s docstring already carried it in full — for `kind`,
+    where a single `{"kind": "shout"}` POST did exactly this and was fixed by
+    adding one guard beside the insert. Notes and subject descriptions had been
+    given the same treatment. Message *body* had not. So the lesson is taken
+    generally this time: **anything the store accepts, the parser must be able to
+    read**, asserted by `test_whatever_the_store_accepts_can_be_read_back`, which
+    names no field and is the only part of this that still works after somebody
+    adds the next guard.
+
+    **The direction was backwards, and that is the finding rather than the
+    number.** A parser runs against rows that are already durable, so it is the
+    one place in the system that must never refuse. Admission is now checked at
+    the two entries — `cli._body` before the POST so the sender gets exit **3**
+    and a sentence they can act on, and `store.append` before the insert because
+    an older or foreign client will not have checked — `from_json` checks nothing
+    about length at all, and `render._body_lines` truncates for display so that no
+    single row can cost a reader the rest of the page. Four changes, and the last
+    one is the only one that still holds when the other three are wrong.
+
+    **Raised to 32,000, and the number came from the traffic rather than from
+    taste.** Over 197 real messages: median 2,963, p90 5,849, **p99 16,642**, max
+    29,682. The old limit sat exactly on the 99th percentile. The two rows it
+    caught were 167 and 131 lines at a mean line length of 127–177 with fifty-odd
+    blank lines each — long-form prose, not pasted logs, which matters because the
+    escape hatch `SKILL.md` teaches does not serve prose: you cannot put a written
+    argument behind a path and have it still be a message. The limit exists to
+    protect the reader's context and not the hub, which is why 32,000 characters
+    can be generous next to `hub.MAX_REQUEST_BYTES` at a megabyte.
+
+    Raising it was checked against the fleet rather than assumed safe. A peer
+    still running a build whose `from_json` refuses over 16,000 is poisoned by
+    such a row however it arrives — and today it arrives **by accident**, with the
+    sender misinformed. After this cut nothing over the limit is stored at all, so
+    the accidental case goes to zero and what remains is deliberate and visible.
+    The maintainer's judgement, and it is the right one: the exposure is a
+    property of the old build, it has been there the whole time, and two rows in
+    this hub already went through it.
+
+    **The bell kept its contract and lost its silence.** *Never fails loudly* had
+    become *never says anything*: `WireError` is a `ValueError`, so an unreadable
+    page was caught and reported as an empty mailbox at every turn boundary,
+    forever — item 6's deafness reached from inside. `{}` and exit 0 still go to
+    stdout, because a session must not be degraded by its own bell; the reason now
+    goes to **stderr**, which reaches a hook log and a human and never reaches the
+    model's context.
+
+    **`PROTOCOL_VERSION` stays at `1`, and this is the fourth worked example — the
+    first where bumping would have been the harm.** No field changed, no route
+    changed, and the parse moved in the *permissive* direction, so nothing that
+    worked before stops working. The direction that does fail — an old reader
+    choking on a long body — is pre-existing, and `check_version` compares for
+    equality: a bump would disconnect those peers from every exchange rather than
+    from the one they already cannot read. When the honest question is "which
+    existing exchange breaks without the bump", the answer here is none, and the
+    answer *with* it is all of them.
+
+    Two rows are in this fleet's hub, at 29,682 and 16,642 characters. Both
+    cursors are already past them and the peers read the content by going around
+    cairn's rendering, so there is nothing to repair — but the fact that a
+    workaround was found and never reported is its own measurement, and it is the
+    same shape as the census: the tool failed quietly and the humans absorbed it.
+
 ---
 
 ## Appendix — measurements
@@ -3546,6 +3628,8 @@ afternoon each if rediscovered:
 | A catch-up notice to an absent peer | Sent when that peer's `last_seen` was already fourteen hours old, and written down as "told" in a handoff minutes later. Queued, not delivered. `cairn sent` prints *"this is what you sent, not what anyone read"* immediately beneath the row it was read off |
 | Why the broadcast got zero answers (2026-08-06, +12 h) | Not indifference — the verb. Over the hub's whole history, **14 of 14 `ask`s got a `reply`**, median latency in the tens of minutes, `ops/hub`'s own three among them. Both rollout notices were `tell`, the kind that means *no answer needed*, and got exactly that. The absent peer had by then come back and read past the catch-up, and still answered nothing. The census's two "unanswerable" questions were asked in a form that excuses the reader from answering |
 | A registration that was never a session | The fifth peer above, re-read a day later: `last_seen` **101 seconds** after `registered_at` and unmoved for 29 hours, cursor still the head it was parked at, zero traffic ever — while three peers on the same hub exchanged 24 messages that day. Nothing in `cairn peers` distinguishes a stale registration from a quiet session; the subtraction is the reader's, and the earlier reading of this row had treated it as a live machine owed a notice |
+| An oversized message body, end to end (2026-08-07) | Sent: exit **2** and *"hub spoke something unexpected"* — cairn's "hub unreachable" — while the row was **stored and answered 200**. Read: the recipient's whole page gone, including the 43-character message that arrived *before* it; the sender's own `cairn sent` gone the same way; `cairn bell` printing `{}` and exit 0 throughout. Escape hatches: `--limit 1` reads below the poison, `--since` and `ack` advance one row at a time. After the fix, the same send is exit **3** with nothing stored, and a 90,000-character row injected by hand renders truncated with the message behind it still readable |
+| Real body sizes on this hub, 197 messages | Median **2,963**, p90 **5,849**, p99 **16,642**, max **29,682**. The 16,000 limit sat exactly on the 99th percentile. The two rows over it were 167 and 131 lines at mean line length 127–177 with fifty-odd blank lines each — long-form prose, not pasted logs, so the artifact escape hatch did not apply to either |
 | Pure-Python Ed25519, as the way to keep `dependencies = []` | RFC 8032 reference: **428 ms** per verify, **21 s** for a fifty-row inbox page. Modular inversion is 312 ms of the 428, so projective coordinates floor it near 100–150 ms and 5–7 s a page, for several hundred lines of unaudited curve arithmetic. `cryptography` for comparison is **4.0 MB** installed against cairn's entire `uv tool` venv at **1.1 MB**. The stdlib was re-checked in place: no asymmetric primitive, and `ssl` offers X.509 verification modes with no raw sign/verify API |
 | Two peers on one host under different user accounts | "Give every agent **machine** the token" undercounts, because the unit that holds a mailbox is a registration and the unit that can be handed a secret out of band is a person. `cwd` in `cairn peers` is the only field that separates them, and it is easy to read as a detail |
 
