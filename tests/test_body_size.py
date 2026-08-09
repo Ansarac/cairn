@@ -30,7 +30,7 @@ import pytest
 
 from cairn import cli, render
 from cairn.client import HubClient
-from cairn.errors import Unreadable, UsageError
+from cairn.errors import Unreachable, Unreadable, UsageError
 from cairn.hub import make_server
 from cairn.provenance import assess_sent
 from cairn.store import SqliteStore
@@ -51,8 +51,14 @@ def store() -> SqliteStore:
 
 
 @pytest.fixture
-def hub_server() -> Iterator[ThreadingHTTPServer]:
-    server = make_server(SqliteStore(":memory:"), host="127.0.0.1", port=0)
+def hub_store() -> SqliteStore:
+    """Return the store behind `hub_server`, exposed so a test can write beneath its guards."""
+    return SqliteStore(":memory:")
+
+
+@pytest.fixture
+def hub_server(hub_store: SqliteStore) -> Iterator[ThreadingHTTPServer]:
+    server = make_server(hub_store, host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -234,3 +240,43 @@ def test_the_bell_still_prints_nothing_but_no_longer_says_nothing(hub, monkeypat
     captured = capsys.readouterr()
     assert captured.out.strip() == "{}", "the bell broke its own contract with the host product"
     assert "bad page" in captured.err, "an unreadable mailbox was still reported as an empty one"
+
+
+# -- the floor under both of those, which nothing was standing on -------------
+
+
+def test_a_page_this_build_cannot_read_arrives_as_its_own_type(hub, hub_store):
+    """The conversion the two tests above are built on, and neither of them reaches.
+
+    One points at a dead port; the other monkeypatches `HubClient.inbox` to raise
+    `Unreadable` already made. So the line that actually decides an unparseable
+    page is not an ordinary outage — `client._readable` — was asserted by
+    nothing, and putting `Unreachable` back there leaves the whole suite green
+    while the bell goes silent again on precisely the mailbox §12 item 26 is
+    about. Measured that way round before this test was written: reverted, 711
+    passed.
+
+    That is the second time in this item's history that a live run saw what the
+    tests could not, which is the argument for the test being at this level
+    rather than one layer up.
+
+    **The row is written beneath `store.append`'s guards deliberately, and that
+    is not a fight with `test_whatever_the_store_accepts_can_be_read_back`.**
+    That test says no build may *create* such a row from here on. This one says
+    the rows older builds already created — two are in this fleet's hub — must
+    still arrive as a verdict rather than as silence. Both are needed: closing
+    the entrance does nothing about what is already durable behind it.
+    """
+    hub_store._db.execute(
+        "INSERT INTO messages (kind, sender, recipient, body, correlation_id, artifacts, created_at)"
+        " VALUES ('shout', ?, ?, 'durable, and unreadable', NULL, '[]', '2026-08-07T09:00:00Z')",
+        (SENDER, READER),
+    )
+
+    with pytest.raises(Unreadable) as caught:
+        hub.inbox(READER)
+
+    assert isinstance(caught.value, Unreachable), (
+        "the subclass is what keeps exit 2 for every script and every `except Unreachable` already written"
+    )
+    assert caught.value.exit_code == 2
