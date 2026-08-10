@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from cairn import build, config, notify, nudge, provenance, render, skill
 from cairn.client import HubClient
-from cairn.errors import CairnError, Unreadable, UsageError
+from cairn.errors import CairnError, NoRoute, Unreadable, UsageError
 from cairn.wire import (
     BROADCAST,
     MAX_BODY_CHARS,
@@ -214,10 +214,12 @@ def cmd_register(args: argparse.Namespace) -> int:
     print(f"registered as {render.oneline(joined.name)} on {render.oneline(joined.machine)}")
     print(f"  cwd          {render.oneline(joined.cwd)}")
     print(f"  capabilities {render.oneline(', '.join(joined.capabilities)) or '—'}")
+    print(render.capability_change(registration.previous_capabilities, joined.capabilities), end="")
     if previous and previous != joined.name:
         print(f"  left behind  {render.oneline(previous)} — this directory was that until now")
         print("    its sends, its read position and the right to `cairn retract` them stay with the name;")
         print(f"    `cairn register {render.oneline(previous)}` here picks it back up")
+        print("    a rename keeps all three: `cairn deregister` this name, register the old one, `cairn rename`")
     print(render.arrival_note(registration), end="")
     print(_open_questions(client), end="")
     return 0
@@ -915,6 +917,96 @@ def cmd_ack(args: argparse.Namespace) -> int:
     return 0
 
 
+_OLD_HUB = "this hub does not have that route, which means it predates the command. Upgrade the hub"
+
+
+def cmd_rename(args: argparse.Namespace) -> int:
+    """Move this directory's name, keeping the cursor and leaving history alone.
+
+    The command that did not exist when it was needed. Renaming used to mean
+    registering the new name here, which is a *new* registration — it parks at
+    the head, and the old row stays on the hub because nothing could remove it.
+    A peer did that on 2026-08-10 and the corpse had to be deleted out of the
+    live database by hand.
+
+    Two things survive a rename and it is worth knowing which, because the
+    asymmetry looks arbitrary until you see why. **The read cursor comes with
+    you**, which is the entire reason to use this instead of registering again.
+    **The signing key also comes with you, untouched**, because it is keyed by
+    working directory and not by name — see `config.key_file`. What does *not*
+    come with you is anything already in `messages`: those rows keep the old
+    sender, because `signing.canonical` covers `sender` and rewriting it would
+    turn every message this session ever signed into a MISMATCH on the machine
+    reading it. So `cairn sent` starts empty under the new name, and that is said
+    out loud rather than discovered.
+    """
+    me = config.require_identity()
+    client = _client(args)
+    try:
+        moved = client.rename(me, args.name, socket.gethostname(), str(Path.cwd()), anyway=args.anyway)
+    except NoRoute as exc:
+        msg = f"cannot rename: {_OLD_HUB}"
+        raise UsageError(msg) from exc
+    config.remember_identity(moved.agent.name)
+    print(f"renamed {render.oneline(moved.previous)} to {render.oneline(moved.agent.name)}")
+    # The number alone provokes a question it does not answer. An acceptance
+    # session read `cursor came with it, at seq 3` on a mailbox it had never
+    # read, correctly guessed that a fresh registration parks at the head, and
+    # reported the guess as unverified — which is the right thing to do with a
+    # line that states a fact without saying what it is for. What the reader
+    # actually needs is the reassurance, so the reassurance is the sentence and
+    # the seq is the evidence for it.
+    print(f"  cursor       came with it, so nothing unread was left behind (at seq {moved.acked})")
+    if moved.sent_kept:
+        plural = "message" if moved.sent_kept == 1 else "messages"
+        print(f"  left behind  {moved.sent_kept} sent {plural} still filed under {render.oneline(moved.previous)}")
+        print("               they keep the old sender because the signatures cover it, so `cairn sent` here")
+        print("               starts empty; `cairn retract` on any of them is gone with the name")
+    if moved.stranded:
+        plural = "message" if moved.stranded == 1 else "messages"
+        print(f"  stranded     {moved.stranded} unread {plural} addressed to the old name, now reachable by nothing")
+    print(f"  peers        anyone who writes to {render.oneline(moved.previous)} now gets a refusal, not a delivery")
+    return 0
+
+
+def cmd_deregister(args: argparse.Namespace) -> int:
+    """Take a name off the hub.
+
+    With no argument it is this directory's own name, which is the tidy case: a
+    session saying it is finished rather than leaving a row for somebody to
+    wonder about in a month. With a name it is somebody clearing up after a
+    holder that is gone, which is the case that produced the command — and the
+    hub does not check that the caller is that holder, because it could not
+    without refusing exactly the situation that needs it. `store.deregister` has
+    the argument; it is I3, and it is no wider than `prune`.
+
+    Removing your own name also drops this directory's identity file. Leaving it
+    would point every later command here at a mailbox the hub no longer has.
+    """
+    me = config.current_identity()
+    name = args.name or config.require_identity()
+    client = _client(args)
+    try:
+        gone = client.deregister(name, anyway=args.anyway)
+    except NoRoute as exc:
+        msg = f"cannot deregister: {_OLD_HUB}"
+        raise UsageError(msg) from exc
+    print(f"removed {render.oneline(gone.name)} from the hub")
+    print(f"  was at       {render.oneline(gone.machine)} {render.oneline(gone.cwd)}")
+    print(f"  cursor       was at seq {gone.acked}, and is gone with the name")
+    if gone.sent_kept:
+        plural = "message" if gone.sent_kept == 1 else "messages"
+        print(f"  history      {gone.sent_kept} sent {plural} stay on the hub under that name")
+    if gone.stranded:
+        plural = "message was" if gone.stranded == 1 else "messages were"
+        print(f"  stranded     {gone.stranded} unread {plural} addressed to it, and are now reachable by nothing")
+    if gone.superseded_by:
+        print(f"  in place of  {render.oneline(gone.superseded_by)} holds the same machine and directory")
+    if name == me and config.forget_identity():
+        print("  this dir     is no longer registered; `cairn register <name>` to rejoin")
+    return 0
+
+
 def cmd_forget(args: argparse.Namespace) -> int:
     """Drop this directory's pin for a name, so the next send re-learns it."""
     if config.forget_pin(args.name):
@@ -1321,9 +1413,53 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one flat state
 
     p = sub.add_parser("register", help="join the network under a name")
     p.add_argument("name", help="unique address, e.g. bench/firmware")
-    p.add_argument("-c", "--capability", action="append", default=[], help="repeatable, e.g. -c matlab -c hil")
+    p.add_argument(
+        "-c",
+        "--capability",
+        action="append",
+        default=[],
+        help="repeatable, e.g. -c matlab -c hil; replaces the whole list, so omitting it clears them",
+    )
     p.add_argument("--machine", help="defaults to the hostname")
     p.set_defaults(func=cmd_register)
+
+    p = sub.add_parser(
+        "rename",
+        help="move this directory's name, keeping its unread mail",
+        description=(
+            "Change the name this directory is known by. The read cursor comes with it, so nothing "
+            "you have not read yet is lost — which is what separates this from registering under a "
+            "new name, where the hub parks you at the head and the old name stays in `cairn peers` "
+            "for ever. What stays behind is history: messages you already sent keep the old sender, "
+            "because the signatures cover it."
+        ),
+    )
+    p.add_argument("name", help="the new address, e.g. bench/nn-deploy")
+    p.add_argument(
+        "--anyway",
+        action="store_true",
+        help="proceed even though unread mail addressed to the old name will become unreachable",
+    )
+    p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser(
+        "deregister",
+        help="take a name off the hub",
+        description=(
+            "Remove a registration, so the name stops appearing in `cairn peers` and stops accepting "
+            "mail. With no argument it is this directory's own name. With one it is somebody else's, "
+            "which is how a name left behind by a rename or a decommissioned machine gets cleared — "
+            "the hub does not check that you are the holder, because the holder is usually the thing "
+            "that is gone. Messages already sent under the name stay on the hub."
+        ),
+    )
+    p.add_argument("name", nargs="?", help="omit to remove this directory's own name")
+    p.add_argument(
+        "--anyway",
+        action="store_true",
+        help="proceed even though unread mail addressed to the name will be left reachable by nothing",
+    )
+    p.set_defaults(func=cmd_deregister)
 
     p = sub.add_parser("whoami", help="print this session's identity")
     p.set_defaults(func=cmd_whoami)

@@ -26,7 +26,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from cairn import config, signing
-from cairn.errors import Unauthorized, Unreachable, Unreadable, UsageError
+from cairn.errors import NoRoute, Unauthorized, Unreachable, Unreadable, UsageError
 from cairn.wire import (
     Agent,
     Artifact,
@@ -36,6 +36,8 @@ from cairn.wire import (
     Note,
     NoteEntry,
     Registration,
+    Removal,
+    Rename,
     SubjectSummary,
     WireError,
     Withdrawal,
@@ -54,6 +56,9 @@ HTTP_BAD_REQUEST = 400
 
 HTTP_UNAUTHORIZED = 401
 """The hub is up and will not talk to this machine. Neither of the two above."""
+
+HTTP_NOT_FOUND = 404
+"""The hub is up and has never heard of this path — which usually means it is older."""
 
 STREAM_TIMEOUT = 60.0
 """Socket timeout for a bell stream. Must stay well above the hub's heartbeat.
@@ -132,7 +137,13 @@ class HubClient:
             if exc.code == HTTP_BAD_REQUEST:
                 raise UsageError(detail) from exc
             msg = f"hub returned {exc.code}: {detail}"
-            raise Unreachable(msg) from exc
+            # Same exit code and the same message; the type is the whole of the
+            # difference, and it lets a command whose route is new say "this hub
+            # is older than this command" instead of "hub unreachable". See
+            # `errors.NoRoute`, and note that additive routes are only additive
+            # while their absence stays catchable as an outage — `_open_questions`
+            # depends on exactly that.
+            raise (NoRoute if exc.code == HTTP_NOT_FOUND else Unreachable)(msg) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             msg = f"cannot reach hub at {self.base_url}: {exc}"
             raise Unreachable(msg) from exc
@@ -184,6 +195,23 @@ class HubClient:
         """
         with self._readable():
             return Registration.from_json(self._call("POST", "/v1/register", agent.to_json()))
+
+    def rename(self, old: str, new: str, machine: str, cwd: str, *, anyway: bool = False) -> Rename:
+        """Move a name, and the read position with it.
+
+        `machine` and `cwd` are the caller saying where it is, and the hub checks
+        them against the row. That is an assertion, not proof — the same
+        assertion `register` has always carried — and it is here so that a rename,
+        which inherits a cursor, cannot be done to a name from somewhere else.
+        """
+        payload = {"old": old, "new": new, "machine": machine, "cwd": cwd, "anyway": anyway}
+        with self._readable():
+            return Rename.from_json(self._call("POST", "/v1/rename", payload))
+
+    def deregister(self, name: str, *, anyway: bool = False) -> Removal:
+        """Remove a registration, and return what removing it left behind."""
+        with self._readable():
+            return Removal.from_json(self._call("POST", "/v1/deregister", {"name": name, "anyway": anyway}))
 
     def peers(self, exclude: str | None = None) -> list[Agent]:
         """List registered agents."""

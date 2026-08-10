@@ -294,6 +294,25 @@ def remember_identity(name: str, cwd: Path | None = None) -> Path:
     return path
 
 
+def forget_identity(cwd: Path | None = None) -> bool:
+    """Drop this directory's recorded name. True if there was one.
+
+    The mirror of `remember_identity`, and it has exactly one caller: `cairn
+    deregister` removing the name *this* directory is. Leaving the file behind
+    would point the directory at a mailbox the hub no longer has, and every
+    later command here would fail describing a name nobody can find.
+
+    It does not touch `CAIRN_AGENT`. An environment variable is set by whoever
+    started the session and is not this process's to unset — `current_identity`
+    still answers from it, which is correct: the operator said so out loud.
+    """
+    path = _identity_file(cwd)
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
 def current_identity(cwd: Path | None = None) -> str | None:
     """Return this session's agent name, or None if it has not registered."""
     env = os.environ.get("CAIRN_AGENT")

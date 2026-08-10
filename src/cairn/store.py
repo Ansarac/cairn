@@ -50,6 +50,8 @@ from cairn.wire import (
     Note,
     NoteEntry,
     Registration,
+    Removal,
+    Rename,
     SubjectSummary,
     Withdrawal,
     normalize_subject,
@@ -218,6 +220,14 @@ class Store(Protocol):
 
     def get_agent(self, name: str) -> Agent | None:
         """Return one agent, or None."""
+        ...
+
+    def rename(self, old: str, new: str, machine: str, cwd: str, *, anyway: bool = False) -> Rename:
+        """Move a name and its cursor, leaving every stored message alone."""
+        ...
+
+    def deregister(self, name: str, *, anyway: bool = False) -> Removal:
+        """Remove a registration and its cursor, and report what that left behind."""
         ...
 
     def peers(self, exclude: str | None = None) -> list[Agent]:
@@ -432,7 +442,170 @@ class SqliteStore:
             )
         arrival: Arrival = "takeover" if moved else ("returning" if existing else "new")
         previous = f"{existing.machine}:{existing.cwd}" if moved and existing else ""
-        return Registration(agent=stamped, arrival=arrival, skipped=skipped, previous=previous, resume_at=resume_at)
+        return Registration(
+            agent=stamped,
+            arrival=arrival,
+            skipped=skipped,
+            previous=previous,
+            resume_at=resume_at,
+            # What the row said before this call overwrote it. Registering is the
+            # only way to change a capability list, and the upsert above replaces
+            # it wholesale — so a returning session that omits `-c` clears every
+            # capability it advertised, and for the whole life of the project it
+            # did that in silence. The hub is the only party that still knows the
+            # old list a microsecond later; reporting it is what lets the caller
+            # say so. See `render.capability_change`.
+            previous_capabilities=existing.capabilities if existing else (),
+        )
+
+    def rename(self, old: str, new: str, machine: str, cwd: str, *, anyway: bool = False) -> Rename:
+        """Move a name, carrying its read position and leaving its history alone.
+
+        **This exists because the alternative leaves a corpse.** The only way to
+        change a name used to be registering the new one in the same directory,
+        which is a *new* registration: it parks at the head, so an unread backlog
+        stops being reachable, and the old row stays in `peers` for ever because
+        nothing on the hub could remove it. That is not hypothetical — a peer did
+        exactly this on 2026-08-10 and the old row had to be deleted by hand out
+        of the live database. See `deregister` for the other half.
+
+        **`messages` is not touched, and that is a constraint rather than a
+        choice.** `signing.canonical` covers `sender`, so a `SET sender = ?` here
+        would turn every message that session ever signed into a MISMATCH on the
+        far machine — an operation whose evidence is indistinguishable from a
+        forgery. `sent_kept` reports how many rows stayed behind so the caller
+        can be told that `cairn sent` under the new name starts empty.
+
+        **`(machine, cwd)` must match**, which is the same discriminator
+        `register` uses to tell a returning session from a takeover, and the same
+        shape as `retract` refusing anybody but the sender. It is not exclusion —
+        I3, and a heuristic besides — but a rename carries the cursor, so without
+        it this would be a takeover that also inherits the backlog, which is the
+        one thing `register` was fixed to stop.
+
+        **Unread mail blocks the move by default.** Those rows are addressed to
+        the old name, so once the cursor travels they are reachable by nothing:
+        no page selects them and `ack --rewind` has no matching recipient to
+        rewind to. Reading them first costs one command. `anyway` proceeds and
+        reports the count, on the same terms as `prune` naming what it kept.
+        """
+        existing = self.get_agent(old)
+        if existing is None:
+            msg = f"unknown agent {old!r}; nothing to rename"
+            raise UsageError(msg)
+        if (existing.machine, existing.cwd) != (machine, cwd):
+            msg = (
+                f"{old!r} is registered at {existing.machine}:{existing.cwd}, and this is {machine}:{cwd}. "
+                f"A rename carries the read cursor, so only the holder may do it. "
+                f"If that session is gone, `cairn deregister {old}` from here instead."
+            )
+            raise UsageError(msg)
+        if new == old:
+            msg = f"{old!r} is already this directory's name; nothing to do"
+            raise UsageError(msg)
+        if self.get_agent(new) is not None:
+            msg = f"{new!r} is already registered; pick a name nobody holds"
+            raise UsageError(msg)
+        stranded = self.unread(old, limit=0).unread
+        if stranded and not anyway:
+            plural = "message" if stranded == 1 else "messages"
+            msg = (
+                f"{stranded} unread {plural} addressed to {old!r} would become reachable by nothing — "
+                f"they are filed under the old name and `ack --rewind` cannot reach them. "
+                f"Run `cairn inbox` first, or `--anyway` to leave them behind."
+            )
+            raise UsageError(msg)
+        acked = self._cursor(old)
+        sent_kept = int(self._db.execute("SELECT COUNT(*) AS c FROM messages WHERE sender = ?", (old,)).fetchone()["c"])
+        # The file's first explicit transaction, and it earns one. Halfway through
+        # is an agent renamed with its cursor still filed under the old name — the
+        # new name then has no cursor row at all, and `unread`'s subselect turns
+        # that into an inbox that is empty for ever. Every other method here can
+        # be interrupted between statements and leave something merely untidy.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute("UPDATE agents SET name = ?, last_seen = ? WHERE name = ?", (new, now(), old))
+            self._db.execute("UPDATE cursors SET agent = ? WHERE agent = ?", (new, old))
+        except Exception:
+            self._db.execute("ROLLBACK")
+            raise
+        self._db.execute("COMMIT")
+        moved = self.get_agent(new)
+        if moved is None:  # pragma: no cover - the UPDATE above just wrote this row
+            msg = f"rename to {new!r} did not take"
+            raise UsageError(msg)
+        return Rename(agent=moved, previous=old, acked=acked, sent_kept=sent_kept, stranded=stranded)
+
+    def deregister(self, name: str, *, anyway: bool = False) -> Removal:
+        """Take a name off the hub, and say what that cost.
+
+        **It does not check `(machine, cwd)`, and `rename` does.** The two are for
+        opposite situations. A rename is the holder moving its own name, so the
+        holder is by definition present. A deregistration is somebody clearing up
+        after a holder that is *gone* — a renamed session, a decommissioned
+        machine, a directory that no longer exists — so requiring the holder to
+        run it would refuse the only case that needs it. That leaves any
+        token-holder able to remove any name, which is I3 and is no wider than
+        `prune`, which already deletes other people's traffic: the hub cannot know
+        which claimant is legitimate and inventing an answer would be enforcement
+        with extra steps.
+
+        Unread mail blocks it, on exactly the terms `rename` states. `anyway`
+        proceeds and `stranded` carries the count into the caller's output, so a
+        loss that was chosen still gets said out loud.
+
+        **`superseded_by` is the interesting field.** A name whose `(machine, cwd)`
+        is also held by a newer registration was replaced *in place*, which is what
+        a rename-by-re-registering looks like from the hub — and it is the only
+        evidence available that the row being removed is a corpse rather than a
+        quiet session. Nothing else in cairn distinguishes those two; `peers` does
+        not, and the appendix records a reader treating a 101-second registration
+        as a live machine owed a notice.
+        """
+        existing = self.get_agent(name)
+        if existing is None:
+            known = ", ".join(a.name for a in self.peers()) or "nobody yet"
+            msg = f"unknown agent {name!r}; registered agents are: {known}"
+            raise UsageError(msg)
+        stranded = self.unread(name, limit=0).unread
+        if stranded and not anyway:
+            plural = "message" if stranded == 1 else "messages"
+            msg = (
+                f"{stranded} unread {plural} addressed to {name!r} would be left reachable by nothing. "
+                f"If that session can still read, let it; otherwise `--anyway` removes the name and says "
+                f"how much went with it."
+            )
+            raise UsageError(msg)
+        acked = self._cursor(name)
+        sent_kept = int(
+            self._db.execute("SELECT COUNT(*) AS c FROM messages WHERE sender = ?", (name,)).fetchone()["c"]
+        )
+        superseded = self._db.execute(
+            """SELECT name FROM agents WHERE machine = ? AND cwd = ? AND name != ?
+               ORDER BY registered_at DESC LIMIT 1""",
+            (existing.machine, existing.cwd, name),
+        ).fetchone()
+        # A transaction for the same reason `rename` opens one, with the order
+        # chosen so that even a failure to reach `COMMIT` cannot produce the
+        # dangerous half: an orphaned cursor row is inert, while an agent whose
+        # cursor has gone is a mailbox that reads empty for ever.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute("DELETE FROM agents WHERE name = ?", (name,))
+            self._db.execute("DELETE FROM cursors WHERE agent = ?", (name,))
+        except Exception:
+            self._db.execute("ROLLBACK")
+            raise
+        self._db.execute("COMMIT")
+        return Removal(
+            name=name,
+            machine=existing.machine,
+            cwd=existing.cwd,
+            acked=acked,
+            sent_kept=sent_kept,
+            stranded=stranded,
+            superseded_by=str(superseded["name"]) if superseded else "",
+        )
 
     def get_agent(self, name: str) -> Agent | None:
         """Look one agent up by its exact registered name."""
@@ -578,7 +751,24 @@ class SqliteStore:
         cares about. Documented rather than fixed: a `touch: bool` parameter was
         measured at 0.093 ms/call against 0.014 ms read-only, and skipping the
         write would cost the liveness signal for the ordinary read too.
+
+        **A name this hub does not know is refused, not answered.** It used to get
+        an empty page, which reads as "no mail" — and the two are the same
+        sentence to every caller and to the model behind it. That was survivable
+        while the only way in was a typo in `CAIRN_AGENT`; `deregister` makes it a
+        door somebody walks through on purpose, and the session on the other side
+        of it would have gone deaf while being told, at every turn boundary, that
+        it had simply not been written to. Refusing costs one `SELECT` on a path
+        that already runs three.
+
+        The cursor subselect below stays exactly as it was. This check is not a
+        replacement for it: `seq > NULL` is what stops an unregistered name
+        collecting every broadcast on the hub, and it now sits behind a door
+        rather than being the door.
         """
+        if self.get_agent(agent) is None:
+            msg = f"unknown agent {agent!r}; this hub has no mailbox under that name"
+            raise UsageError(msg)
         self._touch(agent)
         floor = max(0, since)
         # The cursor stays a subselect rather than the integer read below it, and
