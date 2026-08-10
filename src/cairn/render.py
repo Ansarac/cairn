@@ -1103,6 +1103,42 @@ def bell_test_report(probe: Probe, count: int) -> str:
     return "\n".join(lines)
 
 
+def capability_change(before: Sequence[str], after: Sequence[str]) -> str:
+    """Say what registering just did to the capability list, or nothing.
+
+    Registering is the only way to change that list and the hub replaces it
+    wholesale, so a returning session that forgets `-c` clears every capability
+    it was advertising. That is the discoverable way to *edit* capabilities and
+    it was also a silent wipe, which is a bad pair: `cairn peers` is how a peer
+    finds the machine with the hardware, so the cost lands on somebody else and
+    nothing tells either of them.
+
+    Silent when nothing moved, which is the common case — a session that
+    re-registers with the same flags should not grow a line of furniture at every
+    restart (docs/design.md §12 item 18).
+
+    **Silent too whenever `before` is empty**, and that costs a real signal on
+    purpose. An older hub sends no previous list, a first registration has none,
+    and a name that genuinely advertised nothing has none: three situations, one
+    set of bytes. Printing `+hil` for all three would announce a change at every
+    first registration, and the line is only worth anything if it is rare enough
+    to read. What is given up is the case where a returning session goes from
+    nothing to something — the safe direction, and the current list is printed
+    immediately above this anyway. See `wire.Registration.from_json`.
+    """
+    if not before:
+        return ""
+    gone = [c for c in before if c not in set(after)]
+    added = [c for c in after if c not in set(before)]
+    if not gone and not added:
+        return ""
+    parts = [f"+{oneline(c)}" for c in added] + [f"-{oneline(c)}" for c in gone]
+    line = f"  changed      capabilities {' '.join(parts)}"
+    if not after:
+        line += "\n               nothing is advertised now; `-c` replaces the list rather than adding to it"
+    return line + "\n"
+
+
 def arrival_note(registration: Registration) -> str:
     """Say what registering just did to the mailbox, when that is not obvious.
 

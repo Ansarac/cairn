@@ -58,6 +58,27 @@ class Unreadable(Unreachable):
     """
 
 
+class NoRoute(Unreachable):
+    """The hub answered, and does not have the path this command needs.
+
+    A subclass for the reason `Unreadable` is one: to a script this is still
+    "the hub is not usable for this", exit 2, and every `except Unreachable`
+    keeps catching it. Splitting the exit code would be the collapse this module
+    argues against, in reverse.
+
+    What it buys is a command that can say *why*. A hub built before a route
+    exists answers 404, which `client._call` maps into "hub unreachable" — and
+    that sentence sends whoever reads it to look at the network, when the hub is
+    up, healthy, and carrying traffic. Measured on the fleet this was written for:
+    the production hub predates `cairn rename` by one release, so this is the
+    first thing an operator would have hit.
+
+    Only a command whose own route is new should branch on this. Anything older
+    catching it would be claiming a hub is out of date on the evidence of a
+    typo'd path.
+    """
+
+
 class Unauthorized(CairnError):  # noqa: N818 - a state of this machine's configuration, not a defect
     """The hub is up, and it will not talk to this machine.
 

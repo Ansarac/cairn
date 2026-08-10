@@ -922,6 +922,7 @@ class Registration:
     skipped: int = 0
     previous: str = ""
     resume_at: int = 0
+    previous_capabilities: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         """Return the rendering form, agent included."""
@@ -931,11 +932,19 @@ class Registration:
             "skipped": self.skipped,
             "previous": self.previous,
             "resume_at": self.resume_at,
+            "previous_capabilities": list(self.previous_capabilities),
         }
 
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> Self:
-        """Parse the rendering form, tolerating a hub that predates these fields."""
+        """Parse the rendering form, tolerating a hub that predates these fields.
+
+        `previous_capabilities` is the newest of them and it is **empty against an
+        older hub, which is indistinguishable from "it had none"**. That is why
+        `cli.cmd_register` compares it against the agent's current list and stays
+        silent when they match: a hub that did not say must not be rendered as a
+        hub that said "you just cleared everything".
+        """
         arrival = obj.get("arrival")
         return cls(
             agent=Agent.from_json(_require(obj, "agent", dict)),
@@ -943,6 +952,121 @@ class Registration:
             skipped=int(obj.get("skipped") or 0),
             previous=str(obj.get("previous") or ""),
             resume_at=int(obj.get("resume_at") or 0),
+            previous_capabilities=tuple(str(c) for c in obj.get("previous_capabilities") or ()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Rename:
+    """What moving a name did, and the one thing it deliberately did not do.
+
+    Output only, like `Registration`, and it exists for the same reason: an
+    operation that quietly changes what a mailbox reaches has to say so.
+
+    **A rename moves the address and never the record.** `agents.name` and
+    `cursors.agent` move; `messages.sender` does not, and `sent_kept` is how many
+    rows stayed behind under the old name. That is not laziness about a `SET
+    sender = ?` — `signing.canonical` covers `sender`, so rewriting it would turn
+    every message that session ever signed into a MISMATCH on the next reading,
+    on the far machine, with no way to tell forgery from bookkeeping. The past
+    keeps the name it was written under.
+
+    `acked` is the read position the new name inherited, and carrying it is the
+    whole reason this exists rather than "register under the new name and let the
+    old one rot": a fresh registration parks at the head, so the backlog a moved
+    session had not read yet would stop being reachable.
+
+    It is named after the `last_acked_seq` column it is read from, and *not* after
+    the read position, which is the word this codebase uses for it everywhere
+    else. That is the vendor guard. One of its two patterns catches a dotted
+    editor directory, and a dot followed by that word is also how attribute access
+    is spelled — so a field carrying the obvious name turns `just guard` red on
+    every line that reads it. This one did, and `InboxPage.floor` is named the way
+    it is for the same reason. Widening the grep to buy the nicer word is the one
+    move the repository's rules rule out; renaming the field costs nothing.
+
+    Note that this docstring cannot quote either pattern, for the same reason.
+    """
+
+    agent: Agent
+    previous: str = ""
+    acked: int = 0
+    sent_kept: int = 0
+    stranded: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form, agent included."""
+        return {
+            "agent": self.agent.to_json(),
+            "previous": self.previous,
+            "acked": self.acked,
+            "sent_kept": self.sent_kept,
+            "stranded": self.stranded,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the rendering form."""
+        return cls(
+            agent=Agent.from_json(_require(obj, "agent", dict)),
+            previous=str(obj.get("previous") or ""),
+            acked=int(obj.get("acked") or 0),
+            sent_kept=int(obj.get("sent_kept") or 0),
+            stranded=int(obj.get("stranded") or 0),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Removal:
+    """What deregistering a name took off the hub, and what it left lying there.
+
+    Output only. Every field except the first three is something the caller
+    cannot see afterwards, which is the point — once the row is gone, `cairn
+    peers` cannot answer any of it and neither can anything else.
+
+    `stranded` is unread mail that is now reachable by nothing: it is addressed to
+    a name with no cursor, so no page will ever return it and `ack --rewind` has
+    nothing to rewind. Ordinarily the store refuses rather than producing this;
+    it is non-zero only when the caller asked for it anyway, and then it is the
+    number that has to appear in the output.
+
+    `superseded_by` is the newest other registration sharing this one's
+    `(machine, cwd)`. It is the evidence that a name was replaced *in place* —
+    which is the case this whole command was built for — and it is empty far more
+    often than not, because a decommissioned machine leaves nothing behind.
+    """
+
+    name: str
+    machine: str = ""
+    cwd: str = ""
+    acked: int = 0
+    sent_kept: int = 0
+    stranded: int = 0
+    superseded_by: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the rendering form."""
+        return {
+            "name": self.name,
+            "machine": self.machine,
+            "cwd": self.cwd,
+            "acked": self.acked,
+            "sent_kept": self.sent_kept,
+            "stranded": self.stranded,
+            "superseded_by": self.superseded_by,
+        }
+
+    @classmethod
+    def from_json(cls, obj: dict[str, Any]) -> Self:
+        """Parse the rendering form."""
+        return cls(
+            name=_require(obj, "name", str),
+            machine=str(obj.get("machine") or ""),
+            cwd=str(obj.get("cwd") or ""),
+            acked=int(obj.get("acked") or 0),
+            sent_kept=int(obj.get("sent_kept") or 0),
+            stranded=int(obj.get("stranded") or 0),
+            superseded_by=str(obj.get("superseded_by") or ""),
         )
 
 

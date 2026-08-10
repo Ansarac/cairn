@@ -160,17 +160,28 @@ def test_a_window_past_the_newest_message_matches_nothing_over_a_full_mailbox(st
     assert (page.unread, page.matching) == (4, 0)
 
 
-def test_an_unregistered_name_still_sees_nothing_through_a_window(store):
-    """The cursor stays a subselect, and this is what that buys.
+def test_an_unregistered_name_is_refused_rather_than_answered(store):
+    """It used to see nothing through the window. Being told is strictly better.
 
-    `seq > NULL` is NULL, so a name with no cursor row selects nothing. Binding a
-    cursor of zero instead — which the reported `cursor` is — would hand every
-    unregistered name every broadcast on the hub.
+    The claim this test was written for still holds and is still what protects
+    the hub: the cursor is a subselect, `seq > NULL` is NULL, so a name with no
+    cursor row selects nothing — binding a cursor of zero instead, which the
+    reported `cursor` is, would hand every unregistered name every broadcast on
+    the hub. That subselect has not moved and this test still stands in front of
+    it.
+
+    What changed is what the caller hears. An empty page and "no mail" are the
+    same sentence to every reader, and `deregister` turned a typo'd `CAIRN_AGENT`
+    into a door somebody walks through deliberately — so the answer is now a
+    refusal, which cannot be mistaken for a quiet week. The window is still
+    passed, because the refusal has to come *before* it: an unknown name must not
+    be able to get a different answer by asking a narrower question.
     """
     store.append("tell", WRITER, "*", "anyone got a spare chamber slot")
 
-    assert store.unread("nobody/here", since=0).messages == ()
-    assert store.unread("nobody/here", since=1).messages == ()
+    for window in (0, 1):
+        with pytest.raises(UsageError, match="unknown agent"):
+            store.unread("nobody/here", since=window)
 
 
 # -- the wire shape ------------------------------------------------------------

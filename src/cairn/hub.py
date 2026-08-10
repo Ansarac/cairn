@@ -178,6 +178,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch(
             {
                 "/v1/register": self._register,
+                "/v1/rename": self._rename,
+                "/v1/deregister": self._deregister,
                 "/v1/subjects": self._open_subject,
                 "/v1/subjects/describe": self._describe_subject,
                 "/v1/subjects/archive": self._archive_subject,
@@ -245,6 +247,29 @@ class _Handler(BaseHTTPRequestHandler):
         # `Registration.to_json()` already nests the agent under "agent", so a
         # client that only reads that key keeps working across this addition.
         self._reply(200, self.store.register(Agent.from_json(self._read())).to_json())
+
+    def _rename(self) -> None:
+        obj = self._read()
+        self._reply(
+            200,
+            self.store.rename(
+                old=str(obj.get("old", "")),
+                new=str(obj.get("new", "")),
+                machine=str(obj.get("machine", "")),
+                cwd=str(obj.get("cwd", "")),
+                anyway=bool(obj.get("anyway")),
+            ).to_json(),
+        )
+        # No `notifier.publish`, here or below. A bell carries a count of unread
+        # mail, and neither route changes one for anybody: a rename moves a
+        # mailbox intact and a deregistration removes a mailbox nobody is
+        # subscribed to any more. A stream already open on the old name simply
+        # stops receiving, which is what it should do.
+
+    def _deregister(self) -> None:
+        obj = self._read()
+        removal = self.store.deregister(str(obj.get("name", "")), anyway=bool(obj.get("anyway")))
+        self._reply(200, removal.to_json())
 
     def _send(self) -> None:
         obj = self._read()

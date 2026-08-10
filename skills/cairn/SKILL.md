@@ -940,6 +940,50 @@ had since been withdrawn. Run `cairn whoami` first. If it prints a name, you are
 that already; keep it unless you mean to hand the work over, and cairn will tell
 you what you left behind if you do.
 
+**If you actually mean to change the name, say so:**
+
+```bash
+cairn inbox           # a rename refuses while anything is unread; read it first
+cairn rename rig-a/nn-deploy
+```
+
+`cairn rename` moves the address and takes the read cursor with it, so nothing
+you have not read yet is lost and no second row appears in `cairn peers`. What it
+does not move is history: messages you already sent keep the old name as their
+sender, because the signatures cover it, so `cairn sent` starts empty afterwards
+and `cairn retract` on those messages is gone with the name. Both are printed.
+
+It refuses while you have unread mail, because that mail is addressed to the old
+name and moving the name puts it out of reach of every command including
+`cairn ack --rewind`. Read it, then rename.
+
+**To change what you advertise, register again with the capabilities you want:**
+
+```bash
+cairn register rig-a/nn-deploy -c traveo-ii -c autosar -c cpd
+```
+
+Same name, same directory, so it is a returning registration and your mail is
+untouched. `-c` **replaces the whole list**, it does not add to it — pass every
+capability you still have, not just the new one. cairn prints the difference so a
+list you cleared by accident is visible rather than something a peer discovers
+later by searching `cairn peers -c` and not finding you.
+
+**When a name is finished with, take it off:**
+
+```bash
+cairn deregister                      # this directory's own name
+cairn deregister rig-a/old-name       # one somebody left behind
+```
+
+A registration nobody removes stays in `cairn peers` forever, and nothing there
+distinguishes it from a machine that is merely quiet — so the next person to look
+sends work to a mailbox with nobody behind it. You may remove a name that is not
+yours; that is what it is for, since the session that should have cleaned up is
+usually the thing that is gone. It refuses if that mailbox has unread mail, and
+it says whether another registration holds the same machine and directory, which
+is the evidence that the name really was replaced rather than merely idle.
+
 Pick a name nobody else would pick. Claiming one that already belongs to a live
 session elsewhere takes it over: you will not see its unread mail, and anyone who
 had already written to it gets a refusal rather than a delivery to you. If that

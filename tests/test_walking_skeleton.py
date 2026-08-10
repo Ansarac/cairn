@@ -108,6 +108,69 @@ def test_a_name_that_moved_stops_reaching_its_old_holder(hub, tmp_path, monkeypa
     assert "bench:/w/rig" in str(caught.value)
 
 
+def test_a_renamed_session_keeps_its_backlog_and_its_old_name_stops_reaching_it(hub, tmp_path, monkeypatch, capsys):
+    """The whole rename, over a real socket, from both ends at once.
+
+    Reproduced from the incident that produced the command. A session renamed
+    itself the only way cairn offered — registering the new name in the same
+    directory — and three things happened that nobody chose: it parked at the
+    head so its unread backlog stopped being reachable, the old row stayed in
+    `cairn peers` for ever because nothing could remove it, and a peer writing to
+    the old name got a successful delivery into a mailbox no one reads.
+
+    So the claim here is all three at once, and it cannot be made inside one
+    module: the reader's cursor survives, the writer's send is refused *by the
+    hub* with the live names in the refusal, and `peers` has one row where it
+    used to have two.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)
+
+    _register(hub, "ops/dispatch", cwd="/w/ops")
+    assert _cli(hub, "register", "rig/uie94753", "-c", "hil") == 0
+    hub.send("tell", "ops/dispatch", "rig/uie94753", "read this before you rename")
+    assert _cli(hub, "inbox") == 0
+    hub.send("tell", "ops/dispatch", "rig/uie94753", "and this one you should keep")
+    capsys.readouterr()
+
+    assert _cli(hub, "rename", "rig/nn-deploy") == 3, "unread mail blocks the move"
+    assert _cli(hub, "inbox") == 0
+    capsys.readouterr()
+    assert _cli(hub, "rename", "rig/nn-deploy") == 0
+    printed = capsys.readouterr().out
+
+    assert "renamed rig/uie94753 to rig/nn-deploy" in printed
+    assert [a.name for a in hub.peers(exclude="ops/dispatch")] == ["rig/nn-deploy"]
+    with pytest.raises(UsageError, match="unknown recipient"):
+        hub.send("tell", "ops/dispatch", "rig/uie94753", "are you still there")
+    assert hub.send("tell", "ops/dispatch", "rig/nn-deploy", "found you").seq > 0
+    assert _cli(hub, "inbox") == 0
+    assert "found you" in capsys.readouterr().out
+
+
+def test_a_deregistered_name_leaves_and_says_what_replaced_it(hub, tmp_path, monkeypatch, capsys):
+    """The other half: clearing up after a holder that is already gone.
+
+    A corpse of exactly the shape the incident left — a second registration on the
+    same machine and directory — removed from a third session that is neither of
+    them, which is the only vantage point an operator ever has.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)
+
+    assert _cli(hub, "register", "ops/dispatch") == 0
+    _register(hub, "rig/uie94753", machine="HID2976W", cwd="/w/traveo")
+    _register(hub, "rig/nn-deploy", machine="HID2976W", cwd="/w/traveo")
+    capsys.readouterr()
+
+    assert _cli(hub, "deregister", "rig/uie94753") == 0
+    printed = capsys.readouterr().out
+
+    assert "in place of  rig/nn-deploy" in printed
+    assert [a.name for a in hub.peers(exclude="ops/dispatch")] == ["rig/nn-deploy"]
+    assert cli.config.current_identity() == "ops/dispatch", "removing someone else must not unregister you"
+
+
 def test_broadcast_has_no_holder_to_pin(hub, tmp_path, monkeypatch):
     """`*` is not an address anyone can take over, so the check must not fire on it."""
     from cairn.cli import _check_recipient

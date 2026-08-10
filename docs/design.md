@@ -784,6 +784,89 @@ The shape is lifted from Claude Code's agent teams — see §10. Their answer is
 names unique either; it is to record what a name meant at first use and refuse the send
 when it changes. That is the part worth copying, and it is cheap.
 
+### Leaving a name
+
+Everything above is about a name *arriving*. For thirteen cuts there was no way for one to
+leave, and the omission was invisible because the failure it causes looks like untidiness.
+
+On **2026-08-10** a peer renamed itself the only way cairn offered: `cairn register
+<new-name>` in the same directory. That is a new registration, so it did three things
+nobody asked for. It parked at the head, which is right for a newcomer and wrong for the
+same session under a different address. It left the old row in `cairn peers` — on the same
+machine and the same `cwd`, 23 seconds apart, which is as clear a rename as the hub will
+ever see. And the old name went on accepting mail, because `append` checks that a recipient
+is registered and that one still was: any peer writing to it would have got a successful
+delivery into a mailbox with nobody behind it.
+
+There was no command for this. Not in the CLI, and not on the hub either — the POST table
+was register, subjects, messages, ack, retract, prune, notes, notes/delete, and `cairn
+forget` only drops a *sender-side* pin. The row came off by hand: a full backup of the live
+container's database, then `DELETE FROM agents` and `DELETE FROM cursors` behind a guard
+that counted seven ways the name could still be referenced (messages as sender, messages as
+recipient, notes authored, notes deleted_by, subjects created_by / archived_by /
+described_by — all zero, which is the only reason it was allowed to run). Hand-editing
+SQLite is the remedy this document calls *not a remedy* two paragraphs above, about a
+different problem, and the appendix already records the sibling fact: nothing in `cairn
+peers` distinguishes a stale registration from a quiet session.
+
+Two commands close it, and the interesting part is what they refuse.
+
+**`cairn rename <new>` moves the address and never the record.** `agents.name` and
+`cursors.agent` move together in one transaction; `messages` is not touched. That is a
+constraint rather than a preference: `signing.canonical` covers `sender`, so an `UPDATE
+messages SET sender = ?` would turn every message that session had ever signed into a
+MISMATCH on the far machine — and a reader has no way to tell honest bookkeeping from a
+forgery. So `cairn sent` starts empty under the new name and the command says so, along
+with the count of rows left behind. What does travel is the read cursor, which is the entire
+reason to use this instead of registering again, and the signing key, which never had to
+travel because it is keyed by working directory rather than by name.
+
+**Unread mail blocks the move.** Those rows are addressed to the old name, so once the
+cursor travels they are reachable by nothing at all: no page selects them, and `ack
+--rewind` has no matching recipient to rewind to. This is the one loss in the whole design
+that is *cheap to avoid* — read your mail first, one command — so it is refused by default
+rather than reported after the fact. `--anyway` proceeds and prints the count, on the same
+terms as `prune` naming whose backlog it protected.
+
+**`cairn deregister [name]` checks nothing about who is asking, and `rename` checks
+`(machine, cwd)`.** The asymmetry is the whole of it. A rename carries a cursor, so from
+anywhere but where the name lives it would be a takeover that inherits the backlog — the
+exact thing the hub was fixed to stop, arriving through a door with a friendlier name. A
+deregistration is somebody clearing up after a holder that is *gone*, so requiring the
+holder to run it would refuse the only case that needs it. That leaves any token-holder able
+to remove any name, which is I3, and is no wider than `prune` already was.
+
+`deregister` reports one thing the hub knows and no reading of `peers` can recover: whether
+another registration holds the same `(machine, cwd)`. A name replaced *in place* is a
+corpse; a lone registration that has been quiet for a week may be a bench that is switched
+off. `last_seen` cannot tell those apart and this can, for the one case that matters.
+
+Two smaller things came with it, both of them doors these commands open on purpose.
+
+`cairn inbox` for a name the hub does not know is now **refused rather than answered**. An
+empty page and "no mail" are the same sentence to every caller, and to the model behind it;
+that was survivable while the only way in was a typo in `CAIRN_AGENT`, and is not once a
+session's registration can be removed while it is running. The cursor subselect that made
+the old behaviour safe — `seq > NULL` is NULL, which is what stops an unregistered name
+collecting every broadcast — has not moved, and is now the second line rather than the
+first.
+
+The acceptance run for this cut was an independent session outside the repository, and it
+found one line worth changing. `cursor came with it, at seq 3` is true and says nothing
+about why it matters — the session had never read a message, correctly inferred that a
+fresh registration parks at the head, and reported the inference as unverified. A number
+that provokes a question it does not answer is a badly chosen sentence, so the reassurance
+is now the sentence and the seq is the evidence for it. It read everything else correctly:
+that a rename refuses while mail is unread, that history stays behind, and that no second
+row was left in `peers`.
+
+And a **returning registration says what happened to its capabilities**. Re-registering is
+the only way to edit that list, the upsert replaces it wholesale, and so a session that
+forgets `-c` clears everything it was advertising — silently, with the cost landing on a
+peer who searches `cairn peers -c hil` and does not find the bench. The diff is printed only
+when the previous list was non-empty, because an older hub sends no previous list at all and
+that is byte-for-byte the same as a name that had none.
+
 ## 10. Prior art
 
 Surveyed 2026-08-01. The space is not greenfield, but the specific niche is unoccupied.
@@ -3644,6 +3727,7 @@ afternoon each if rediscovered:
 | A catch-up notice to an absent peer | Sent when that peer's `last_seen` was already fourteen hours old, and written down as "told" in a handoff minutes later. Queued, not delivered. `cairn sent` prints *"this is what you sent, not what anyone read"* immediately beneath the row it was read off |
 | Why the broadcast got zero answers (2026-08-06, +12 h) | Not indifference — the verb. Over the hub's whole history, **14 of 14 `ask`s got a `reply`**, median latency in the tens of minutes, `ops/hub`'s own three among them. Both rollout notices were `tell`, the kind that means *no answer needed*, and got exactly that. The absent peer had by then come back and read past the catch-up, and still answered nothing. The census's two "unanswerable" questions were asked in a form that excuses the reader from answering |
 | A registration that was never a session | The fifth peer above, re-read a day later: `last_seen` **101 seconds** after `registered_at` and unmoved for 29 hours, cursor still the head it was parked at, zero traffic ever — while three peers on the same hub exchanged 24 messages that day. Nothing in `cairn peers` distinguishes a stale registration from a quiet session; the subtraction is the reader's, and the earlier reading of this row had treated it as a live machine owed a notice |
+| A rename with nothing to clean it up (2026-08-10) | A peer renamed itself the only way there was — registering the new name in the same directory — and both rows then sat in `cairn peers` on the same machine and the same `cwd`, **23 seconds apart**. The old name kept accepting mail, because `append` checks only that a recipient is registered. Nothing in cairn could remove it: no subcommand, and no route on the hub. It came off by hand, behind a guard that counted seven ways the name could still be referenced and found all seven at zero. §9 *Leaving a name* has what was built from it |
 | An oversized message body, end to end (2026-08-07) | Sent: exit **2** and *"hub spoke something unexpected"* — cairn's "hub unreachable" — while the row was **stored and answered 200**. Read: the recipient's whole page gone, including the 43-character message that arrived *before* it; the sender's own `cairn sent` gone the same way; `cairn bell` printing `{}` and exit 0 throughout. Escape hatches: `--limit 1` reads below the poison, `--since` and `ack` advance one row at a time. After the fix, the same send is exit **3** with nothing stored, and a 90,000-character row injected by hand renders truncated with the message behind it still readable |
 | Real body sizes on this hub, 197 messages | Median **2,963**, p90 **5,849**, p99 **16,642**, max **29,682**. The 16,000 limit sat exactly on the 99th percentile. The two rows over it were 167 and 131 lines at mean line length 127–177 with fifty-odd blank lines each — long-form prose, not pasted logs, so the artifact escape hatch did not apply to either |
 | Pure-Python Ed25519, as the way to keep `dependencies = []` | RFC 8032 reference: **428 ms** per verify, **21 s** for a fifty-row inbox page. Modular inversion is 312 ms of the 428, so projective coordinates floor it near 100–150 ms and 5–7 s a page, for several hundred lines of unaudited curve arithmetic. `cryptography` for comparison is **4.0 MB** installed against cairn's entire `uv tool` venv at **1.1 MB**. The stdlib was re-checked in place: no asymmetric primitive, and `ssl` offers X.509 verification modes with no raw sign/verify API |
